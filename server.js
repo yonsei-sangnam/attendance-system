@@ -6,6 +6,7 @@ const qr = require('./qr');
 const auth = require('./auth');
 const attend = require('./attendance');
 const admin = require('./admin');
+const sync = require('./sync');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -253,6 +254,41 @@ app.get('/api/attendance/today', async (req, res) => {
       ORDER BY c.course_name, a.check_in_at
     `);
     res.json(r.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// ════════════════════════════════════════════════════════════
+// Google Sheets 동기화 라우트
+// ════════════════════════════════════════════════════════════
+
+// ─── API: 과정별 스프레드시트 ID 저장 ────────────────────────
+app.put('/api/admin/course-sheet/:courseId', async (req, res) => {
+  try {
+    const { spreadsheetId } = req.body;
+    await db.query('UPDATE courses SET spreadsheet_id = $1 WHERE course_id = $2', [spreadsheetId || null, req.params.courseId]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── API: 과정 1개 → 구글시트 동기화 ────────────────────────
+app.post('/api/admin/sync/:courseId', async (req, res) => {
+  try {
+    const courseRes = await db.query('SELECT spreadsheet_id FROM courses WHERE course_id = $1', [req.params.courseId]);
+    if (courseRes.rows.length === 0) return res.status(404).json({ error: '과정 없음' });
+    const { spreadsheet_id } = courseRes.rows[0];
+    if (!spreadsheet_id) return res.status(400).json({ error: '스프레드시트 ID가 설정되지 않았습니다.' });
+
+    const result = await sync.syncToGoogleSheets(req.params.courseId, spreadsheet_id);
+    res.json(result);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── API: 전체 과정 일괄 동기화 ─────────────────────────────
+app.post('/api/admin/sync-all', async (req, res) => {
+  try {
+    const results = await sync.syncAllCourses();
+    res.json(results);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -728,6 +764,10 @@ function renderAdminPage(data) {
     <div class="card"><h2>📊 출결 현황 관리</h2>
       <p style="font-size:14px;color:#86868b;margin-bottom:12px;">과정별/회차별 출결 조회, 상태 수동 변경, 결석 일괄 처리:</p>
       <a href="/admin/attendance" class="btn-link" style="font-size:15px;font-weight:600;">출결 현황 페이지 열기 →</a>
+    </div>
+    <div class="card"><h2>📤 구글시트 동기화</h2>
+      <p style="font-size:14px;color:#86868b;margin-bottom:12px;">과정별 출결 데이터를 구글시트로 자동 내보내기:</p>
+      <a href="/admin/sync" class="btn-link" style="font-size:15px;font-weight:600;">구글시트 동기화 설정 →</a>
     </div>
     <div class="card"><h2>🚪 강의실 QR 코드</h2>
       <table><tr><th>코드</th><th>이름</th><th>QR</th></tr>${classroomRows}</table>
