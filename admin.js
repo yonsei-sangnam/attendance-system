@@ -147,6 +147,19 @@ function registerAdminRoutes(app) {
       res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
+
+  // ═══ 구글시트 동기화 관리 페이지 ═══════════════════════════
+  app.get('/admin/sync', async (req, res) => {
+    try {
+      const courses = await db.query(`
+        SELECT course_id, course_name, course_code, cohort, course_type, spreadsheet_id
+        FROM courses ORDER BY course_type, course_name
+      `);
+      res.send(renderSyncPage(courses.rows));
+    } catch (err) {
+      res.status(500).send('오류: ' + err.message);
+    }
+  });
 }
 
 
@@ -411,6 +424,163 @@ async function loadSummary() {
   html += '</table></div></div>';
   document.getElementById('content').innerHTML = html;
 }
+</script>
+</body>
+</html>`;
+}
+
+// ═════════════════════════════════════════════════════════════
+// 구글시트 동기화 페이지 HTML
+// ═════════════════════════════════════════════════════════════
+function renderSyncPage(courses) {
+  const rows = courses.map(c => `
+    <tr id="row-${c.course_id}">
+      <td><b>${c.course_name}</b><br><span style="font-size:11px;color:#86868b;">${c.course_type || ''} ${c.cohort || ''}</span></td>
+      <td><input type="text" class="sheet-input" id="sheet-${c.course_id}" value="${c.spreadsheet_id || ''}" placeholder="스프레드시트 ID 입력"></td>
+      <td>
+        <button class="btn btn-small" onclick="saveSheetId('${c.course_id}')">저장</button>
+        <button class="btn btn-small btn-sync" onclick="syncCourse('${c.course_id}')" ${c.spreadsheet_id ? '' : 'disabled'}>동기화</button>
+      </td>
+      <td class="status-cell" id="status-${c.course_id}"></td>
+    </tr>
+  `).join('');
+
+  return `<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>구글시트 동기화 - 관리자</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, 'Malgun Gothic', sans-serif; background: #f5f5f7; color: #1d1d1f; padding: 16px; }
+    .container { max-width: 1000px; margin: 0 auto; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    .subtitle { color: #86868b; font-size: 13px; margin-bottom: 20px; }
+    .card { background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .card h2 { font-size: 16px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #e5e5e7; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 8px 10px; background: #f5f5f7; color: #86868b; font-weight: 500; font-size: 12px; }
+    td { padding: 10px 10px; border-top: 1px solid #f0f0f0; vertical-align: middle; }
+    .sheet-input { width: 100%; padding: 8px 10px; border: 1.5px solid #d2d2d7; border-radius: 8px; font-size: 13px; font-family: monospace; }
+    .sheet-input:focus { border-color: #1a73e8; outline: none; }
+    .btn { padding: 6px 12px; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; background: #1a73e8; color: #fff; }
+    .btn:hover { background: #1557b0; }
+    .btn:disabled { background: #d2d2d7; cursor: not-allowed; }
+    .btn-small { padding: 5px 10px; font-size: 11px; }
+    .btn-sync { background: #34c759; margin-left: 4px; }
+    .btn-sync:hover { background: #2da44e; }
+    .btn-all { background: #34c759; padding: 10px 20px; font-size: 14px; }
+    .btn-all:hover { background: #2da44e; }
+    .status-cell { font-size: 12px; min-width: 100px; }
+    .back-link { font-size: 13px; color: #1a73e8; text-decoration: none; }
+    .info-box { background: #e8f0fe; border-radius: 8px; padding: 14px 18px; margin-bottom: 16px; font-size: 13px; color: #1a73e8; line-height: 1.8; }
+    .step-box { background: #f5f5f7; border-radius: 8px; padding: 12px 16px; margin: 8px 0; font-size: 13px; line-height: 1.8; }
+    code { background: #e8e8e8; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <a href="/" class="back-link">← 대시보드로 돌아가기</a>
+  <h1 style="margin-top:12px;">📤 구글시트 동기화</h1>
+  <p class="subtitle">과정별 출결 데이터를 구글시트로 내보내기</p>
+
+  <div class="card">
+    <h2>📋 사용법</h2>
+    <div class="step-box">
+      <b>1단계:</b> 과정별로 빈 구글 스프레드시트를 1개씩 만듭니다.<br>
+      <b>2단계:</b> 스프레드시트 주소에서 ID를 복사합니다.<br>
+      　　예: <code>https://docs.google.com/spreadsheets/d/<b style="color:#1a73e8;">여기가_ID</b>/edit</code><br>
+      <b>3단계:</b> 스프레드시트를 서비스 계정 이메일과 공유합니다. (편집 권한)<br>
+      <b>4단계:</b> 아래 표에서 ID를 붙여넣고 "저장" → "동기화" 클릭
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>과정별 스프레드시트 설정</h2>
+    <div style="overflow-x:auto;">
+      <table>
+        <tr><th>과정</th><th>스프레드시트 ID</th><th>작업</th><th>상태</th></tr>
+        ${rows}
+      </table>
+    </div>
+    <div style="margin-top:16px; text-align:right;">
+      <button class="btn btn-all" onclick="syncAll()">🔄 전체 동기화</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  async function saveSheetId(courseId) {
+    const input = document.getElementById('sheet-' + courseId);
+    const statusEl = document.getElementById('status-' + courseId);
+    const val = input.value.trim();
+
+    const res = await fetch('/api/admin/course-sheet/' + courseId, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ spreadsheetId: val })
+    });
+
+    if (res.ok) {
+      statusEl.innerHTML = '<span style="color:#34c759;">✅ 저장됨</span>';
+      // 동기화 버튼 활성화
+      const syncBtn = document.querySelector('#row-' + courseId + ' .btn-sync');
+      if (syncBtn) syncBtn.disabled = !val;
+    } else {
+      statusEl.innerHTML = '<span style="color:#ff3b30;">❌ 저장 실패</span>';
+    }
+  }
+
+  async function syncCourse(courseId) {
+    const statusEl = document.getElementById('status-' + courseId);
+    statusEl.innerHTML = '<span style="color:#1a73e8;">⏳ 동기화 중...</span>';
+
+    try {
+      const res = await fetch('/api/admin/sync/' + courseId, { method: 'POST' });
+      const data = await res.json();
+
+      if (data.success) {
+        statusEl.innerHTML = '<span style="color:#34c759;">✅ 완료 (' + data.studentsCount + '명, ' + data.sheetsUpdated + '탭)</span>';
+      } else {
+        statusEl.innerHTML = '<span style="color:#ff3b30;">❌ ' + (data.error || '실패') + '</span>';
+      }
+    } catch (err) {
+      statusEl.innerHTML = '<span style="color:#ff3b30;">❌ ' + err.message + '</span>';
+    }
+  }
+
+  async function syncAll() {
+    if (!confirm('전체 과정을 구글시트로 동기화하시겠습니까?')) return;
+
+    document.querySelectorAll('.status-cell').forEach(el => {
+      if (el.closest('tr').querySelector('.sheet-input').value.trim()) {
+        el.innerHTML = '<span style="color:#1a73e8;">⏳ 대기 중...</span>';
+      }
+    });
+
+    try {
+      const res = await fetch('/api/admin/sync-all', { method: 'POST' });
+      const results = await res.json();
+
+      for (const r of results) {
+        // 과정명으로 매칭 (간접)
+        const rows = document.querySelectorAll('tr[id^="row-"]');
+        for (const row of rows) {
+          if (row.querySelector('b').textContent === r.courseName) {
+            const statusEl = row.querySelector('.status-cell');
+            if (r.status === 'success') {
+              statusEl.innerHTML = '<span style="color:#34c759;">✅ 완료</span>';
+            } else {
+              statusEl.innerHTML = '<span style="color:#ff3b30;">❌ ' + r.error + '</span>';
+            }
+          }
+        }
+      }
+    } catch (err) {
+      alert('동기화 오류: ' + err.message);
+    }
+  }
 </script>
 </body>
 </html>`;
