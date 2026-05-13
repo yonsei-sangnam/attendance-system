@@ -5,6 +5,7 @@ const db = require('./db');
 const qr = require('./qr');
 const auth = require('./auth');
 const attend = require('./attendance');
+const admin = require('./admin');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -13,6 +14,9 @@ app.set('trust proxy', 1);
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+// 관리자 출결 현황 라우트 등록
+admin.registerAdminRoutes(app);
 
 
 // ════════════════════════════════════════════════════════════
@@ -720,6 +724,10 @@ function renderAdminPage(data) {
         <div class="stat-box"><div class="stat-number">${data.sessionCount}</div><div class="stat-label">회차 스케줄</div></div>
         <div class="stat-box"><div class="stat-number">${data.attendanceCount}</div><div class="stat-label">출결 기록</div></div>
       </div>
+    </div>
+    <div class="card"><h2>📊 출결 현황 관리</h2>
+      <p style="font-size:14px;color:#86868b;margin-bottom:12px;">과정별/회차별 출결 조회, 상태 수동 변경, 결석 일괄 처리:</p>
+      <a href="/admin/attendance" class="btn-link" style="font-size:15px;font-weight:600;">출결 현황 페이지 열기 →</a>
     </div>
     <div class="card"><h2>🚪 강의실 QR 코드</h2>
       <table><tr><th>코드</th><th>이름</th><th>QR</th></tr>${classroomRows}</table>
