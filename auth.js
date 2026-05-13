@@ -12,7 +12,7 @@ const db = require('./db');
 function getRPConfig(req) {
   const host = req.get('host');                        // 예: attendance-system-xxxx.onrender.com
   const rpID = host.split(':')[0];                     // 포트 제거
-  const origin = `${req.protocol}://${host}`;          // 예: https://attendance-system-xxxx.onrender.com
+  const origin = `https://${host}`;          // 예: https://attendance-system-xxxx.onrender.com
   return {
     rpName: '출결 관리 시스템',
     rpID,
