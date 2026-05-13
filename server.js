@@ -4,6 +4,7 @@ const path = require('path');
 const db = require('./db');
 const qr = require('./qr');
 const auth = require('./auth');
+const attend = require('./attendance');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -176,11 +177,22 @@ app.post('/api/auth/options', async (req, res) => {
   }
 });
 
-// ─── API: 인증 검증 ─────────────────────────────────────────
+// ─── API: 인증 검증 + 출결 기록 ─────────────────────────────
 app.post('/api/auth/verify', async (req, res) => {
   try {
-    const { studentId, response } = req.body;
+    const { studentId, response, classroomCode } = req.body;
     const result = await auth.verifyAuthentication(req, studentId, response);
+
+    if (!result.verified) {
+      return res.json(result);
+    }
+
+    // 생체인증 성공 → 출결 기록
+    if (classroomCode) {
+      const attendResult = await attend.recordAttendance(studentId, classroomCode);
+      return res.json({ verified: true, attendance: attendResult });
+    }
+
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -216,6 +228,25 @@ app.get('/api/students', async (req, res) => {
              (SELECT COUNT(*) FROM credentials cr WHERE cr.student_id = s.student_id) > 0 AS has_credential
       FROM students s LEFT JOIN enrollments e ON e.student_id = s.student_id
       LEFT JOIN courses c ON c.course_id = e.course_id ORDER BY c.course_name, s.name
+    `);
+    res.json(r.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── API: 오늘 출결 현황 ─────────────────────────────────────
+app.get('/api/attendance/today', async (req, res) => {
+  try {
+    const r = await db.query(`
+      SELECT s.name, s.phone, c.course_name,
+             a.check_in_at, a.check_out_at, a.status, a.exit_type,
+             cr.classroom_name
+      FROM attendance a
+      JOIN students s ON s.student_id = a.student_id
+      JOIN course_sessions cs ON cs.session_id = a.session_id
+      JOIN courses c ON c.course_id = cs.course_id
+      LEFT JOIN classrooms cr ON cr.classroom_id = a.classroom_id
+      WHERE cs.session_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::DATE
+      ORDER BY c.course_name, a.check_in_at
     `);
     res.json(r.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -311,10 +342,12 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
       <!-- Step 4: 완료 -->
       <div id="step4" class="step">
         <div class="icon">✅</div>
-        <h1>출결 체크 완료!</h1>
+        <div id="doneType" style="font-size:20px;font-weight:700;margin-bottom:8px;"></div>
         <div class="student-name" id="doneName"></div>
-        <div class="student-phone" id="doneRoom">${classroomName}</div>
-        <div class="msg msg-success" id="doneMsg">생체인증이 확인되었습니다.</div>
+        <div style="font-size:14px;color:#86868b;margin-bottom:4px;" id="doneCourse"></div>
+        <div style="font-size:14px;color:#86868b;margin-bottom:16px;" id="doneRoom"></div>
+        <div class="msg msg-success" id="doneMsg"></div>
+        <div style="font-size:15px;font-weight:600;margin-top:12px;font-variant-numeric:tabular-nums;" id="doneTime"></div>
       </div>
 
     </div>
@@ -409,16 +442,50 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
           // 브라우저 생체인증 실행
           const authResp = await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON: options });
 
-          // 서버 검증
+          // 서버 검증 + 출결 기록
           const verifyRes = await fetch('/api/auth/verify', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ studentId: currentStudentId, response: authResp })
+            body: JSON.stringify({ studentId: currentStudentId, response: authResp, classroomCode: CLASSROOM_CODE })
           });
           const verifyData = await verifyRes.json();
 
           if (verifyData.verified) {
+            const a = verifyData.attendance;
             document.getElementById('doneName').textContent = currentStudentName + '님';
+
+            if (a && a.success) {
+              const typeMap = {
+                'check_in': '🟢 입실 완료',
+                'check_out': '🔵 퇴실 완료',
+                'duplicate': '☑️ 이미 입실됨',
+                'already_done': '✅ 출결 완료',
+              };
+              document.getElementById('doneType').textContent = typeMap[a.type] || a.type;
+              document.getElementById('doneMsg').textContent = a.message;
+              document.getElementById('doneCourse').textContent = a.courseName || '';
+              document.getElementById('doneRoom').textContent = a.classroomName || '';
+
+              if (a.isLate) document.getElementById('doneMsg').textContent += ' ⏰';
+              if (a.isEarlyLeave) document.getElementById('doneMsg').textContent += ' ⏰';
+
+              const timeEl = document.getElementById('doneTime');
+              if (a.checkInTime && a.type === 'check_in') {
+                timeEl.textContent = '입실: ' + new Date(a.checkInTime).toLocaleTimeString('ko-KR', {timeZone:'Asia/Seoul'});
+              } else if (a.checkOutTime) {
+                timeEl.textContent = '퇴실: ' + new Date(a.checkOutTime).toLocaleTimeString('ko-KR', {timeZone:'Asia/Seoul'});
+              } else if (a.checkInTime) {
+                timeEl.textContent = '입실: ' + new Date(a.checkInTime).toLocaleTimeString('ko-KR', {timeZone:'Asia/Seoul'});
+              } else {
+                timeEl.textContent = '';
+              }
+            } else if (a && !a.success) {
+              document.getElementById('doneType').textContent = '⚠️ 출결 처리 불가';
+              document.getElementById('doneMsg').textContent = a.message;
+              document.getElementById('doneCourse').textContent = a.courseName || '';
+              document.getElementById('doneRoom').textContent = a.classroomName || '';
+              document.getElementById('doneTime').textContent = '';
+            }
             showStep(4);
           } else {
             throw new Error(verifyData.error || '인증 실패');
