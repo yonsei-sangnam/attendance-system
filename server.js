@@ -7,6 +7,7 @@ const auth = require('./auth');
 const attend = require('./attendance');
 const admin = require('./admin');
 const sync = require('./sync');
+const push = require('./push');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -341,6 +342,11 @@ function renderErrorPage(message) {
 function renderScanAuthPage(classroomCode, classroomName, token) {
   return `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>출결 체크 - ${classroomName}</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#1a73e8">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="/icon-192.png">
   <style>${COMMON_CSS}</style>
   <script src="https://unpkg.com/@simplewebauthn/browser@11/dist/bundle/index.umd.min.js"></script>
   </head>
@@ -527,6 +533,7 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
               document.getElementById('doneTime').textContent = '';
             }
             showStep(4);
+            registerPushIfReady();  // 출결 완료 후 푸시 알림 등록
           } else {
             throw new Error(verifyData.error || '인증 실패');
           }
@@ -594,8 +601,39 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
       document.getElementById('phoneInput').addEventListener('keypress', (e) => {
         if (e.key === 'Enter') lookupStudent();
       });
-      // 자동 포커스
       document.getElementById('phoneInput').focus();
+
+      // ─── 서비스 워커 등록 + 푸시 구독 ──────────────────
+      async function registerPushIfReady() {
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+        try {
+          const reg = await navigator.serviceWorker.register('/sw.js');
+          const keyRes = await fetch('/api/push/vapid-key');
+          const { key } = await keyRes.json();
+          if (!key) return;
+
+          const existing = await reg.pushManager.getSubscription();
+          if (existing) {
+            await fetch('/api/push/subscribe', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ studentId: currentStudentId, subscription: existing.toJSON() })
+            });
+            return;
+          }
+
+          const sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: key
+          });
+
+          await fetch('/api/push/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ studentId: currentStudentId, subscription: sub.toJSON() })
+          });
+        } catch (e) { console.log('Push 등록 스킵:', e.message); }
+      }
     </script>
   </body></html>`;
 }
@@ -830,7 +868,55 @@ function renderQRPage(classroom, baseUrl) {
 }
 
 
+// ════════════════════════════════════════════════════════════
+// PWA 아이콘 (SVG 생성)
+// ════════════════════════════════════════════════════════════
+app.get('/icon-192.png', (req, res) => { res.redirect('/icon.svg'); });
+app.get('/icon-512.png', (req, res) => { res.redirect('/icon.svg'); });
+app.get('/icon.svg', (req, res) => {
+  res.setHeader('Content-Type', 'image/svg+xml');
+  res.send(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+    <rect width="512" height="512" rx="80" fill="#1a73e8"/>
+    <text x="256" y="300" text-anchor="middle" font-size="260" fill="#fff" font-family="sans-serif" font-weight="700">✓</text>
+  </svg>`);
+});
+
+
+// ════════════════════════════════════════════════════════════
+// 푸시 알림 API
+// ════════════════════════════════════════════════════════════
+
+// VAPID 공개키 조회 (클라이언트에서 구독 시 필요)
+app.get('/api/push/vapid-key', (req, res) => {
+  res.json({ key: process.env.VAPID_PUBLIC_KEY || '' });
+});
+
+// 푸시 구독 등록
+app.post('/api/push/subscribe', async (req, res) => {
+  try {
+    const { studentId, subscription } = req.body;
+    if (!studentId || !subscription) return res.status(400).json({ error: '필수 정보 누락' });
+    await push.saveSubscription(studentId, subscription);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 푸시 구독 해제
+app.post('/api/push/unsubscribe', async (req, res) => {
+  try {
+    const { endpoint } = req.body;
+    if (endpoint) await push.removeSubscription(endpoint);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
 // ─── 서버 시작 ───────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log('서버 실행 중: http://localhost:' + PORT);
+
+  // 푸시 알림 초기화 + 스케줄러
+  if (push.initPush()) {
+    push.startScheduler();
+  }
 });
