@@ -134,6 +134,54 @@ app.post('/api/student/lookup', async (req, res) => {
 
 
 // ════════════════════════════════════════════════════════════
+// 수강생 앱 (PWA 홈 화면)
+// ════════════════════════════════════════════════════════════
+app.get('/app', (req, res) => {
+  res.send(renderStudentAppPage());
+});
+
+// ─── API: 수강생 오늘 출결 상태 ──────────────────────────────
+app.get('/api/my/status/:studentId', async (req, res) => {
+  try {
+    const r = await db.query(`
+      SELECT a.check_in_at, a.check_out_at, a.status, a.exit_type,
+             c.course_name, cr.classroom_name,
+             cs.session_number, cs.start_time, cs.end_time
+      FROM attendance a
+      JOIN course_sessions cs ON cs.session_id = a.session_id
+      JOIN courses c ON c.course_id = cs.course_id
+      LEFT JOIN classrooms cr ON cr.classroom_id = a.classroom_id
+      WHERE a.student_id = $1
+        AND cs.session_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::DATE
+      ORDER BY a.check_in_at DESC LIMIT 1
+    `, [req.params.studentId]);
+
+    if (r.rows.length === 0) {
+      // 오늘 수업 정보만 조회
+      const session = await db.query(`
+        SELECT c.course_name, cs.start_time, cs.end_time,
+               COALESCE(cr.classroom_name, dcr.classroom_name) AS classroom_name
+        FROM course_sessions cs
+        JOIN courses c ON c.course_id = cs.course_id
+        JOIN enrollments e ON e.course_id = cs.course_id
+        LEFT JOIN classrooms cr ON cr.classroom_id = cs.classroom_id
+        LEFT JOIN classrooms dcr ON dcr.classroom_id = c.default_classroom_id
+        WHERE e.student_id = $1
+          AND cs.session_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::DATE
+      `, [req.params.studentId]);
+
+      if (session.rows.length > 0) {
+        return res.json({ hasSession: true, attendance: null, session: session.rows[0] });
+      }
+      return res.json({ hasSession: false });
+    }
+
+    res.json({ hasSession: true, attendance: r.rows[0] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// ════════════════════════════════════════════════════════════
 // 생체인증 등록 (온보딩)
 // ════════════════════════════════════════════════════════════
 
@@ -327,6 +375,370 @@ const COMMON_CSS = `
   .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 `;
+
+// ─── 수강생 앱 페이지 ────────────────────────────────────────
+function renderStudentAppPage() {
+  return `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>출결체크</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#1a73e8">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, 'Malgun Gothic', sans-serif; background: #f5f5f7; color: #1d1d1f; min-height: 100vh; }
+    .top { background: #1a73e8; color: #fff; padding: 24px 20px 20px; border-radius: 0 0 20px 20px; }
+    .top h1 { font-size: 20px; margin-bottom: 4px; }
+    .top .sub { font-size: 13px; opacity: 0.8; }
+    .container { padding: 16px; max-width: 500px; margin: 0 auto; }
+    .card { background: #fff; border-radius: 14px; padding: 20px; margin-bottom: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    .card h2 { font-size: 15px; margin-bottom: 12px; color: #1d1d1f; }
+    .form-group { margin-bottom: 14px; }
+    .form-group label { display: block; font-size: 13px; color: #86868b; margin-bottom: 6px; }
+    .form-group input { width: 100%; padding: 12px 14px; border: 1.5px solid #d2d2d7; border-radius: 10px; font-size: 16px; outline: none; }
+    .form-group input:focus { border-color: #1a73e8; }
+    .btn { display: block; width: 100%; padding: 14px; border: none; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer; text-align: center; }
+    .btn-primary { background: #1a73e8; color: #fff; }
+    .btn-primary:hover { background: #1557b0; }
+    .btn-primary:disabled { background: #d2d2d7; }
+    .btn-success { background: #34c759; color: #fff; }
+    .btn-warning { background: #ff9500; color: #fff; }
+    .btn-outline { background: #fff; color: #1a73e8; border: 1.5px solid #1a73e8; }
+    .msg { padding: 12px; border-radius: 10px; font-size: 13px; margin: 12px 0; line-height: 1.5; }
+    .msg-info { background: #e8f0fe; color: #1a73e8; }
+    .msg-success { background: #e6f4ea; color: #137333; }
+    .msg-error { background: #fce8e6; color: #c5221f; }
+    .status-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
+    .status-row:last-child { border-bottom: none; }
+    .status-label { color: #86868b; }
+    .status-value { font-weight: 600; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 13px; font-weight: 500; }
+    .b-출석 { background: #e6f4ea; color: #137333; }
+    .b-지각 { background: #fef3e0; color: #e37400; }
+    .b-조퇴 { background: #fce8e6; color: #c5221f; }
+    .b-결석 { background: #f1f3f4; color: #5f6368; }
+    .toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
+    .toggle-label { font-size: 14px; }
+    .toggle-sub { font-size: 12px; color: #86868b; }
+    .switch { position: relative; width: 50px; height: 28px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; inset: 0; background: #d2d2d7; border-radius: 28px; transition: .3s; }
+    .slider:before { content: ""; position: absolute; height: 22px; width: 22px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: .3s; }
+    input:checked + .slider { background: #34c759; }
+    input:checked + .slider:before { transform: translateX(22px); }
+    .hidden { display: none; }
+    .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .install-guide { font-size: 13px; line-height: 1.7; color: #555; }
+    .install-guide b { color: #1d1d1f; }
+  </style>
+  </head>
+  <body>
+    <div class="top">
+      <h1>📋 출결체크</h1>
+      <div class="sub" id="topSub">로그인하여 출결 현황과 알림을 설정하세요</div>
+    </div>
+    <div class="container">
+
+      <!-- 로그인 전 -->
+      <div id="loginSection">
+        <div class="card">
+          <h2>본인 확인</h2>
+          <div class="form-group">
+            <label>전화번호 뒷자리 8자리</label>
+            <input type="tel" id="phoneInput" placeholder="12345678" maxlength="8" inputmode="numeric" autocomplete="off">
+          </div>
+          <button class="btn btn-primary" id="loginBtn" onclick="doLogin()">확인</button>
+          <div id="loginMsg"></div>
+        </div>
+      </div>
+
+      <!-- 로그인 후 -->
+      <div id="mainSection" class="hidden">
+
+        <!-- 오늘 출결 -->
+        <div class="card">
+          <h2>📅 오늘 출결</h2>
+          <div id="todayStatus">
+            <div style="text-align:center;color:#86868b;padding:12px;">불러오는 중...</div>
+          </div>
+        </div>
+
+        <!-- 알림 설정 -->
+        <div class="card">
+          <h2>🔔 퇴실 알림</h2>
+          <div class="toggle-row">
+            <div>
+              <div class="toggle-label">푸시 알림 받기</div>
+              <div class="toggle-sub">수업 종료 10분 전 퇴실 알림</div>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="pushToggle" onchange="togglePush()">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div id="pushMsg"></div>
+        </div>
+
+        <!-- 홈 화면 추가 안내 -->
+        <div class="card" id="installGuide">
+          <h2>📲 홈 화면에 추가</h2>
+          <div class="install-guide" id="installText"></div>
+        </div>
+
+        <!-- 로그아웃 -->
+        <div style="margin-top:8px;">
+          <button class="btn btn-outline" onclick="doLogout()">다른 계정으로 전환</button>
+        </div>
+      </div>
+
+    </div>
+
+    <script>
+      let studentId = null;
+      let studentName = null;
+
+      // ─── 초기화 ────────────────────────────────────────
+      window.addEventListener('load', async () => {
+        // 저장된 로그인 정보 확인
+        const saved = localStorage.getItem('attendance_student');
+        if (saved) {
+          try {
+            const data = JSON.parse(saved);
+            studentId = data.studentId;
+            studentName = data.name;
+            showMain();
+          } catch (e) { localStorage.removeItem('attendance_student'); }
+        }
+
+        // 서비스 워커 등록
+        if ('serviceWorker' in navigator) {
+          try { await navigator.serviceWorker.register('/sw.js'); }
+          catch (e) { console.log('SW 등록 실패:', e); }
+        }
+
+        // 홈 화면 추가 안내
+        showInstallGuide();
+      });
+
+      // ─── 로그인 ────────────────────────────────────────
+      async function doLogin() {
+        const input = document.getElementById('phoneInput').value.trim();
+        const msgEl = document.getElementById('loginMsg');
+        const btn = document.getElementById('loginBtn');
+
+        if (input.length < 7) {
+          msgEl.innerHTML = '<div class="msg msg-error">전화번호 뒷자리 8자리를 입력해주세요.</div>';
+          return;
+        }
+
+        const phone = '010-' + input.slice(0, 4) + '-' + input.slice(4);
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span>';
+
+        try {
+          const res = await fetch('/api/student/lookup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone })
+          });
+          const data = await res.json();
+
+          if (!data.found) {
+            msgEl.innerHTML = '<div class="msg msg-error">등록되지 않은 전화번호입니다.</div>';
+            return;
+          }
+
+          studentId = data.studentId;
+          studentName = data.name;
+          localStorage.setItem('attendance_student', JSON.stringify({
+            studentId: data.studentId, name: data.name, phone: phone
+          }));
+
+          showMain();
+        } catch (err) {
+          msgEl.innerHTML = '<div class="msg msg-error">오류: ' + err.message + '</div>';
+        } finally {
+          btn.disabled = false;
+          btn.textContent = '확인';
+        }
+      }
+
+      function doLogout() {
+        localStorage.removeItem('attendance_student');
+        studentId = null;
+        studentName = null;
+        document.getElementById('loginSection').classList.remove('hidden');
+        document.getElementById('mainSection').classList.add('hidden');
+        document.getElementById('topSub').textContent = '로그인하여 출결 현황과 알림을 설정하세요';
+        document.getElementById('phoneInput').value = '';
+      }
+
+      // ─── 메인 화면 표시 ────────────────────────────────
+      async function showMain() {
+        document.getElementById('loginSection').classList.add('hidden');
+        document.getElementById('mainSection').classList.remove('hidden');
+        document.getElementById('topSub').textContent = studentName + '님';
+
+        loadTodayStatus();
+        checkPushStatus();
+      }
+
+      // ─── 오늘 출결 상태 ────────────────────────────────
+      async function loadTodayStatus() {
+        const el = document.getElementById('todayStatus');
+        try {
+          const res = await fetch('/api/my/status/' + studentId);
+          const data = await res.json();
+
+          if (!data.hasSession) {
+            el.innerHTML = '<div style="text-align:center;color:#86868b;padding:12px;">오늘 예정된 수업이 없습니다.</div>';
+            return;
+          }
+
+          let html = '';
+
+          if (data.session && !data.attendance) {
+            // 수업 있지만 아직 입실 전
+            html += '<div class="status-row"><span class="status-label">과정</span><span class="status-value">' + data.session.course_name + '</span></div>';
+            html += '<div class="status-row"><span class="status-label">강의실</span><span class="status-value">' + (data.session.classroom_name || '-') + '</span></div>';
+            html += '<div class="status-row"><span class="status-label">시간</span><span class="status-value">' + data.session.start_time.slice(0,5) + ' ~ ' + data.session.end_time.slice(0,5) + '</span></div>';
+            html += '<div class="status-row"><span class="status-label">상태</span><span class="badge" style="background:#fff3e0;color:#e65100;">미입실</span></div>';
+          } else if (data.attendance) {
+            const a = data.attendance;
+            const checkIn = a.check_in_at ? new Date(a.check_in_at).toLocaleTimeString('ko-KR', {timeZone:'Asia/Seoul',hour:'2-digit',minute:'2-digit'}) : '-';
+            const checkOut = a.check_out_at ? new Date(a.check_out_at).toLocaleTimeString('ko-KR', {timeZone:'Asia/Seoul',hour:'2-digit',minute:'2-digit'}) : '-';
+
+            html += '<div class="status-row"><span class="status-label">과정</span><span class="status-value">' + a.course_name + '</span></div>';
+            html += '<div class="status-row"><span class="status-label">강의실</span><span class="status-value">' + (a.classroom_name || '-') + '</span></div>';
+            html += '<div class="status-row"><span class="status-label">입실</span><span class="status-value">' + checkIn + '</span></div>';
+            html += '<div class="status-row"><span class="status-label">퇴실</span><span class="status-value">' + checkOut + '</span></div>';
+            html += '<div class="status-row"><span class="status-label">상태</span><span class="badge b-' + a.status + '">' + a.status + '</span></div>';
+          }
+
+          el.innerHTML = html;
+        } catch (err) {
+          el.innerHTML = '<div class="msg msg-error">불러오기 실패: ' + err.message + '</div>';
+        }
+      }
+
+      // ─── 푸시 알림 ─────────────────────────────────────
+      async function checkPushStatus() {
+        const toggle = document.getElementById('pushToggle');
+        const msgEl = document.getElementById('pushMsg');
+
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+          toggle.disabled = true;
+          msgEl.innerHTML = '<div class="msg msg-error" style="margin-top:10px;">이 브라우저는 푸시 알림을 지원하지 않습니다.</div>';
+          return;
+        }
+
+        try {
+          const reg = await navigator.serviceWorker.ready;
+          const sub = await reg.pushManager.getSubscription();
+          toggle.checked = !!sub;
+        } catch (e) {
+          toggle.checked = false;
+        }
+      }
+
+      async function togglePush() {
+        const toggle = document.getElementById('pushToggle');
+        const msgEl = document.getElementById('pushMsg');
+
+        if (toggle.checked) {
+          // 구독 등록
+          try {
+            const permission = await Notification.requestPermission();
+            if (permission !== 'granted') {
+              toggle.checked = false;
+              msgEl.innerHTML = '<div class="msg msg-error" style="margin-top:10px;">알림 권한이 거부되었습니다. 브라우저 설정에서 허용해주세요.</div>';
+              return;
+            }
+
+            const reg = await navigator.serviceWorker.ready;
+            const keyRes = await fetch('/api/push/vapid-key');
+            const { key } = await keyRes.json();
+
+            if (!key) {
+              toggle.checked = false;
+              msgEl.innerHTML = '<div class="msg msg-error" style="margin-top:10px;">서버 설정 오류입니다.</div>';
+              return;
+            }
+
+            const sub = await reg.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: key
+            });
+
+            await fetch('/api/push/subscribe', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ studentId: studentId, subscription: sub.toJSON() })
+            });
+
+            msgEl.innerHTML = '<div class="msg msg-success" style="margin-top:10px;">✅ 알림이 활성화되었습니다.</div>';
+            setTimeout(() => { msgEl.innerHTML = ''; }, 3000);
+          } catch (err) {
+            toggle.checked = false;
+            msgEl.innerHTML = '<div class="msg msg-error" style="margin-top:10px;">알림 등록 실패: ' + err.message + '</div>';
+          }
+        } else {
+          // 구독 해제
+          try {
+            const reg = await navigator.serviceWorker.ready;
+            const sub = await reg.pushManager.getSubscription();
+            if (sub) {
+              await fetch('/api/push/unsubscribe', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ endpoint: sub.endpoint })
+              });
+              await sub.unsubscribe();
+            }
+            msgEl.innerHTML = '<div class="msg msg-info" style="margin-top:10px;">알림이 해제되었습니다.</div>';
+            setTimeout(() => { msgEl.innerHTML = ''; }, 3000);
+          } catch (err) {
+            msgEl.innerHTML = '<div class="msg msg-error" style="margin-top:10px;">해제 실패: ' + err.message + '</div>';
+          }
+        }
+      }
+
+      // ─── 홈 화면 추가 안내 ─────────────────────────────
+      function showInstallGuide() {
+        const el = document.getElementById('installText');
+        const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+
+        if (isStandalone) {
+          document.getElementById('installGuide').classList.add('hidden');
+          return;
+        }
+
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        const isAndroid = /Android/.test(navigator.userAgent);
+
+        if (isIOS) {
+          el.innerHTML = '이 화면을 홈 화면에 추가하면 앱처럼 사용할 수 있고, <b>퇴실 알림</b>을 받을 수 있습니다.<br><br>'
+            + '① 아래쪽 <b>공유 버튼(□↑)</b>을 탭하세요<br>'
+            + '② <b>"홈 화면에 추가"</b>를 탭하세요<br>'
+            + '③ <b>"추가"</b>를 탭하면 완료!';
+        } else if (isAndroid) {
+          el.innerHTML = '이 화면을 홈 화면에 추가하면 앱처럼 사용할 수 있습니다.<br><br>'
+            + '① 오른쪽 위 <b>메뉴(⋮)</b>를 탭하세요<br>'
+            + '② <b>"홈 화면에 추가"</b> 또는 <b>"앱 설치"</b>를 탭하세요';
+        } else {
+          el.innerHTML = '이 페이지를 북마크하면 다음에 쉽게 접속할 수 있습니다.';
+        }
+      }
+
+      // 엔터키
+      document.getElementById('phoneInput').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') doLogin();
+      });
+    </script>
+  </body></html>`;
+}
 
 // ─── 에러 페이지 ─────────────────────────────────────────────
 function renderErrorPage(message) {
@@ -818,6 +1230,11 @@ function renderAdminPage(data) {
       <div style="margin-top:12px;">
         <a href="/admin/credentials" class="btn-link" style="font-size:14px;font-weight:600;">생체인증 관리 (현황 확인 / 초기화) →</a>
       </div>
+    </div>
+    <div class="card"><h2>📱 수강생 앱 (PWA)</h2>
+      <p style="font-size:14px;color:#86868b;margin-bottom:12px;">수강생에게 아래 주소를 안내하세요. 홈 화면에 추가하면 퇴실 알림을 받을 수 있습니다:</p>
+      <div style="background:#f5f5f7;padding:12px;border-radius:8px;font-family:monospace;font-size:14px;word-break:break-all;">${data.baseUrl}/app</div>
+      <div class="info-box">💡 수강생이 이 주소에 접속 → 전화번호 입력 → 홈 화면에 추가 → 알림 켜기</div>
     </div>
     <div class="card"><h2>🏫 교육과정</h2>
       <table><tr><th>과정명</th><th>약칭</th><th>종류</th><th>기수</th><th>강의실</th></tr>${courseRows}</table>
