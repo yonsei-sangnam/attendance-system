@@ -43,8 +43,12 @@ self.addEventListener('push', (event) => {
     vibrate: [200, 100, 200],
     tag: 'attendance-' + Date.now(),
     renotify: true,
-    requireInteraction: true,  // 사용자가 탭할 때까지 유지
-    data: { url: data.url || '/' },
+    requireInteraction: true,
+    data: {
+      url: data.url || '/',
+      studentId: data.studentId || null,
+      attendanceId: data.attendanceId || null,
+    },
     actions: [
       { action: 'checkout', title: '퇴실 확인' },
     ],
@@ -59,18 +63,70 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
-  const url = event.notification.data?.url || '/';
+  const action = event.action;
+  const data = event.notification.data || {};
 
-  event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      // 이미 열린 탭이 있으면 포커스
-      for (const client of clientList) {
-        if (client.url.includes(self.registration.scope) && 'focus' in client) {
-          return client.focus();
+  // ── 퇴실 처리 함수 (재사용) ────────────────────────────
+  function doCheckout() {
+    return fetch('/api/push/checkout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        studentId: data.studentId,
+        attendanceId: data.attendanceId,
+      }),
+    }).then(function(res) { return res.json(); });
+  }
+
+  function openApp() {
+    return clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
+      for (var i = 0; i < clientList.length; i++) {
+        if (clientList[i].url.includes(self.registration.scope) && 'focus' in clientList[i]) {
+          return clientList[i].focus();
         }
       }
-      // 없으면 새 탭
-      return clients.openWindow(url);
-    })
-  );
+      return clients.openWindow(data.url || '/');
+    });
+  }
+
+  // ── "퇴실 확인" 액션 버튼 클릭 → 서버 API 호출 ──
+  if (action === 'checkout' && data.studentId && data.attendanceId) {
+    event.waitUntil(
+      doCheckout().then(function(result) {
+        if (result.success) {
+          return self.registration.showNotification('퇴실 완료', {
+            body: result.message || '퇴실이 정상 처리되었습니다.',
+            icon: '/icon-192.png',
+            tag: 'checkout-confirm',
+          });
+        } else {
+          return self.registration.showNotification('퇴실 처리 실패', {
+            body: result.error || '관리자에게 문의하세요.',
+            icon: '/icon-192.png',
+            tag: 'checkout-error',
+          });
+        }
+      }).catch(function() {
+        return self.registration.showNotification('네트워크 오류', {
+          body: '퇴실 처리 중 오류 발생. QR 스캔으로 퇴실해주세요.',
+          icon: '/icon-192.png',
+          tag: 'checkout-error',
+        });
+      })
+    );
+    return;
+  }
+
+  // ── 일반 클릭 (알림 본문 탭) → 퇴실 처리 + 앱 열기 ──
+  if (data.studentId && data.attendanceId) {
+    event.waitUntil(
+      doCheckout()
+        .then(function() { return openApp(); })
+        .catch(function() { return openApp(); })
+    );
+    return;
+  }
+
+  // ── studentId 없는 일반 알림 클릭 → 앱 열기만 ──
+  event.waitUntil(openApp());
 });
