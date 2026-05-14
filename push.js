@@ -97,7 +97,7 @@ async function sendExitReminders() {
   for (const session of sessions.rows) {
     // 이 세션에 입실했지만 퇴실 안 한 수강생 조회
     const students = await db.query(`
-      SELECT a.student_id, s.name
+      SELECT a.attendance_id, a.student_id, s.name
       FROM attendance a
       JOIN students s ON s.student_id = a.student_id
       WHERE a.session_id = $1
@@ -110,6 +110,8 @@ async function sendExitReminders() {
         title: '수업이 곧 종료됩니다',
         body: `${session.course_name} - 퇴실 확인을 해주세요.`,
         url: '/',
+        studentId: student.student_id,
+        attendanceId: student.attendance_id,
       };
 
       try {
