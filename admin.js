@@ -87,6 +87,35 @@ function registerAdminRoutes(app) {
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
 
+  // ═══ API: 입실/퇴실 시각 수동 수정 ═══════════════════════════
+  app.patch('/api/admin/attendance/:attendanceId/time', async (req, res) => {
+    try {
+      const { attendanceId } = req.params;
+      const { field, value } = req.body;
+
+      if (!['check_in_at', 'check_out_at'].includes(field)) {
+        return res.status(400).json({ error: '잘못된 필드입니다.' });
+      }
+
+      if (!value || value.trim() === '') {
+        await db.query(
+          'UPDATE attendance SET ' + field + ' = NULL, is_manual_override = TRUE, updated_at = NOW() WHERE attendance_id = $1',
+          [attendanceId]
+        );
+      } else {
+        await db.query(
+          'UPDATE attendance SET ' + field + ' = ($2)::TIMESTAMP AT TIME ZONE \'Asia/Seoul\', is_manual_override = TRUE, updated_at = NOW() WHERE attendance_id = $1',
+          [attendanceId, value]
+        );
+      }
+
+      res.json({ success: true });
+    } catch (err) {
+      console.error('[Admin] 시각 수정 오류:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ═══ API: 미입실자 결석 일괄 처리 ═════════════════════════
   app.post('/api/admin/mark-absent/:sessionId', async (req, res) => {
     try {
@@ -160,72 +189,6 @@ function registerAdminRoutes(app) {
       res.status(500).send('오류: ' + err.message);
     }
   });
-
-  // ═══ 생체인증 관리 페이지 ══════════════════════════════════
-  app.get('/admin/credentials', async (req, res) => {
-    try {
-      const courses = await db.query(`
-        SELECT course_id, course_name, course_code, cohort, course_type
-        FROM courses ORDER BY course_type, course_name
-      `);
-      res.send(renderCredentialsPage(courses.rows));
-    } catch (err) {
-      res.status(500).send('오류: ' + err.message);
-    }
-  });
-
-  // ═══ API: 과정별 생체인증 현황 ═════════════════════════════
-  app.get('/api/admin/credentials/:courseId', async (req, res) => {
-    try {
-      const r = await db.query(`
-        SELECT 
-          s.student_id, s.name, s.phone,
-          c.registered_at,
-          c.last_used_at,
-          c.device_type,
-          CASE WHEN c.credential_id IS NOT NULL THEN true ELSE false END AS is_registered
-        FROM enrollments e
-        JOIN students s ON s.student_id = e.student_id AND s.status = 'active'
-        LEFT JOIN credentials c ON c.student_id = s.student_id
-        WHERE e.course_id = $1
-        ORDER BY s.name
-      `, [req.params.courseId]);
-      res.json(r.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
-  });
-
-  // ═══ API: 특정 수강생 생체인증 초기화 ══════════════════════
-  app.delete('/api/admin/credentials/:studentId', async (req, res) => {
-    try {
-      const r = await db.query(
-        'DELETE FROM credentials WHERE student_id = $1 RETURNING credential_id',
-        [req.params.studentId]
-      );
-      // 푸시 구독도 함께 삭제 (기기 바뀌면 무효)
-      await db.query(
-        'DELETE FROM push_subscriptions WHERE student_id = $1',
-        [req.params.studentId]
-      );
-      res.json({ success: true, deleted: r.rowCount });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-  });
-
-  // ═══ API: 과정 전체 생체인증 일괄 초기화 ═══════════════════
-  app.delete('/api/admin/credentials/course/:courseId', async (req, res) => {
-    try {
-      const r = await db.query(`
-        DELETE FROM credentials WHERE student_id IN (
-          SELECT e.student_id FROM enrollments e WHERE e.course_id = $1
-        ) RETURNING credential_id
-      `, [req.params.courseId]);
-      await db.query(`
-        DELETE FROM push_subscriptions WHERE student_id IN (
-          SELECT e.student_id FROM enrollments e WHERE e.course_id = $1
-        )
-      `, [req.params.courseId]);
-      res.json({ success: true, deleted: r.rowCount });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-  });
 }
 
 
@@ -294,6 +257,8 @@ function renderAttendancePage(courses) {
     .rate-bar { width: 60px; height: 6px; background: #e5e5e7; border-radius: 3px; display: inline-block; vertical-align: middle; margin-right: 6px; }
     .rate-fill { height: 100%; border-radius: 3px; background: #34c759; }
     #loading { text-align: center; padding: 20px; color: #86868b; }
+    .editable-time { cursor: pointer; border-bottom: 1px dashed #007AFF; display: inline-block; }
+    .editable-time:hover { background: #e8f4fd; border-radius: 4px; }
   </style>
 </head>
 <body>
@@ -398,6 +363,7 @@ async function loadAttendance(sessionId) {
 
   // 버튼
   html += '<div class="actions">';
+  html += '<button class="btn btn-primary btn-small" onclick="loadAttendance(\\'' + sessionId + '\\')">🔄 새로고침</button>';
   html += '<button class="btn btn-outline btn-small" onclick="markAbsent(\\'' + sessionId + '\\')">미입실자 결석 일괄 처리</button>';
   html += '</div>';
 
@@ -415,8 +381,16 @@ async function loadAttendance(sessionId) {
     html += '<tr>';
     html += '<td><b>' + s.name + '</b></td>';
     html += '<td class="time">' + s.phone + '</td>';
-    html += '<td class="time">' + checkIn + '</td>';
-    html += '<td class="time">' + checkOut + '</td>';
+
+    if (s.attendance_id) {
+      const ciRaw = s.check_in_at || '';
+      const coRaw = s.check_out_at || '';
+      html += '<td class="time"><span class="editable-time" onclick="editTime(\\'' + s.attendance_id + '\\', \\'check_in_at\\', \\'' + ciRaw + '\\', \\'' + sessionId + '\\')" title="클릭하여 수정">' + checkIn + '</span></td>';
+      html += '<td class="time"><span class="editable-time" onclick="editTime(\\'' + s.attendance_id + '\\', \\'check_out_at\\', \\'' + coRaw + '\\', \\'' + sessionId + '\\')" title="클릭하여 수정">' + checkOut + '</span></td>';
+    } else {
+      html += '<td class="time">' + checkIn + '</td>';
+      html += '<td class="time">' + checkOut + '</td>';
+    }
     html += '<td><span class="badge ' + badgeClass + '">' + status + '</span>' + manual + '</td>';
 
     if (s.attendance_id) {
@@ -489,6 +463,61 @@ async function loadSummary() {
 
   html += '</table></div></div>';
   document.getElementById('content').innerHTML = html;
+}
+
+// ─── 입실/퇴실 시각 수정 ────────────────────────────────────
+async function editTime(attendanceId, field, currentValue, sessionId) {
+  const fieldName = field === 'check_in_at' ? '입실 시각' : '퇴실 시각';
+
+  let defaultVal = '';
+  if (currentValue) {
+    const d = new Date(currentValue);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    defaultVal = hh + ':' + mm;
+  }
+
+  const input = prompt(
+    fieldName + '을 수정합니다.\\n' +
+    '시각을 HH:MM 형식으로 입력하세요. (예: 09:30)\\n' +
+    '비워두면 시각이 삭제됩니다.',
+    defaultVal
+  );
+
+  if (input === null) return;
+
+  let value = '';
+  if (input.trim() !== '') {
+    const match = input.trim().match(/^(\\d{1,2}):(\\d{2})$/);
+    if (!match) {
+      alert('형식이 올바르지 않습니다. HH:MM (예: 09:30)');
+      return;
+    }
+    const hh = parseInt(match[1]);
+    const mm = parseInt(match[2]);
+    if (hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+      alert('유효하지 않은 시각입니다.');
+      return;
+    }
+    const today = new Date().toISOString().split('T')[0];
+    value = today + ' ' + String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0') + ':00';
+  }
+
+  try {
+    const res = await fetch('/api/admin/attendance/' + attendanceId + '/time', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ field: field, value: value }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      loadAttendance(sessionId);
+    } else {
+      alert('수정 실패: ' + (data.error || ''));
+    }
+  } catch (err) {
+    alert('네트워크 오류: ' + err.message);
+  }
 }
 </script>
 </body>
@@ -647,203 +676,6 @@ function renderSyncPage(courses) {
       alert('동기화 오류: ' + err.message);
     }
   }
-</script>
-</body>
-</html>`;
-}
-
-// ═════════════════════════════════════════════════════════════
-// 생체인증 관리 페이지 HTML
-// ═════════════════════════════════════════════════════════════
-function renderCredentialsPage(courses) {
-  const courseOptions = courses.map(c =>
-    `<option value="${c.course_id}">${c.course_name} ${c.cohort || ''} [${c.course_type || ''}]</option>`
-  ).join('');
-
-  return `<!DOCTYPE html>
-<html lang="ko">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>생체인증 관리 - 관리자</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, 'Malgun Gothic', sans-serif; background: #f5f5f7; color: #1d1d1f; padding: 16px; }
-    .container { max-width: 1000px; margin: 0 auto; }
-    h1 { font-size: 22px; margin-bottom: 4px; }
-    .subtitle { color: #86868b; font-size: 13px; margin-bottom: 20px; }
-    .top-bar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
-    select { padding: 10px 14px; border: 1.5px solid #d2d2d7; border-radius: 10px; font-size: 14px; background: #fff; min-width: 200px; }
-    .card { background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-    .stats { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
-    .stat { background: #f5f5f7; border-radius: 8px; padding: 12px 16px; text-align: center; min-width: 100px; }
-    .stat-num { font-size: 24px; font-weight: 700; }
-    .stat-num.green { color: #34c759; }
-    .stat-num.red { color: #ff3b30; }
-    .stat-num.blue { color: #1a73e8; }
-    .stat-label { font-size: 11px; color: #86868b; margin-top: 2px; }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th { text-align: left; padding: 8px 10px; background: #f5f5f7; color: #86868b; font-weight: 500; font-size: 12px; }
-    td { padding: 8px 10px; border-top: 1px solid #f0f0f0; }
-    tr:hover { background: #fafafa; }
-    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
-    .b-등록 { background: #e6f4ea; color: #137333; }
-    .b-미등록 { background: #fce8e6; color: #c5221f; }
-    .time { font-variant-numeric: tabular-nums; font-size: 12px; color: #555; }
-    .btn { padding: 6px 12px; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; }
-    .btn-danger { background: #ff3b30; color: #fff; }
-    .btn-danger:hover { background: #d32f2f; }
-    .btn-danger:disabled { background: #d2d2d7; cursor: not-allowed; }
-    .btn-outline-danger { background: #fff; color: #ff3b30; border: 1px solid #ff3b30; padding: 8px 16px; font-size: 13px; }
-    .btn-outline-danger:hover { background: #fff5f5; }
-    .back-link { font-size: 13px; color: #1a73e8; text-decoration: none; }
-    .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
-    .empty { text-align: center; padding: 40px; color: #86868b; }
-    .search-box { padding: 8px 12px; border: 1.5px solid #d2d2d7; border-radius: 8px; font-size: 14px; width: 200px; }
-    .search-box:focus { border-color: #1a73e8; outline: none; }
-    .filter-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
-    .filter-btn { padding: 6px 12px; border: 1px solid #d2d2d7; border-radius: 6px; font-size: 12px; cursor: pointer; background: #fff; }
-    .filter-btn.active { background: #1a73e8; color: #fff; border-color: #1a73e8; }
-  </style>
-</head>
-<body>
-<div class="container">
-  <a href="/" class="back-link">← 대시보드로 돌아가기</a>
-  <h1 style="margin-top:12px;">🔐 생체인증 관리</h1>
-  <p class="subtitle">수강생별 생체인증 등록 현황 확인 + 초기화</p>
-
-  <div class="top-bar">
-    <select id="courseSelect" onchange="loadCredentials()">
-      <option value="">-- 과정 선택 --</option>
-      ${courseOptions}
-    </select>
-  </div>
-
-  <div id="content">
-    <div class="empty">과정을 선택하세요.</div>
-  </div>
-</div>
-
-<script>
-let allStudents = [];
-let currentFilter = 'all';
-
-async function loadCredentials() {
-  const courseId = document.getElementById('courseSelect').value;
-  if (!courseId) { document.getElementById('content').innerHTML = '<div class="empty">과정을 선택하세요.</div>'; return; }
-
-  document.getElementById('content').innerHTML = '<div class="empty">불러오는 중...</div>';
-
-  const res = await fetch('/api/admin/credentials/' + courseId);
-  allStudents = await res.json();
-  currentFilter = 'all';
-  renderTable();
-}
-
-function renderTable() {
-  const filtered = currentFilter === 'all' ? allStudents
-    : currentFilter === 'registered' ? allStudents.filter(s => s.is_registered)
-    : allStudents.filter(s => !s.is_registered);
-
-  const search = (document.getElementById('searchInput')?.value || '').toLowerCase();
-  const displayed = search ? filtered.filter(s => s.name.includes(search) || s.phone.includes(search)) : filtered;
-
-  const total = allStudents.length;
-  const registered = allStudents.filter(s => s.is_registered).length;
-  const unregistered = total - registered;
-  const courseId = document.getElementById('courseSelect').value;
-
-  let html = '<div class="card">';
-
-  // 요약
-  html += '<div class="stats">';
-  html += '<div class="stat"><div class="stat-num blue">' + total + '</div><div class="stat-label">전체</div></div>';
-  html += '<div class="stat"><div class="stat-num green">' + registered + '</div><div class="stat-label">등록 완료</div></div>';
-  html += '<div class="stat"><div class="stat-num red">' + unregistered + '</div><div class="stat-label">미등록</div></div>';
-  html += '</div>';
-
-  // 필터 + 검색
-  html += '<div class="filter-bar">';
-  html += '<button class="filter-btn' + (currentFilter === 'all' ? ' active' : '') + '" onclick="setFilter(\\'all\\')">전체 ' + total + '</button>';
-  html += '<button class="filter-btn' + (currentFilter === 'registered' ? ' active' : '') + '" onclick="setFilter(\\'registered\\')">등록 ' + registered + '</button>';
-  html += '<button class="filter-btn' + (currentFilter === 'unregistered' ? ' active' : '') + '" onclick="setFilter(\\'unregistered\\')">미등록 ' + unregistered + '</button>';
-  html += '<input type="text" class="search-box" id="searchInput" placeholder="이름/전화번호 검색" oninput="renderTable()" value="' + (document.getElementById('searchInput')?.value || '') + '">';
-  html += '</div>';
-
-  // 테이블
-  html += '<div style="overflow-x:auto;"><table>';
-  html += '<tr><th>이름</th><th>전화번호</th><th>상태</th><th>등록일</th><th>마지막 사용</th><th>작업</th></tr>';
-
-  for (const s of displayed) {
-    const regDate = s.registered_at ? new Date(s.registered_at).toLocaleDateString('ko-KR', {timeZone:'Asia/Seoul'}) : '-';
-    const lastUsed = s.last_used_at ? new Date(s.last_used_at).toLocaleString('ko-KR', {timeZone:'Asia/Seoul', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'}) : '-';
-
-    html += '<tr>';
-    html += '<td><b>' + s.name + '</b></td>';
-    html += '<td class="time">' + s.phone + '</td>';
-    html += '<td><span class="badge ' + (s.is_registered ? 'b-등록' : 'b-미등록') + '">' + (s.is_registered ? '등록' : '미등록') + '</span></td>';
-    html += '<td class="time">' + regDate + '</td>';
-    html += '<td class="time">' + lastUsed + '</td>';
-
-    if (s.is_registered) {
-      html += '<td><button class="btn btn-danger" onclick="resetOne(\\'' + s.student_id + '\\', \\'' + s.name + '\\')">초기화</button></td>';
-    } else {
-      html += '<td style="color:#86868b;font-size:12px;">-</td>';
-    }
-    html += '</tr>';
-  }
-
-  if (displayed.length === 0) {
-    html += '<tr><td colspan="6" style="text-align:center;color:#86868b;padding:20px;">해당하는 수강생이 없습니다.</td></tr>';
-  }
-
-  html += '</table></div>';
-
-  // 일괄 초기화 버튼
-  if (registered > 0) {
-    html += '<div class="actions">';
-    html += '<button class="btn btn-outline-danger" onclick="resetCourse(\\'' + courseId + '\\')">⚠️ 이 과정 전체 초기화 (' + registered + '명)</button>';
-    html += '</div>';
-  }
-
-  html += '</div>';
-  document.getElementById('content').innerHTML = html;
-}
-
-function setFilter(f) {
-  currentFilter = f;
-  renderTable();
-}
-
-async function resetOne(studentId, name) {
-  if (!confirm(name + '님의 생체인증을 초기화하시겠습니까?\\n\\n초기화 후 다시 등록해야 출결 체크가 가능합니다.')) return;
-
-  const res = await fetch('/api/admin/credentials/' + studentId, { method: 'DELETE' });
-  const data = await res.json();
-
-  if (data.success) {
-    alert(name + '님의 생체인증이 초기화되었습니다.');
-    loadCredentials();
-  } else {
-    alert('오류: ' + (data.error || '초기화 실패'));
-  }
-}
-
-async function resetCourse(courseId) {
-  const courseName = document.getElementById('courseSelect').selectedOptions[0].text;
-  if (!confirm('⚠️ 정말로 이 과정 전체 수강생의 생체인증을 초기화하시겠습니까?\\n\\n과정: ' + courseName + '\\n\\n모든 수강생이 다시 생체인증을 등록해야 합니다.')) return;
-  if (!confirm('한 번 더 확인합니다.\\n정말 전체 초기화하시겠습니까?')) return;
-
-  const res = await fetch('/api/admin/credentials/course/' + courseId, { method: 'DELETE' });
-  const data = await res.json();
-
-  if (data.success) {
-    alert(data.deleted + '건의 생체인증이 초기화되었습니다.');
-    loadCredentials();
-  } else {
-    alert('오류: ' + (data.error || '초기화 실패'));
-  }
-}
 </script>
 </body>
 </html>`;
