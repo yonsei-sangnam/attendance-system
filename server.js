@@ -815,6 +815,9 @@ function renderAdminPage(data) {
       <p style="font-size:14px;color:#86868b;margin-bottom:12px;">수업 첫날 수강생 단체 등록 시 아래 주소를 안내하세요:</p>
       <div style="background:#f5f5f7;padding:12px;border-radius:8px;font-family:monospace;font-size:14px;word-break:break-all;">${data.baseUrl}/register</div>
       <div class="info-box">💡 수강생이 이 주소에 접속 → 전화번호 입력 → 지문/Face ID 등록</div>
+      <div style="margin-top:12px;">
+        <a href="/admin/credentials" class="btn-link" style="font-size:14px;font-weight:600;">생체인증 관리 (현황 확인 / 초기화) →</a>
+      </div>
     </div>
     <div class="card"><h2>🏫 교육과정</h2>
       <table><tr><th>과정명</th><th>약칭</th><th>종류</th><th>기수</th><th>강의실</th></tr>${courseRows}</table>
