@@ -296,10 +296,10 @@ function registerAdminRoutes(app) {
     }
   });
 
-  // ═══ API: 수강생 삭제 (비활성화) ═════════════════════════════
-  app.delete('/api/admin/students/:studentId', async (req, res) => {
+  // ═══ API: 수강생 삭제 (수강 등록 해제) ═══════════════════════
+  app.delete('/api/admin/students/:studentId/:courseId', async (req, res) => {
     try {
-      await db.query("UPDATE students SET status = 'inactive' WHERE student_id = $1", [req.params.studentId]);
+      await db.query('DELETE FROM enrollments WHERE student_id = $1 AND course_id = $2', [req.params.studentId, req.params.courseId]);
       res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
@@ -871,9 +871,11 @@ async function resetCred(studentId, name) {
 
 // ─── 수강생 비활성화 ─────────────────────────────────────
 async function deactivateStudent(studentId, name) {
-  if (!confirm(name + '을(를) 삭제(비활성화)하시겠습니까?')) return;
+  if (!confirm(name + '을(를) 이 과정에서 삭제하시겠습니까?')) return;
+  const courseId = document.getElementById('courseSelect').value;
+  if (!courseId) { alert('과정을 선택하세요.'); return; }
   try {
-    const res = await fetch('/api/admin/students/' + studentId, { method: 'DELETE' });
+    const res = await fetch('/api/admin/students/' + studentId + '/' + courseId, { method: 'DELETE' });
     const data = await res.json();
     if (!data.success) { alert('삭제 실패: ' + (data.error || '')); }
   } catch (err) { alert('삭제 오류: ' + err.message); }
