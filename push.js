@@ -58,13 +58,23 @@ async function sendPush(studentId, payload) {
     };
 
     try {
-      await webpush.sendNotification(subscription, JSON.stringify(payload));
+      // 10초 타임아웃 (Apple Push 무응답 방지)
+      const timeoutMs = 10000;
+      const sendPromise = webpush.sendNotification(subscription, JSON.stringify(payload));
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Push timeout (10s)')), timeoutMs)
+      );
+      await Promise.race([sendPromise, timeoutPromise]);
       results.push({ endpoint: sub.endpoint, status: 'sent' });
     } catch (err) {
       if (err.statusCode === 410 || err.statusCode === 404) {
         // 구독 만료 → 삭제
         await removeSubscription(sub.endpoint);
-        results.push({ endpoint: sub.endpoint, status: 'expired' });
+        results.push({ endpoint: sub.endpoint, status: 'expired', detail: 'subscription removed' });
+      } else if (err.message && err.message.includes('timeout')) {
+        // 타임아웃 → 만료된 구독일 가능성 높음 → 삭제
+        await removeSubscription(sub.endpoint);
+        results.push({ endpoint: sub.endpoint, status: 'timeout', detail: 'subscription removed (no response)' });
       } else {
         results.push({ endpoint: sub.endpoint, status: 'error', error: err.message });
       }
