@@ -429,6 +429,25 @@ function registerAdminRoutes(app) {
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
 
+  // ═══ API: 회차 수정 ═════════════════════════════════════════
+  app.put('/api/admin/sessions/:sessionId', async (req, res) => {
+    try {
+      const { session_date, start_time, end_time, late_cutoff, early_leave_cutoff, is_workshop, note } = req.body;
+      await db.query(`
+        UPDATE course_sessions SET
+          session_date = COALESCE($1, session_date),
+          start_time = COALESCE($2, start_time),
+          end_time = COALESCE($3, end_time),
+          late_cutoff = COALESCE($4, late_cutoff),
+          early_leave_cutoff = COALESCE($5, early_leave_cutoff),
+          is_workshop = COALESCE($6, is_workshop),
+          note = $7
+        WHERE session_id = $8
+      `, [session_date, start_time, end_time, late_cutoff, early_leave_cutoff, is_workshop, note, req.params.sessionId]);
+      res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
   // ═══ API: 강의실 추가 ═══════════════════════════════════════
   app.post('/api/admin/classrooms', async (req, res) => {
     try {
@@ -1249,26 +1268,80 @@ async function loadSessionsForCourse() {
   el.innerHTML = '<div id="loading">불러오는 중...</div>';
   const res = await fetch('/api/admin/sessions/' + courseId);
   const sessions = await res.json();
+  window._sessions = {};
+  for (const s of sessions) { window._sessions[s.session_id] = s; }
 
   if (sessions.length === 0) { el.innerHTML = '<div style="color:#86868b;padding:10px;">등록된 회차가 없습니다.</div>'; return; }
 
-  let html = '<div style="max-height:400px; overflow-y:auto;">';
+  let html = '<div style="margin-bottom:8px;"><button class="btn btn-small" onclick="loadSessionsForCourse()">🔄 새로고침</button></div>';
+  html += '<div style="overflow-x:auto;"><table><tr><th>회차</th><th>날짜</th><th>시간</th><th>지각</th><th>조퇴</th><th>워크샵</th><th>비고</th><th>출결</th><th>관리</th></tr>';
   for (const s of sessions) {
     const date = s.session_date ? s.session_date.split('T')[0] : '-';
     const start = s.start_time ? s.start_time.slice(0,5) : '-';
     const end = s.end_time ? s.end_time.slice(0,5) : '-';
-    html += '<div class="session-row">';
-    html += '<span style="width:50px;font-weight:600;">' + s.session_number + '회</span>';
-    html += '<span style="width:100px;">' + date + '</span>';
-    html += '<span style="width:100px;">' + start + ' ~ ' + end + '</span>';
-    html += '<span style="width:80px;font-size:12px;color:#86868b;">' + s.classroom_name + '</span>';
-    html += '<span style="width:70px;font-size:12px;color:#1a73e8;">' + s.attendance_count + '명</span>';
-    html += '<span>' + (s.is_workshop ? '🏕️' : '') + '</span>';
-    html += '<button class="btn btn-small btn-danger" onclick="deleteSession(\\'' + s.session_id + '\\', ' + s.session_number + ')" style="margin-left:auto;">삭제</button>';
-    html += '</div>';
+    const late = s.late_cutoff ? s.late_cutoff.slice(0,5) : '-';
+    const early = s.early_leave_cutoff ? s.early_leave_cutoff.slice(0,5) : '-';
+    html += '<tr>';
+    html += '<td style="font-weight:600;">' + s.session_number + '회</td>';
+    html += '<td>' + date + '</td>';
+    html += '<td>' + start + '~' + end + '</td>';
+    html += '<td>' + late + '</td>';
+    html += '<td>' + early + '</td>';
+    html += '<td>' + (s.is_workshop ? '🏕️' : '-') + '</td>';
+    html += '<td style="font-size:12px;color:#86868b;max-width:120px;">' + (s.note || '') + '</td>';
+    html += '<td style="color:#1a73e8;">' + s.attendance_count + '명</td>';
+    html += '<td style="white-space:nowrap;">';
+    html += '<button class="btn btn-small btn-outline" onclick="editSession(\\'' + s.session_id + '\\')">수정</button> ';
+    html += '<button class="btn btn-small btn-danger" onclick="deleteSession(\\'' + s.session_id + '\\', ' + s.session_number + ')">삭제</button>';
+    html += '</td></tr>';
   }
-  html += '</div>';
+  html += '</table></div>';
+  html += '<div id="editFormArea"></div>';
   el.innerHTML = html;
+}
+
+function editSession(sessionId) {
+  const s = window._sessions[sessionId];
+  if (!s) return;
+  const date = s.session_date ? s.session_date.split('T')[0] : '';
+  const start = s.start_time ? s.start_time.slice(0,5) : '';
+  const end = s.end_time ? s.end_time.slice(0,5) : '';
+  const late = s.late_cutoff ? s.late_cutoff.slice(0,5) : '';
+  const early = s.early_leave_cutoff ? s.early_leave_cutoff.slice(0,5) : '';
+
+  let html = '<div style="background:#f5f5f7;padding:16px;border-radius:10px;margin-top:12px;">';
+  html += '<b>' + s.session_number + '회차 수정</b><br><br>';
+  html += '<div class="form-row">';
+  html += '<div class="form-group"><label>날짜</label><input type="date" id="ed_date" value="' + date + '" style="width:140px;"></div>';
+  html += '<div class="form-group"><label>시작</label><input type="time" id="ed_start" value="' + start + '" style="width:110px;"></div>';
+  html += '<div class="form-group"><label>종료</label><input type="time" id="ed_end" value="' + end + '" style="width:110px;"></div>';
+  html += '</div><div class="form-row">';
+  html += '<div class="form-group"><label>지각 기준</label><input type="time" id="ed_late" value="' + late + '" style="width:110px;"></div>';
+  html += '<div class="form-group"><label>조퇴 기준</label><input type="time" id="ed_early" value="' + early + '" style="width:110px;"></div>';
+  html += '<div class="form-group"><label>워크샵</label><select id="ed_ws" style="width:80px;"><option value="false"' + (!s.is_workshop ? ' selected' : '') + '>아니오</option><option value="true"' + (s.is_workshop ? ' selected' : '') + '>예</option></select></div>';
+  html += '</div><div class="form-row">';
+  html += '<div class="form-group"><label>비고</label><input type="text" id="ed_note" value="' + (s.note || '').replace(/"/g, '&quot;') + '" placeholder="공휴일, 단체식사, 외부행사 등" style="width:250px;"></div>';
+  html += '<button class="btn btn-success" onclick="saveSession(\\'' + sessionId + '\\')">저장</button>';
+  html += '<button class="btn btn-outline" onclick="loadSessionsForCourse()">취소</button>';
+  html += '</div></div>';
+
+  document.getElementById('editFormArea').innerHTML = html;
+  document.getElementById('ed_date').scrollIntoView({ behavior: 'smooth' });
+}
+
+async function saveSession(sessionId) {
+  const data = {
+    session_date: document.getElementById('ed_date').value,
+    start_time: document.getElementById('ed_start').value,
+    end_time: document.getElementById('ed_end').value,
+    late_cutoff: document.getElementById('ed_late').value,
+    early_leave_cutoff: document.getElementById('ed_early').value,
+    is_workshop: document.getElementById('ed_ws').value === 'true',
+    note: document.getElementById('ed_note').value.trim() || null,
+  };
+  const res = await fetch('/api/admin/sessions/' + sessionId, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
+  const r = await res.json();
+  if (r.success) { await loadSessionsForCourse(); } else { alert('수정 실패: ' + (r.error||'')); }
 }
 
 async function bulkAddSessions() {
