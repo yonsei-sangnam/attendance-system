@@ -1239,6 +1239,47 @@ app.post('/api/push/checkout', async (req, res) => {
   }
 });
 
+// ─── 테스트 푸시 발송 (디버깅용) ─────────────────────────────
+app.post('/api/push/test', async (req, res) => {
+  try {
+    const { studentId } = req.body;
+    if (!studentId) return res.json({ error: 'studentId 필요' });
+
+    const studentRes = await db.query('SELECT name FROM students WHERE student_id = $1', [studentId]);
+    const name = studentRes.rows.length > 0 ? studentRes.rows[0].name : 'unknown';
+
+    const payload = {
+      title: '테스트 알림',
+      body: name + '님, 퇴실 확인 테스트입니다.',
+      url: '/app',
+      studentId: studentId,
+      attendanceId: 'test-' + Date.now(),
+    };
+
+    const results = await push.sendPush(studentId, payload);
+    console.log('[Push Test] ' + name + ' 발송 결과:', JSON.stringify(results));
+    res.json({ name, results });
+  } catch (err) {
+    console.error('[Push Test] 오류:', err);
+    res.json({ error: err.message });
+  }
+});
+
+// ─── 푸시 구독 조회 (디버깅용) ───────────────────────────────
+app.get('/api/push/subscriptions', async (req, res) => {
+  try {
+    const r = await db.query(`
+      SELECT ps.student_id, s.name, 
+             LEFT(ps.endpoint, 80) AS endpoint_prefix,
+             ps.created_at, ps.updated_at
+      FROM push_subscriptions ps
+      JOIN students s ON s.student_id = ps.student_id
+      ORDER BY ps.updated_at DESC
+    `);
+    res.json(r.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 
 // ─── 서버 시작 ───────────────────────────────────────────────
 app.listen(PORT, () => {
