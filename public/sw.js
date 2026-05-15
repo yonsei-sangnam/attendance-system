@@ -1,6 +1,6 @@
 // Service Worker: PWA 오프라인 + 푸시 알림 처리
 
-const CACHE_NAME = 'attendance-v1';
+const CACHE_NAME = 'attendance-v2';
 
 // ─── 설치: 기본 파일 캐시 ────────────────────────────────────
 self.addEventListener('install', (event) => {
@@ -26,7 +26,7 @@ self.addEventListener('activate', (event) => {
 
 // ─── 푸시 알림 수신 ──────────────────────────────────────────
 self.addEventListener('push', (event) => {
-  let data = { title: '출결 알림', body: '퇴실 확인을 해주세요.', url: '/' };
+  let data = { title: '출결 알림', body: '퇴실 확인을 해주세요.', url: '/app' };
 
   if (event.data) {
     try {
@@ -45,7 +45,7 @@ self.addEventListener('push', (event) => {
     renotify: true,
     requireInteraction: true,
     data: {
-      url: data.url || '/',
+      url: data.url || '/app',
       studentId: data.studentId || null,
       attendanceId: data.attendanceId || null,
     },
@@ -63,36 +63,29 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
-  const action = event.action;
-  const data = event.notification.data || {};
+  var action = event.action;
+  var data = event.notification.data || {};
 
-  // ── 퇴실 처리 함수 (재사용) ────────────────────────────
-  function doCheckout() {
-    return fetch('/api/push/checkout', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        studentId: data.studentId,
-        attendanceId: data.attendanceId,
-      }),
-    }).then(function(res) { return res.json(); });
+  // 퇴실 처리용 URL 생성 (앱 페이지에서 처리하도록)
+  var checkoutUrl = '/app';
+  if (data.studentId && data.attendanceId) {
+    checkoutUrl = '/app?checkout=true&sid=' + encodeURIComponent(data.studentId) + '&aid=' + encodeURIComponent(data.attendanceId);
   }
 
-  function openApp() {
-    return clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
-      for (var i = 0; i < clientList.length; i++) {
-        if (clientList[i].url.includes(self.registration.scope) && 'focus' in clientList[i]) {
-          return clientList[i].focus();
-        }
-      }
-      return clients.openWindow(data.url || '/');
-    });
-  }
-
-  // ── "퇴실 확인" 액션 버튼 클릭 → 서버 API 호출 ──
+  // ── "퇴실 확인" 액션 버튼 (안드로이드) ──
+  // 안드로이드: SW에서 직접 API 호출 시도 → 실패 시 앱 페이지로 이동
   if (action === 'checkout' && data.studentId && data.attendanceId) {
     event.waitUntil(
-      doCheckout().then(function(result) {
+      fetch('/api/push/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentId: data.studentId,
+          attendanceId: data.attendanceId,
+        }),
+      })
+      .then(function(res) { return res.json(); })
+      .then(function(result) {
         if (result.success) {
           return self.registration.showNotification('퇴실 완료', {
             body: result.message || '퇴실이 정상 처리되었습니다.',
@@ -100,33 +93,31 @@ self.addEventListener('notificationclick', (event) => {
             tag: 'checkout-confirm',
           });
         } else {
-          return self.registration.showNotification('퇴실 처리 실패', {
-            body: result.error || '관리자에게 문의하세요.',
-            icon: '/icon-192.png',
-            tag: 'checkout-error',
-          });
+          // API 실패 → 앱 페이지에서 재시도하도록 열기
+          return clients.openWindow(checkoutUrl);
         }
-      }).catch(function() {
-        return self.registration.showNotification('네트워크 오류', {
-          body: '퇴실 처리 중 오류 발생. QR 스캔으로 퇴실해주세요.',
-          icon: '/icon-192.png',
-          tag: 'checkout-error',
-        });
+      })
+      .catch(function() {
+        // 네트워크 오류 → 앱 페이지에서 재시도
+        return clients.openWindow(checkoutUrl);
       })
     );
     return;
   }
 
-  // ── 일반 클릭 (알림 본문 탭) → 퇴실 처리 + 앱 열기 ──
-  if (data.studentId && data.attendanceId) {
-    event.waitUntil(
-      doCheckout()
-        .then(function() { return openApp(); })
-        .catch(function() { return openApp(); })
-    );
-    return;
-  }
-
-  // ── studentId 없는 일반 알림 클릭 → 앱 열기만 ──
-  event.waitUntil(openApp());
+  // ── 일반 클릭 (알림 본문 탭) ──
+  // iOS + Android 공통: 앱 페이지를 URL 파라미터와 함께 열어서 퇴실 처리
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
+      // 이미 열린 앱 창이 있으면 URL 변경 + 포커스
+      for (var i = 0; i < clientList.length; i++) {
+        var client = clientList[i];
+        if (client.url.includes('/app') && 'navigate' in client) {
+          return client.navigate(checkoutUrl).then(function(c) { return c.focus(); });
+        }
+      }
+      // 없으면 새 창 열기
+      return clients.openWindow(checkoutUrl);
+    })
+  );
 });
