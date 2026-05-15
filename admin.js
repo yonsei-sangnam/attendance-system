@@ -189,6 +189,140 @@ function registerAdminRoutes(app) {
       res.status(500).send('오류: ' + err.message);
     }
   });
+
+  // ═══ 수강생 관리 페이지 ═══════════════════════════════════════
+  app.get('/admin/students', async (req, res) => {
+    try {
+      const courses = await db.query(`
+        SELECT course_id, course_name, course_code, cohort, course_type
+        FROM courses ORDER BY course_type, course_name
+      `);
+      res.send(renderStudentsPage(courses.rows));
+    } catch (err) {
+      res.status(500).send('오류: ' + err.message);
+    }
+  });
+
+  // ═══ API: 과정별 수강생 목록 + 생체인증 등록 여부 ═══════════
+  app.get('/api/admin/students/:courseId', async (req, res) => {
+    try {
+      const r = await db.query(`
+        SELECT 
+          s.student_id, s.name, s.phone, s.status,
+          CASE WHEN cr.cred_count > 0 THEN TRUE ELSE FALSE END AS has_credential,
+          COALESCE(cr.cred_count, 0) AS cred_count,
+          cr.last_used_at,
+          CASE WHEN ps.sub_count > 0 THEN TRUE ELSE FALSE END AS has_push
+        FROM students s
+        JOIN enrollments e ON e.student_id = s.student_id
+        LEFT JOIN (
+          SELECT student_id, COUNT(*) AS cred_count, MAX(last_used_at) AS last_used_at
+          FROM credentials GROUP BY student_id
+        ) cr ON cr.student_id = s.student_id
+        LEFT JOIN (
+          SELECT student_id, COUNT(*) AS sub_count
+          FROM push_subscriptions GROUP BY student_id
+        ) ps ON ps.student_id = s.student_id
+        WHERE e.course_id = $1
+        ORDER BY s.name
+      `, [req.params.courseId]);
+      res.json(r.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ═══ API: 수강생 일괄 등록 ═══════════════════════════════════
+  app.post('/api/admin/students/bulk', async (req, res) => {
+    const client = await db.connect();
+    try {
+      const { courseId, students } = req.body;
+      // students: [{name, phone}]
+      if (!courseId || !students || !Array.isArray(students)) {
+        return res.status(400).json({ error: '과정ID와 수강생 목록이 필요합니다.' });
+      }
+
+      await client.query('BEGIN');
+      let added = 0, skipped = 0, errors = [];
+
+      for (const s of students) {
+        const name = (s.name || '').trim();
+        let phone = (s.phone || '').trim();
+        if (!name || !phone) { skipped++; continue; }
+
+        // 전화번호 정규화 (숫자만 추출 → 010-XXXX-XXXX 형태)
+        const digits = phone.replace(/[^0-9]/g, '');
+        if (digits.length === 11) {
+          phone = digits.slice(0, 3) + '-' + digits.slice(3, 7) + '-' + digits.slice(7);
+        } else if (digits.length === 10) {
+          phone = digits.slice(0, 3) + '-' + digits.slice(3, 6) + '-' + digits.slice(6);
+        }
+        // else 그대로 사용
+
+        // 기존 학생 확인 (전화번호 기준)
+        const existing = await client.query(
+          'SELECT student_id FROM students WHERE phone = $1', [phone]
+        );
+
+        let studentId;
+        if (existing.rows.length > 0) {
+          studentId = existing.rows[0].student_id;
+          // 이름 업데이트
+          await client.query('UPDATE students SET name = $1, status = $2 WHERE student_id = $3', [name, 'active', studentId]);
+        } else {
+          // 새 학생 등록
+          const ins = await client.query(
+            'INSERT INTO students (name, phone, status) VALUES ($1, $2, $3) RETURNING student_id',
+            [name, phone, 'active']
+          );
+          studentId = ins.rows[0].student_id;
+        }
+
+        // 수강 등록 (중복 방지)
+        await client.query(`
+          INSERT INTO enrollments (student_id, course_id)
+          VALUES ($1, $2)
+          ON CONFLICT (student_id, course_id) DO NOTHING
+        `, [studentId, courseId]);
+
+        added++;
+      }
+
+      await client.query('COMMIT');
+      res.json({ success: true, added, skipped });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
+    }
+  });
+
+  // ═══ API: 수강생 삭제 (비활성화) ═════════════════════════════
+  app.delete('/api/admin/students/:studentId', async (req, res) => {
+    try {
+      await db.query("UPDATE students SET status = 'inactive' WHERE student_id = $1", [req.params.studentId]);
+      res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ═══ API: 생체인증 초기화 ════════════════════════════════════
+  app.delete('/api/admin/credentials/:studentId', async (req, res) => {
+    try {
+      await db.query('DELETE FROM credentials WHERE student_id = $1', [req.params.studentId]);
+      await db.query('DELETE FROM push_subscriptions WHERE student_id = $1', [req.params.studentId]);
+      res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ═══ API: 통합 관리 시트 동기화 ══════════════════════════════
+  app.post('/api/admin/sync-management', async (req, res) => {
+    try {
+      const { spreadsheetId } = req.body;
+      if (!spreadsheetId) return res.status(400).json({ error: '스프레드시트 ID 필요' });
+      const sync = require('./sync');
+      const result = await sync.syncManagementSheet(spreadsheetId);
+      res.json(result);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
 }
 
 
@@ -523,6 +657,236 @@ async function editTime(attendanceId, field, currentValue, sessionId) {
 </body>
 </html>`;
 }
+
+// ═════════════════════════════════════════════════════════════
+// 수강생 관리 페이지 HTML
+// ═════════════════════════════════════════════════════════════
+function renderStudentsPage(courses) {
+  const courseOptions = courses.map(c =>
+    `<option value="${c.course_id}">${c.course_name} ${c.cohort || ''} [${c.course_type || ''}]</option>`
+  ).join('');
+
+  return `<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>수강생 관리 - 관리자</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, 'Malgun Gothic', sans-serif; background: #f5f5f7; color: #1d1d1f; padding: 16px; }
+    .container { max-width: 1100px; margin: 0 auto; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    .subtitle { color: #86868b; font-size: 13px; margin-bottom: 20px; }
+    .card { background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .card h2 { font-size: 16px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #e5e5e7; }
+    select { padding: 10px 14px; border: 1.5px solid #d2d2d7; border-radius: 10px; font-size: 14px; background: #fff; min-width: 250px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 8px 10px; background: #f5f5f7; color: #86868b; font-weight: 500; font-size: 12px; }
+    td { padding: 8px 10px; border-top: 1px solid #f0f0f0; }
+    tr:hover { background: #fafafa; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+    .b-ok { background: #e6f4ea; color: #137333; }
+    .b-no { background: #fce8e6; color: #c5221f; }
+    .b-push { background: #e8f0fe; color: #1a73e8; }
+    .btn { padding: 6px 12px; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; background: #1a73e8; color: #fff; }
+    .btn:hover { background: #1557b0; }
+    .btn-small { padding: 4px 8px; font-size: 11px; }
+    .btn-outline { background: #fff; color: #1a73e8; border: 1px solid #1a73e8; }
+    .btn-danger { background: #ff3b30; color: #fff; }
+    .btn-danger:hover { background: #d62d22; }
+    textarea { width: 100%; min-height: 150px; padding: 12px; border: 1.5px solid #d2d2d7; border-radius: 10px; font-size: 13px; font-family: monospace; resize: vertical; }
+    textarea:focus { border-color: #1a73e8; outline: none; }
+    .back-link { font-size: 13px; color: #1a73e8; text-decoration: none; }
+    .info-box { background: #e8f0fe; border-radius: 8px; padding: 14px 18px; margin-bottom: 16px; font-size: 13px; color: #1a73e8; line-height: 1.8; }
+    .stats { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+    .stat { background: #f5f5f7; border-radius: 8px; padding: 10px 14px; text-align: center; min-width: 70px; }
+    .stat-num { font-size: 20px; font-weight: 700; }
+    .stat-label { font-size: 11px; color: #86868b; margin-top: 2px; }
+    #loading { text-align: center; padding: 20px; color: #86868b; }
+    .mgmt-section { margin-top: 16px; }
+    .mgmt-section input { padding: 8px 12px; border: 1.5px solid #d2d2d7; border-radius: 8px; font-size: 13px; font-family: monospace; width: 360px; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <a href="/" class="back-link">← 대시보드로 돌아가기</a>
+  <h1 style="margin-top:12px;">👥 수강생 관리</h1>
+  <p class="subtitle">수강생 조회, 일괄 등록, 생체인증 현황</p>
+
+  <div class="card">
+    <h2>📋 수강생 조회</h2>
+    <select id="courseSelect" onchange="loadStudents()">
+      <option value="">-- 과정 선택 --</option>
+      ${courseOptions}
+    </select>
+    <div id="studentList" style="margin-top:16px;"></div>
+  </div>
+
+  <div class="card">
+    <h2>📝 수강생 일괄 등록</h2>
+    <div class="info-box">
+      아래 텍스트 영역에 수강생 정보를 붙여넣으세요.<br>
+      <b>형식: 이름[탭]전화번호</b> (한 줄에 한 명)<br>
+      예시: 홍길동	010-1234-5678<br>
+      엑셀에서 이름/전화번호 열을 선택 → 복사(Ctrl+C) → 아래에 붙여넣기(Ctrl+V)
+    </div>
+    <select id="bulkCourseSelect" style="margin-bottom:12px;">
+      <option value="">-- 등록할 과정 선택 --</option>
+      ${courseOptions}
+    </select><br>
+    <textarea id="bulkInput" placeholder="홍길동	01012345678&#10;김철수	01098765432&#10;..."></textarea>
+    <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+      <button class="btn" onclick="bulkRegister()">일괄 등록</button>
+      <span id="bulkResult" style="font-size:13px;"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>📊 통합 관리 시트 (구글시트)</h2>
+    <div class="info-box">
+      전체 과정의 수강생 명단 + 생체인증 등록 여부 + 푸시 구독 여부를 하나의 구글시트로 내보냅니다.
+    </div>
+    <div class="mgmt-section">
+      <input type="text" id="mgmtSheetId" placeholder="통합 관리용 스프레드시트 ID 입력">
+      <button class="btn" onclick="syncManagement()" style="margin-left:8px;">동기화</button>
+      <span id="mgmtResult" style="font-size:13px; margin-left:8px;"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── 수강생 목록 로드 ────────────────────────────────────
+async function loadStudents() {
+  const courseId = document.getElementById('courseSelect').value;
+  const el = document.getElementById('studentList');
+  if (!courseId) { el.innerHTML = ''; return; }
+
+  el.innerHTML = '<div id="loading">불러오는 중...</div>';
+  const res = await fetch('/api/admin/students/' + courseId);
+  const students = await res.json();
+
+  const total = students.length;
+  const bioOk = students.filter(s => s.has_credential).length;
+  const bioNo = total - bioOk;
+  const pushOk = students.filter(s => s.has_push).length;
+
+  let html = '<div class="stats">';
+  html += '<div class="stat"><div class="stat-num">' + total + '</div><div class="stat-label">전체</div></div>';
+  html += '<div class="stat"><div class="stat-num" style="color:#34c759;">' + bioOk + '</div><div class="stat-label">생체인증 등록</div></div>';
+  html += '<div class="stat"><div class="stat-num" style="color:#ff3b30;">' + bioNo + '</div><div class="stat-label">생체인증 미등록</div></div>';
+  html += '<div class="stat"><div class="stat-num" style="color:#1a73e8;">' + pushOk + '</div><div class="stat-label">푸시 구독</div></div>';
+  html += '</div>';
+
+  html += '<div style="overflow-x:auto;"><table>';
+  html += '<tr><th>#</th><th>이름</th><th>전화번호</th><th>생체인증</th><th>마지막 인증</th><th>푸시</th><th>관리</th></tr>';
+
+  students.forEach((s, i) => {
+    const lastUsed = s.last_used_at ? new Date(s.last_used_at).toLocaleDateString('ko-KR', {timeZone:'Asia/Seoul'}) : '-';
+    html += '<tr>';
+    html += '<td>' + (i + 1) + '</td>';
+    html += '<td><b>' + s.name + '</b></td>';
+    html += '<td style="font-size:12px;">' + s.phone + '</td>';
+    html += '<td><span class="badge ' + (s.has_credential ? 'b-ok' : 'b-no') + '">' + (s.has_credential ? '등록(' + s.cred_count + ')' : '미등록') + '</span></td>';
+    html += '<td style="font-size:12px;color:#86868b;">' + lastUsed + '</td>';
+    html += '<td>' + (s.has_push ? '<span class="badge b-push">구독중</span>' : '<span style="color:#86868b;font-size:12px;">미구독</span>') + '</td>';
+    html += '<td>';
+    if (s.has_credential) {
+      html += '<button class="btn btn-small btn-outline" onclick="resetCred(\\'' + s.student_id + '\\', \\'' + s.name + '\\')">인증초기화</button> ';
+    }
+    html += '<button class="btn btn-small btn-danger" onclick="deactivateStudent(\\'' + s.student_id + '\\', \\'' + s.name + '\\')">삭제</button>';
+    html += '</td>';
+    html += '</tr>';
+  });
+
+  html += '</table></div>';
+  el.innerHTML = html;
+}
+
+// ─── 일괄 등록 ───────────────────────────────────────────
+async function bulkRegister() {
+  const courseId = document.getElementById('bulkCourseSelect').value;
+  const input = document.getElementById('bulkInput').value.trim();
+  const resultEl = document.getElementById('bulkResult');
+
+  if (!courseId) { resultEl.innerHTML = '<span style="color:#ff3b30;">과정을 선택하세요.</span>'; return; }
+  if (!input) { resultEl.innerHTML = '<span style="color:#ff3b30;">수강생 정보를 입력하세요.</span>'; return; }
+
+  const lines = input.split('\\n').filter(l => l.trim());
+  const students = [];
+  for (const line of lines) {
+    const parts = line.split(/\\t|,|\\s{2,}/);  // 탭, 쉼표, 2칸 이상 공백으로 구분
+    if (parts.length >= 2) {
+      students.push({ name: parts[0].trim(), phone: parts[1].trim() });
+    }
+  }
+
+  if (students.length === 0) { resultEl.innerHTML = '<span style="color:#ff3b30;">파싱 가능한 데이터가 없습니다.</span>'; return; }
+
+  if (!confirm(students.length + '명을 등록하시겠습니까?')) return;
+
+  resultEl.innerHTML = '<span style="color:#1a73e8;">등록 중...</span>';
+
+  try {
+    const res = await fetch('/api/admin/students/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ courseId, students }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      resultEl.innerHTML = '<span style="color:#34c759;">✅ ' + data.added + '명 등록 완료' + (data.skipped > 0 ? ' (' + data.skipped + '명 건너뜀)' : '') + '</span>';
+      document.getElementById('bulkInput').value = '';
+    } else {
+      resultEl.innerHTML = '<span style="color:#ff3b30;">❌ ' + (data.error || '실패') + '</span>';
+    }
+  } catch (err) {
+    resultEl.innerHTML = '<span style="color:#ff3b30;">❌ ' + err.message + '</span>';
+  }
+}
+
+// ─── 생체인증 초기화 ─────────────────────────────────────
+async function resetCred(studentId, name) {
+  if (!confirm(name + '의 생체인증 등록을 초기화하시겠습니까?\\n(재등록이 필요합니다)')) return;
+  await fetch('/api/admin/credentials/' + studentId, { method: 'DELETE' });
+  loadStudents();
+}
+
+// ─── 수강생 비활성화 ─────────────────────────────────────
+async function deactivateStudent(studentId, name) {
+  if (!confirm(name + '을(를) 삭제(비활성화)하시겠습니까?')) return;
+  await fetch('/api/admin/students/' + studentId, { method: 'DELETE' });
+  loadStudents();
+}
+
+// ─── 통합 관리 시트 동기화 ───────────────────────────────
+async function syncManagement() {
+  const sheetId = document.getElementById('mgmtSheetId').value.trim();
+  const resultEl = document.getElementById('mgmtResult');
+  if (!sheetId) { resultEl.innerHTML = '<span style="color:#ff3b30;">스프레드시트 ID를 입력하세요.</span>'; return; }
+
+  resultEl.innerHTML = '<span style="color:#1a73e8;">동기화 중...</span>';
+  try {
+    const res = await fetch('/api/admin/sync-management', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ spreadsheetId: sheetId }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      resultEl.innerHTML = '<span style="color:#34c759;">✅ ' + data.count + '명 동기화 완료</span>';
+    } else {
+      resultEl.innerHTML = '<span style="color:#ff3b30;">❌ ' + (data.error || '실패') + '</span>';
+    }
+  } catch (err) {
+    resultEl.innerHTML = '<span style="color:#ff3b30;">❌ ' + err.message + '</span>';
+  }
+}
+</script>
+</body>
+</html>`;
+}
+
 
 // ═════════════════════════════════════════════════════════════
 // 구글시트 동기화 페이지 HTML
