@@ -203,7 +203,6 @@ async function formatSummarySheet(sheets, spreadsheetId, sheetTitle, data) {
               textFormat: {
                 foregroundColor: textColors[status],
                 bold: true,
-                fontSize: 10,
               },
             },
           },
