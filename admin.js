@@ -778,6 +778,8 @@ async function loadStudents() {
   html += '<div class="stat"><div class="stat-num" style="color:#1a73e8;">' + pushOk + '</div><div class="stat-label">푸시 구독</div></div>';
   html += '</div>';
 
+  html += '<div style="margin-bottom:12px;"><button class="btn btn-small" onclick="loadStudents()">🔄 새로고침</button></div>';
+
   html += '<div style="overflow-x:auto;"><table>';
   html += '<tr><th>#</th><th>이름</th><th>전화번호</th><th>생체인증</th><th>마지막 인증</th><th>푸시</th><th>관리</th></tr>';
 
@@ -846,6 +848,10 @@ async function bulkRegister() {
     if (data.success) {
       resultEl.innerHTML = '<span style="color:#34c759;">✅ ' + data.added + '명 등록 완료' + (data.skipped > 0 ? ' (' + data.skipped + '명 건너뜀)' : '') + '</span>';
       document.getElementById('bulkInput').value = '';
+      // 같은 과정이 조회 중이면 자동 새로고침
+      if (document.getElementById('courseSelect').value === courseId) {
+        await loadStudents();
+      }
     } else {
       resultEl.innerHTML = '<span style="color:#ff3b30;">❌ ' + (data.error || '실패') + '</span>';
     }
@@ -857,15 +863,21 @@ async function bulkRegister() {
 // ─── 생체인증 초기화 ─────────────────────────────────────
 async function resetCred(studentId, name) {
   if (!confirm(name + '의 생체인증 등록을 초기화하시겠습니까?\\n(재등록이 필요합니다)')) return;
-  await fetch('/api/admin/credentials/' + studentId, { method: 'DELETE' });
-  loadStudents();
+  try {
+    await fetch('/api/admin/credentials/' + studentId, { method: 'DELETE' });
+  } catch (err) { alert('초기화 오류: ' + err.message); }
+  await loadStudents();
 }
 
 // ─── 수강생 비활성화 ─────────────────────────────────────
 async function deactivateStudent(studentId, name) {
   if (!confirm(name + '을(를) 삭제(비활성화)하시겠습니까?')) return;
-  await fetch('/api/admin/students/' + studentId, { method: 'DELETE' });
-  loadStudents();
+  try {
+    const res = await fetch('/api/admin/students/' + studentId, { method: 'DELETE' });
+    const data = await res.json();
+    if (!data.success) { alert('삭제 실패: ' + (data.error || '')); }
+  } catch (err) { alert('삭제 오류: ' + err.message); }
+  await loadStudents();
 }
 
 // ─── 통합 관리 시트 동기화 ───────────────────────────────
@@ -1009,7 +1021,7 @@ function renderSyncPage(courses) {
       const data = await res.json();
 
       if (data.success) {
-        statusEl.innerHTML = '<span style="color:#34c759;">✅ 완료 (' + data.studentsCount + '명, ' + data.sheetsUpdated + '탭)</span>';
+        statusEl.innerHTML = '<span style="color:#34c759;">✅ 완료 (' + data.studentsCount + '명, ' + data.sheetsUpdated + '탭)' + (data.formatResult && data.formatResult !== 'success' ? ' ⚠️색상: ' + data.formatResult : '') + '</span>';
       } else {
         statusEl.innerHTML = '<span style="color:#ff3b30;">❌ ' + (data.error || '실패') + '</span>';
       }
