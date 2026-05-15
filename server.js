@@ -895,6 +895,7 @@ function renderAppPage() {
           showStep(2);
           loadTodayStatus();
           checkPushStatus();
+          handleCheckoutFromPush();
         } catch (err) {
           msgEl.innerHTML = '<div class="msg msg-error">' + err.message + '</div>';
         } finally { btn.disabled = false; btn.textContent = '시작'; }
@@ -1000,6 +1001,40 @@ function renderAppPage() {
           } catch (err) {
             msgEl.innerHTML = '<div style="font-size:12px;color:#ff3b30;">해제 실패: ' + err.message + '</div>';
           }
+        }
+      }
+
+      // ─── 푸시 알림에서 퇴실 처리 (URL 파라미터) ──────────
+      async function handleCheckoutFromPush() {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('checkout') !== 'true') return;
+
+        const sid = params.get('sid');
+        const aid = params.get('aid');
+        if (!sid || !aid) return;
+
+        // URL 파라미터 제거 (새로고침 시 재실행 방지)
+        window.history.replaceState({}, '', '/app');
+
+        try {
+          const res = await fetch('/api/push/checkout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ studentId: sid, attendanceId: aid }),
+          });
+          const data = await res.json();
+
+          const msgEl = document.getElementById('todayStatus');
+          if (data.success) {
+            msgEl.innerHTML = '<div class="msg msg-success" style="margin-bottom:12px;">✅ ' + (data.message || '퇴실이 처리되었습니다.') + '</div>';
+            // 1.5초 후 오늘 출결 현황 새로고침
+            setTimeout(function() { loadTodayStatus(); }, 1500);
+          } else {
+            msgEl.innerHTML = '<div class="msg msg-error" style="margin-bottom:12px;">퇴실 처리 실패: ' + (data.error || '') + '</div>';
+            setTimeout(function() { loadTodayStatus(); }, 3000);
+          }
+        } catch (err) {
+          console.error('퇴실 처리 오류:', err);
         }
       }
 
