@@ -323,6 +323,129 @@ function registerAdminRoutes(app) {
       res.json(result);
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
+
+  // ═══ 교육과정 관리 페이지 ═══════════════════════════════════
+  app.get('/admin/courses', async (req, res) => {
+    try {
+      const classrooms = await db.query('SELECT classroom_id, classroom_code, classroom_name FROM classrooms ORDER BY classroom_code');
+      res.send(renderCoursesPage(classrooms.rows));
+    } catch (err) { res.status(500).send('오류: ' + err.message); }
+  });
+
+  // ═══ API: 과정 목록 (상세) ═══════════════════════════════════
+  app.get('/api/admin/courses', async (req, res) => {
+    try {
+      const r = await db.query(`
+        SELECT c.course_id, c.course_name, c.course_code, c.course_type, c.cohort,
+               c.total_sessions, c.default_classroom_id, c.spreadsheet_id,
+               cr.classroom_name AS default_room,
+               (SELECT COUNT(*) FROM enrollments e WHERE e.course_id = c.course_id) AS student_count,
+               (SELECT COUNT(*) FROM course_sessions cs WHERE cs.course_id = c.course_id) AS session_count
+        FROM courses c
+        LEFT JOIN classrooms cr ON cr.classroom_id = c.default_classroom_id
+        ORDER BY c.course_type, c.course_name
+      `);
+      res.json(r.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ═══ API: 과정 추가 ═════════════════════════════════════════
+  app.post('/api/admin/courses', async (req, res) => {
+    try {
+      const { course_name, course_code, course_type, cohort, default_classroom_id, total_sessions } = req.body;
+      if (!course_name) return res.status(400).json({ error: '과정명은 필수입니다.' });
+      const r = await db.query(`
+        INSERT INTO courses (course_name, course_code, course_type, cohort, default_classroom_id, total_sessions)
+        VALUES ($1, $2, $3, $4, $5, $6) RETURNING course_id
+      `, [course_name, course_code || null, course_type || null, cohort || null,
+          default_classroom_id || null, total_sessions || null]);
+      res.json({ success: true, courseId: r.rows[0].course_id });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ═══ API: 과정 수정 ═════════════════════════════════════════
+  app.put('/api/admin/courses/:courseId', async (req, res) => {
+    try {
+      const { course_name, course_code, course_type, cohort, default_classroom_id, total_sessions } = req.body;
+      await db.query(`
+        UPDATE courses SET course_name=$1, course_code=$2, course_type=$3, cohort=$4,
+               default_classroom_id=$5, total_sessions=$6 WHERE course_id=$7
+      `, [course_name, course_code || null, course_type || null, cohort || null,
+          default_classroom_id || null, total_sessions || null, req.params.courseId]);
+      res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ═══ API: 과정 삭제 ═════════════════════════════════════════
+  app.delete('/api/admin/courses/:courseId', async (req, res) => {
+    try {
+      // 관련 데이터 삭제 (출결 → 회차 → 수강등록 → 과정)
+      const cid = req.params.courseId;
+      await db.query('DELETE FROM attendance WHERE session_id IN (SELECT session_id FROM course_sessions WHERE course_id = $1)', [cid]);
+      await db.query('DELETE FROM course_sessions WHERE course_id = $1', [cid]);
+      await db.query('DELETE FROM enrollments WHERE course_id = $1', [cid]);
+      await db.query('DELETE FROM courses WHERE course_id = $1', [cid]);
+      res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ═══ API: 회차 추가 (개별) ══════════════════════════════════
+  app.post('/api/admin/sessions', async (req, res) => {
+    try {
+      const { course_id, session_number, session_date, start_time, end_time, late_cutoff, early_leave_cutoff, is_workshop, note } = req.body;
+      await db.query(`
+        INSERT INTO course_sessions (course_id, session_number, session_date, start_time, end_time, late_cutoff, early_leave_cutoff, is_workshop, note)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      `, [course_id, session_number, session_date, start_time, end_time,
+          late_cutoff || start_time, early_leave_cutoff || end_time, is_workshop || false, note || null]);
+      res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ═══ API: 회차 일괄 추가 ════════════════════════════════════
+  app.post('/api/admin/sessions/bulk', async (req, res) => {
+    try {
+      const { course_id, sessions } = req.body;
+      let added = 0;
+      for (const s of sessions) {
+        await db.query(`
+          INSERT INTO course_sessions (course_id, session_number, session_date, start_time, end_time, late_cutoff, early_leave_cutoff, is_workshop)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+          ON CONFLICT DO NOTHING
+        `, [course_id, s.session_number, s.session_date, s.start_time, s.end_time,
+            s.late_cutoff || s.start_time, s.early_leave_cutoff || s.end_time, s.is_workshop || false]);
+        added++;
+      }
+      res.json({ success: true, added });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ═══ API: 회차 삭제 ═════════════════════════════════════════
+  app.delete('/api/admin/sessions/:sessionId', async (req, res) => {
+    try {
+      await db.query('DELETE FROM attendance WHERE session_id = $1', [req.params.sessionId]);
+      await db.query('DELETE FROM course_sessions WHERE session_id = $1', [req.params.sessionId]);
+      res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ═══ API: 강의실 추가 ═══════════════════════════════════════
+  app.post('/api/admin/classrooms', async (req, res) => {
+    try {
+      const { classroom_code, classroom_name } = req.body;
+      if (!classroom_code || !classroom_name) return res.status(400).json({ error: '코드와 이름 모두 필요합니다.' });
+      await db.query('INSERT INTO classrooms (classroom_code, classroom_name) VALUES ($1, $2)', [classroom_code, classroom_name]);
+      res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ═══ API: 강의실 삭제 ═══════════════════════════════════════
+  app.delete('/api/admin/classrooms/:classroomId', async (req, res) => {
+    try {
+      await db.query('DELETE FROM classrooms WHERE classroom_id = $1', [req.params.classroomId]);
+      res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
 }
 
 
@@ -914,6 +1037,327 @@ async function syncManagement() {
 // ═════════════════════════════════════════════════════════════
 // 구글시트 동기화 페이지 HTML
 // ═════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════
+// 교육과정 관리 페이지 HTML
+// ═════════════════════════════════════════════════════════════
+function renderCoursesPage(classrooms) {
+  const classroomOptions = classrooms.map(c =>
+    `<option value="${c.classroom_id}">${c.classroom_name} (${c.classroom_code})</option>`
+  ).join('');
+
+  return `<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>교육과정 관리 - 관리자</title>
+  <style>
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family:-apple-system,'Malgun Gothic',sans-serif; background:#f5f5f7; color:#1d1d1f; padding:16px; }
+    .container { max-width:1100px; margin:0 auto; }
+    h1 { font-size:22px; margin-bottom:4px; }
+    .subtitle { color:#86868b; font-size:13px; margin-bottom:20px; }
+    .card { background:#fff; border-radius:12px; padding:20px; margin-bottom:16px; box-shadow:0 1px 3px rgba(0,0,0,0.08); }
+    .card h2 { font-size:16px; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid #e5e5e7; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th { text-align:left; padding:8px 10px; background:#f5f5f7; color:#86868b; font-weight:500; font-size:12px; }
+    td { padding:8px 10px; border-top:1px solid #f0f0f0; }
+    tr:hover { background:#fafafa; }
+    .btn { padding:6px 12px; border:none; border-radius:6px; font-size:12px; cursor:pointer; background:#1a73e8; color:#fff; }
+    .btn:hover { background:#1557b0; }
+    .btn-small { padding:4px 8px; font-size:11px; }
+    .btn-outline { background:#fff; color:#1a73e8; border:1px solid #1a73e8; }
+    .btn-danger { background:#ff3b30; color:#fff; }
+    .btn-success { background:#34c759; color:#fff; }
+    .back-link { font-size:13px; color:#1a73e8; text-decoration:none; }
+    .form-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; align-items:end; }
+    .form-group { display:flex; flex-direction:column; }
+    .form-group label { font-size:11px; color:#86868b; margin-bottom:3px; }
+    .form-group input, .form-group select { padding:8px 10px; border:1.5px solid #d2d2d7; border-radius:8px; font-size:13px; }
+    .form-group input:focus, .form-group select:focus { border-color:#1a73e8; outline:none; }
+    .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:500; }
+    .badge.blue { background:#e8f0fe; color:#1a73e8; }
+    .badge.green { background:#e6f4ea; color:#137333; }
+    .badge.orange { background:#fef3e0; color:#e37400; }
+    .msg { font-size:13px; margin-top:6px; }
+    .msg-ok { color:#34c759; } .msg-err { color:#ff3b30; }
+    #loading { text-align:center; padding:20px; color:#86868b; }
+    .session-row { display:flex; gap:6px; align-items:center; padding:6px 0; border-bottom:1px solid #f0f0f0; font-size:13px; }
+    .session-row:last-child { border-bottom:none; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <a href="/admin" class="back-link">← 대시보드로 돌아가기</a>
+  <h1 style="margin-top:12px;">🏫 교육과정 관리</h1>
+  <p class="subtitle">교육과정 추가/수정/삭제, 회차 관리, 강의실 관리</p>
+
+  <!-- 과정 목록 -->
+  <div class="card">
+    <h2>📋 과정 목록 <button class="btn btn-small" onclick="loadCourses()" style="margin-left:8px;">🔄</button></h2>
+    <div id="courseList"><div id="loading">불러오는 중...</div></div>
+  </div>
+
+  <!-- 과정 추가 -->
+  <div class="card">
+    <h2>➕ 과정 추가</h2>
+    <div class="form-row">
+      <div class="form-group"><label>과정명 *</label><input type="text" id="cName" placeholder="영 오너스 최고경영자과정" style="width:220px;"></div>
+      <div class="form-group"><label>약칭</label><input type="text" id="cCode" placeholder="영오너스" style="width:100px;"></div>
+      <div class="form-group"><label>종류</label>
+        <select id="cType" style="width:120px;">
+          <option value="">선택</option><option value="모집과정">모집과정</option><option value="위탁과정">위탁과정</option><option value="산교연과정">산교연과정</option>
+        </select>
+      </div>
+      <div class="form-group"><label>기수</label><input type="text" id="cCohort" placeholder="10기" style="width:80px;"></div>
+      <div class="form-group"><label>기본 강의실</label>
+        <select id="cRoom" style="width:180px;"><option value="">선택</option>${classroomOptions}</select>
+      </div>
+      <div class="form-group"><label>총 회차</label><input type="number" id="cTotal" placeholder="15" style="width:70px;"></div>
+      <button class="btn" onclick="addCourse()">추가</button>
+    </div>
+    <div id="addCourseMsg"></div>
+  </div>
+
+  <!-- 회차 관리 -->
+  <div class="card">
+    <h2>📅 회차 관리</h2>
+    <div class="form-row">
+      <div class="form-group"><label>과정 선택</label>
+        <select id="sessionCourseSelect" onchange="loadSessionsForCourse()" style="width:300px;">
+          <option value="">-- 선택 --</option>
+        </select>
+      </div>
+    </div>
+    <div id="sessionList"></div>
+
+    <div id="sessionAddArea" style="display:none; margin-top:16px; padding-top:12px; border-top:1px solid #e5e5e7;">
+      <b style="font-size:13px;">회차 일괄 추가</b>
+      <div class="form-row" style="margin-top:8px;">
+        <div class="form-group"><label>시작일</label><input type="date" id="sStartDate" style="width:140px;"></div>
+        <div class="form-group"><label>요일 간격</label>
+          <select id="sInterval" style="width:80px;"><option value="7">매주</option><option value="14">격주</option></select>
+        </div>
+        <div class="form-group"><label>회차 수</label><input type="number" id="sCount" value="15" style="width:70px;"></div>
+        <div class="form-group"><label>시작 시각</label><input type="time" id="sStart" value="09:00" style="width:110px;"></div>
+        <div class="form-group"><label>종료 시각</label><input type="time" id="sEnd" value="18:00" style="width:110px;"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>지각 기준</label><input type="time" id="sLate" value="09:20" style="width:110px;"></div>
+        <div class="form-group"><label>조퇴 기준</label><input type="time" id="sEarly" value="17:00" style="width:110px;"></div>
+        <button class="btn btn-success" onclick="bulkAddSessions()">일괄 추가</button>
+      </div>
+      <div id="sessionAddMsg"></div>
+    </div>
+  </div>
+
+  <!-- 강의실 관리 -->
+  <div class="card">
+    <h2>🚪 강의실 관리</h2>
+    <div id="classroomList"></div>
+    <div class="form-row" style="margin-top:12px;">
+      <div class="form-group"><label>강의실 코드</label><input type="text" id="crCode" placeholder="R101" style="width:100px;"></div>
+      <div class="form-group"><label>강의실 이름</label><input type="text" id="crName" placeholder="101호" style="width:150px;"></div>
+      <button class="btn" onclick="addClassroom()">추가</button>
+    </div>
+    <div id="crMsg"></div>
+  </div>
+</div>
+
+<script>
+let allCourses = [];
+
+window.addEventListener('load', function() { loadCourses(); loadClassrooms(); });
+
+// ─── 과정 목록 ──────────────────────────────────────────
+async function loadCourses() {
+  const el = document.getElementById('courseList');
+  el.innerHTML = '<div id="loading">불러오는 중...</div>';
+  const res = await fetch('/api/admin/courses');
+  allCourses = await res.json();
+
+  if (allCourses.length === 0) { el.innerHTML = '<div style="color:#86868b;text-align:center;padding:20px;">등록된 과정이 없습니다.</div>'; updateCourseSelect(); return; }
+
+  let html = '<table><tr><th>과정명</th><th>약칭</th><th>종류</th><th>기수</th><th>강의실</th><th>수강생</th><th>회차</th><th>관리</th></tr>';
+  for (const c of allCourses) {
+    html += '<tr>';
+    html += '<td><b>' + c.course_name + '</b></td>';
+    html += '<td>' + (c.course_code || '-') + '</td>';
+    html += '<td>' + (c.course_type ? '<span class="badge ' + (c.course_type==='모집과정'?'blue':c.course_type==='위탁과정'?'green':'orange') + '">' + c.course_type + '</span>' : '-') + '</td>';
+    html += '<td>' + (c.cohort || '-') + '</td>';
+    html += '<td>' + (c.default_room || '-') + '</td>';
+    html += '<td>' + c.student_count + '명</td>';
+    html += '<td>' + c.session_count + '회</td>';
+    html += '<td><button class="btn btn-small btn-danger" onclick="deleteCourse(\\'' + c.course_id + '\\', \\'' + c.course_name + '\\')">삭제</button></td>';
+    html += '</tr>';
+  }
+  html += '</table>';
+  el.innerHTML = html;
+  updateCourseSelect();
+}
+
+function updateCourseSelect() {
+  const sel = document.getElementById('sessionCourseSelect');
+  const val = sel.value;
+  sel.innerHTML = '<option value="">-- 선택 --</option>';
+  for (const c of allCourses) {
+    sel.innerHTML += '<option value="' + c.course_id + '">' + c.course_name + ' ' + (c.cohort||'') + '</option>';
+  }
+  sel.value = val;
+}
+
+async function addCourse() {
+  const data = {
+    course_name: document.getElementById('cName').value.trim(),
+    course_code: document.getElementById('cCode').value.trim(),
+    course_type: document.getElementById('cType').value,
+    cohort: document.getElementById('cCohort').value.trim(),
+    default_classroom_id: document.getElementById('cRoom').value || null,
+    total_sessions: parseInt(document.getElementById('cTotal').value) || null,
+  };
+  if (!data.course_name) { document.getElementById('addCourseMsg').innerHTML = '<div class="msg msg-err">과정명을 입력하세요.</div>'; return; }
+
+  const res = await fetch('/api/admin/courses', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
+  const r = await res.json();
+  if (r.success) {
+    document.getElementById('addCourseMsg').innerHTML = '<div class="msg msg-ok">✅ 추가 완료</div>';
+    document.getElementById('cName').value = '';
+    document.getElementById('cCode').value = '';
+    document.getElementById('cCohort').value = '';
+    document.getElementById('cTotal').value = '';
+    await loadCourses();
+  } else {
+    document.getElementById('addCourseMsg').innerHTML = '<div class="msg msg-err">❌ ' + (r.error||'실패') + '</div>';
+  }
+}
+
+async function deleteCourse(courseId, name) {
+  if (!confirm(name + ' 과정을 삭제하시겠습니까?\\n관련된 모든 회차, 수강등록, 출결 데이터가 함께 삭제됩니다.')) return;
+  if (!confirm('정말로 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) return;
+  const res = await fetch('/api/admin/courses/' + courseId, { method:'DELETE' });
+  const r = await res.json();
+  if (r.success) { await loadCourses(); } else { alert('삭제 실패: ' + (r.error||'')); }
+}
+
+// ─── 회차 관리 ──────────────────────────────────────────
+async function loadSessionsForCourse() {
+  const courseId = document.getElementById('sessionCourseSelect').value;
+  const el = document.getElementById('sessionList');
+  const addArea = document.getElementById('sessionAddArea');
+  if (!courseId) { el.innerHTML = ''; addArea.style.display = 'none'; return; }
+
+  addArea.style.display = 'block';
+  el.innerHTML = '<div id="loading">불러오는 중...</div>';
+  const res = await fetch('/api/admin/sessions/' + courseId);
+  const sessions = await res.json();
+
+  if (sessions.length === 0) { el.innerHTML = '<div style="color:#86868b;padding:10px;">등록된 회차가 없습니다.</div>'; return; }
+
+  let html = '<div style="max-height:400px; overflow-y:auto;">';
+  for (const s of sessions) {
+    const date = s.session_date ? s.session_date.split('T')[0] : '-';
+    const start = s.start_time ? s.start_time.slice(0,5) : '-';
+    const end = s.end_time ? s.end_time.slice(0,5) : '-';
+    html += '<div class="session-row">';
+    html += '<span style="width:50px;font-weight:600;">' + s.session_number + '회</span>';
+    html += '<span style="width:100px;">' + date + '</span>';
+    html += '<span style="width:100px;">' + start + ' ~ ' + end + '</span>';
+    html += '<span style="width:80px;font-size:12px;color:#86868b;">' + s.classroom_name + '</span>';
+    html += '<span style="width:70px;font-size:12px;color:#1a73e8;">' + s.attendance_count + '명</span>';
+    html += '<span>' + (s.is_workshop ? '🏕️' : '') + '</span>';
+    html += '<button class="btn btn-small btn-danger" onclick="deleteSession(\\'' + s.session_id + '\\', ' + s.session_number + ')" style="margin-left:auto;">삭제</button>';
+    html += '</div>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+async function bulkAddSessions() {
+  const courseId = document.getElementById('sessionCourseSelect').value;
+  if (!courseId) return;
+  const startDate = document.getElementById('sStartDate').value;
+  const interval = parseInt(document.getElementById('sInterval').value);
+  const count = parseInt(document.getElementById('sCount').value);
+  const startTime = document.getElementById('sStart').value;
+  const endTime = document.getElementById('sEnd').value;
+  const lateCutoff = document.getElementById('sLate').value;
+  const earlyCutoff = document.getElementById('sEarly').value;
+
+  if (!startDate || !count) { document.getElementById('sessionAddMsg').innerHTML = '<div class="msg msg-err">시작일과 회차 수를 입력하세요.</div>'; return; }
+
+  const sessions = [];
+  const d = new Date(startDate);
+  for (let i = 0; i < count; i++) {
+    const dateStr = d.toISOString().split('T')[0];
+    sessions.push({
+      session_number: i + 1,
+      session_date: dateStr,
+      start_time: startTime, end_time: endTime,
+      late_cutoff: lateCutoff, early_leave_cutoff: earlyCutoff,
+    });
+    d.setDate(d.getDate() + interval);
+  }
+
+  if (!confirm(count + '개 회차를 추가하시겠습니까?\\n(' + startDate + ' ~ ' + sessions[sessions.length-1].session_date + ')')) return;
+
+  const res = await fetch('/api/admin/sessions/bulk', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ course_id: courseId, sessions }) });
+  const r = await res.json();
+  if (r.success) {
+    document.getElementById('sessionAddMsg').innerHTML = '<div class="msg msg-ok">✅ ' + r.added + '개 회차 추가 완료</div>';
+    await loadSessionsForCourse();
+    await loadCourses();
+  } else {
+    document.getElementById('sessionAddMsg').innerHTML = '<div class="msg msg-err">❌ ' + (r.error||'실패') + '</div>';
+  }
+}
+
+async function deleteSession(sessionId, num) {
+  if (!confirm(num + '회차를 삭제하시겠습니까? 해당 회차의 출결 데이터도 함께 삭제됩니다.')) return;
+  const res = await fetch('/api/admin/sessions/' + sessionId, { method:'DELETE' });
+  const r = await res.json();
+  if (r.success) { await loadSessionsForCourse(); await loadCourses(); } else { alert('삭제 실패: ' + (r.error||'')); }
+}
+
+// ─── 강의실 관리 ────────────────────────────────────────
+async function loadClassrooms() {
+  const res = await fetch('/api/classrooms');
+  const rooms = await res.json();
+  let html = '<table><tr><th>코드</th><th>이름</th><th>관리</th></tr>';
+  for (const r of rooms) {
+    html += '<tr><td>' + r.classroom_code + '</td><td>' + r.classroom_name + '</td>';
+    html += '<td><button class="btn btn-small btn-danger" onclick="deleteClassroom(\\'' + r.classroom_id + '\\', \\'' + r.classroom_name + '\\')">삭제</button></td></tr>';
+  }
+  html += '</table>';
+  document.getElementById('classroomList').innerHTML = html;
+}
+
+async function addClassroom() {
+  const code = document.getElementById('crCode').value.trim();
+  const name = document.getElementById('crName').value.trim();
+  if (!code || !name) { document.getElementById('crMsg').innerHTML = '<div class="msg msg-err">코드와 이름을 입력하세요.</div>'; return; }
+  const res = await fetch('/api/admin/classrooms', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ classroom_code:code, classroom_name:name }) });
+  const r = await res.json();
+  if (r.success) {
+    document.getElementById('crCode').value = '';
+    document.getElementById('crName').value = '';
+    document.getElementById('crMsg').innerHTML = '<div class="msg msg-ok">✅ 추가 완료</div>';
+    await loadClassrooms();
+  } else {
+    document.getElementById('crMsg').innerHTML = '<div class="msg msg-err">❌ ' + (r.error||'실패') + '</div>';
+  }
+}
+
+async function deleteClassroom(id, name) {
+  if (!confirm(name + ' 강의실을 삭제하시겠습니까?')) return;
+  const res = await fetch('/api/admin/classrooms/' + id, { method:'DELETE' });
+  const r = await res.json();
+  if (r.success) { await loadClassrooms(); } else { alert('삭제 실패: ' + (r.error||'')); }
+}
+</script>
+</body>
+</html>`;
+}
+
+
 function renderSyncPage(courses) {
   const rows = courses.map(c => `
     <tr id="row-${c.course_id}">
