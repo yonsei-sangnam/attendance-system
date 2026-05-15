@@ -223,7 +223,7 @@ function registerAdminRoutes(app) {
           SELECT student_id, COUNT(*) AS sub_count
           FROM push_subscriptions GROUP BY student_id
         ) ps ON ps.student_id = s.student_id
-        WHERE e.course_id = $1
+        WHERE e.course_id = $1 AND s.status = 'active'
         ORDER BY s.name
       `, [req.params.courseId]);
       res.json(r.rows);
@@ -397,7 +397,7 @@ function renderAttendancePage(courses) {
 </head>
 <body>
 <div class="container">
-  <a href="/" class="back-link">← 대시보드로 돌아가기</a>
+  <a href="/admin" class="back-link">← 대시보드로 돌아가기</a>
   <h1 style="margin-top:12px;">📊 출결 현황</h1>
   <p class="subtitle">과정 선택 → 회차 선택 → 출결 조회/수정</p>
 
@@ -710,7 +710,7 @@ function renderStudentsPage(courses) {
 </head>
 <body>
 <div class="container">
-  <a href="/" class="back-link">← 대시보드로 돌아가기</a>
+  <a href="/admin" class="back-link">← 대시보드로 돌아가기</a>
   <h1 style="margin-top:12px;">👥 수강생 관리</h1>
   <p class="subtitle">수강생 조회, 일괄 등록, 생체인증 현황</p>
 
@@ -949,7 +949,7 @@ function renderSyncPage(courses) {
 </head>
 <body>
 <div class="container">
-  <a href="/" class="back-link">← 대시보드로 돌아가기</a>
+  <a href="/admin" class="back-link">← 대시보드로 돌아가기</a>
   <h1 style="margin-top:12px;">📤 구글시트 동기화</h1>
   <p class="subtitle">과정별 출결 데이터를 구글시트로 내보내기</p>
 
