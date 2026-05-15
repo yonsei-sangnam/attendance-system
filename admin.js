@@ -726,16 +726,16 @@ function renderStudentsPage(courses) {
   <div class="card">
     <h2>📝 수강생 일괄 등록</h2>
     <div class="info-box">
-      아래 텍스트 영역에 수강생 정보를 붙여넣으세요.<br>
-      <b>형식: 이름[탭]전화번호</b> (한 줄에 한 명)<br>
-      예시: 홍길동	010-1234-5678<br>
-      엑셀에서 이름/전화번호 열을 선택 → 복사(Ctrl+C) → 아래에 붙여넣기(Ctrl+V)
+      아래 텍스트 영역에 수강생 정보를 붙여넣거나 직접 입력하세요.<br>
+      <b>형식: 이름[탭 또는 공백]전화번호</b> (한 줄에 한 명)<br>
+      예시: 홍길동 01012345678 또는 홍길동 010-1234-5678<br>
+      엑셀에서 이름/전화번호 열을 선택 → 복사(Ctrl+C) → 아래에 붙여넣기(Ctrl+V)도 가능
     </div>
     <select id="bulkCourseSelect" style="margin-bottom:12px;">
       <option value="">-- 등록할 과정 선택 --</option>
       ${courseOptions}
     </select><br>
-    <textarea id="bulkInput" placeholder="홍길동	01012345678&#10;김철수	01098765432&#10;..."></textarea>
+    <textarea id="bulkInput" placeholder="홍길동 01012345678&#10;김철수 010-9876-5432&#10;..."></textarea>
     <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
       <button class="btn" onclick="bulkRegister()">일괄 등록</button>
       <span id="bulkResult" style="font-size:13px;"></span>
@@ -815,9 +815,18 @@ async function bulkRegister() {
   const lines = input.split('\\n').filter(l => l.trim());
   const students = [];
   for (const line of lines) {
-    const parts = line.split(/\\t|,|\\s{2,}/);  // 탭, 쉼표, 2칸 이상 공백으로 구분
-    if (parts.length >= 2) {
-      students.push({ name: parts[0].trim(), phone: parts[1].trim() });
+    // 전화번호 패턴 감지: 010으로 시작하는 숫자(하이픈 포함)
+    const phoneMatch = line.match(/(01[016789][-\\s]?\\d{3,4}[-\\s]?\\d{4})/);
+    if (phoneMatch) {
+      const phone = phoneMatch[1].trim();
+      const name = line.replace(phone, '').replace(/[,\\t]/g, '').trim();
+      if (name) students.push({ name, phone });
+    } else {
+      // 전화번호 패턴 없으면 탭/쉼표/공백으로 분리 시도
+      const parts = line.split(/\\t|,|\\s+/);
+      if (parts.length >= 2) {
+        students.push({ name: parts[0].trim(), phone: parts.slice(1).join('').trim() });
+      }
     }
   }
 
