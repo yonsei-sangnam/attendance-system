@@ -1153,14 +1153,26 @@ function renderCoursesPage(classrooms) {
       <b style="font-size:13px;">회차 일괄 추가</b>
       <div class="form-row" style="margin-top:8px;">
         <div class="form-group"><label>시작일</label><input type="date" id="sStartDate" style="width:140px;"></div>
-        <div class="form-group"><label>요일 간격</label>
-          <select id="sInterval" style="width:80px;"><option value="1">매일</option><option value="7" selected>매주</option><option value="14">격주</option></select>
-        </div>
         <div class="form-group"><label>회차 수</label><input type="number" id="sCount" value="15" style="width:70px;"></div>
-        <div class="form-group"><label>시작 시각</label><input type="time" id="sStart" value="09:00" style="width:110px;"></div>
-        <div class="form-group"><label>종료 시각</label><input type="time" id="sEnd" value="18:00" style="width:110px;"></div>
+        <div class="form-group"><label>주 간격</label>
+          <select id="sWeekInterval" style="width:80px;"><option value="1" selected>매주</option><option value="2">격주</option></select>
+        </div>
       </div>
       <div class="form-row">
+        <div class="form-group"><label>수업 요일 (복수 선택)</label>
+          <div style="display:flex;gap:4px;margin-top:2px;">
+            <label style="font-size:13px;cursor:pointer;padding:4px 10px;border:1.5px solid #d2d2d7;border-radius:6px;"><input type="checkbox" class="dayCheck" value="1" style="margin-right:2px;">월</label>
+            <label style="font-size:13px;cursor:pointer;padding:4px 10px;border:1.5px solid #d2d2d7;border-radius:6px;"><input type="checkbox" class="dayCheck" value="2" style="margin-right:2px;">화</label>
+            <label style="font-size:13px;cursor:pointer;padding:4px 10px;border:1.5px solid #d2d2d7;border-radius:6px;"><input type="checkbox" class="dayCheck" value="3" style="margin-right:2px;">수</label>
+            <label style="font-size:13px;cursor:pointer;padding:4px 10px;border:1.5px solid #d2d2d7;border-radius:6px;"><input type="checkbox" class="dayCheck" value="4" style="margin-right:2px;">목</label>
+            <label style="font-size:13px;cursor:pointer;padding:4px 10px;border:1.5px solid #d2d2d7;border-radius:6px;"><input type="checkbox" class="dayCheck" value="5" checked style="margin-right:2px;">금</label>
+            <label style="font-size:13px;cursor:pointer;padding:4px 10px;border:1.5px solid #d2d2d7;border-radius:6px;"><input type="checkbox" class="dayCheck" value="6" style="margin-right:2px;">토</label>
+          </div>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>시작 시각</label><input type="time" id="sStart" value="09:00" style="width:110px;"></div>
+        <div class="form-group"><label>종료 시각</label><input type="time" id="sEnd" value="18:00" style="width:110px;"></div>
         <div class="form-group"><label>지각 기준</label><input type="time" id="sLate" value="09:20" style="width:110px;"></div>
         <div class="form-group"><label>조퇴 기준</label><input type="time" id="sEarly" value="17:00" style="width:110px;"></div>
         <button class="btn btn-success" onclick="bulkAddSessions()">일괄 추가</button>
@@ -1360,29 +1372,61 @@ async function bulkAddSessions() {
   const courseId = document.getElementById('sessionCourseSelect').value;
   if (!courseId) return;
   const startDate = document.getElementById('sStartDate').value;
-  const interval = parseInt(document.getElementById('sInterval').value);
   const count = parseInt(document.getElementById('sCount').value);
+  const weekInterval = parseInt(document.getElementById('sWeekInterval').value);
   const startTime = document.getElementById('sStart').value;
   const endTime = document.getElementById('sEnd').value;
   const lateCutoff = document.getElementById('sLate').value;
   const earlyCutoff = document.getElementById('sEarly').value;
 
+  // 선택된 요일 (1=월 ~ 6=토, JS의 getDay()는 0=일 1=월 ... 6=토)
+  const selectedDays = [];
+  document.querySelectorAll('.dayCheck:checked').forEach(function(cb) { selectedDays.push(parseInt(cb.value)); });
+
   if (!startDate || !count) { document.getElementById('sessionAddMsg').innerHTML = '<div class="msg msg-err">시작일과 회차 수를 입력하세요.</div>'; return; }
+  if (selectedDays.length === 0) { document.getElementById('sessionAddMsg').innerHTML = '<div class="msg msg-err">수업 요일을 하나 이상 선택하세요.</div>'; return; }
+
+  const dayNames = ['일','월','화','수','목','금','토'];
 
   const sessions = [];
   const d = new Date(startDate);
-  for (let i = 0; i < count; i++) {
-    const dateStr = d.toISOString().split('T')[0];
-    sessions.push({
-      session_number: i + 1,
-      session_date: dateStr,
-      start_time: startTime, end_time: endTime,
-      late_cutoff: lateCutoff, early_leave_cutoff: earlyCutoff,
-    });
-    d.setDate(d.getDate() + interval);
+  let weekCount = 0;
+  let lastWeekNum = -1;
+
+  // 최대 365일까지 탐색 (안전장치)
+  for (let safety = 0; safety < 365 && sessions.length < count; safety++) {
+    // JS getDay(): 0=일, 1=월, ..., 6=토
+    const jsDay = d.getDay();
+    // 우리 체크박스: 1=월, 2=화, ..., 6=토 (일요일은 없음)
+    const ourDay = jsDay === 0 ? 7 : jsDay;  // 일=7로 변환 (체크박스에 없으므로 자동 제외)
+
+    // 주 번호 계산 (격주 처리용)
+    const weekNum = Math.floor(safety / 7);
+    if (weekNum !== lastWeekNum) {
+      lastWeekNum = weekNum;
+      weekCount++;
+    }
+
+    // 격주인 경우 짝수 주만 (1주차=추가, 2주차=건너뜀, 3주차=추가...)
+    const isActiveWeek = weekInterval === 1 || (weekCount % 2 === 1);
+
+    if (isActiveWeek && selectedDays.includes(ourDay)) {
+      const dateStr = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+      sessions.push({
+        session_number: sessions.length + 1,
+        session_date: dateStr,
+        start_time: startTime, end_time: endTime,
+        late_cutoff: lateCutoff, early_leave_cutoff: earlyCutoff,
+      });
+    }
+
+    d.setDate(d.getDate() + 1);
   }
 
-  if (!confirm(count + '개 회차를 추가하시겠습니까?\\n(' + startDate + ' ~ ' + sessions[sessions.length-1].session_date + ')')) return;
+  if (sessions.length === 0) { document.getElementById('sessionAddMsg').innerHTML = '<div class="msg msg-err">생성된 회차가 없습니다. 시작일과 요일을 확인하세요.</div>'; return; }
+
+  const selectedDayNames = selectedDays.map(function(d) { return dayNames[d]; }).join(',');
+  if (!confirm(sessions.length + '개 회차를 추가하시겠습니까?\\n요일: ' + selectedDayNames + (weekInterval > 1 ? ' (격주)' : '') + '\\n기간: ' + sessions[0].session_date + ' ~ ' + sessions[sessions.length-1].session_date)) return;
 
   const res = await fetch('/api/admin/sessions/bulk', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ course_id: courseId, sessions }) });
   const r = await res.json();
