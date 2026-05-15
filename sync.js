@@ -136,31 +136,33 @@ function buildSummarySheet(data) {
 
 // ─── 출결요약 시트 색상 포맷팅 ───────────────────────────────
 async function formatSummarySheet(sheets, spreadsheetId, sheetTitle, data) {
-  // 시트 ID 조회
-  const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
+  // 시트 ID 조회 (conditionalFormats 포함)
+  const spreadsheet = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets.properties,sheets.conditionalFormats',
+  });
   const sheet = spreadsheet.data.sheets.find(s => s.properties.title === sheetTitle);
-  if (!sheet) return;
+  if (!sheet) { console.warn('[Sync] 시트를 찾을 수 없음:', sheetTitle); return; }
   const sheetId = sheet.properties.sheetId;
 
   const numStudents = data.students.length;
   const numSessions = data.sessions.length;
+  if (numStudents === 0 || numSessions === 0) return;
 
-  // 데이터 범위: 5행(헤더4행 + 학생시작)부터, B열(2열)부터 세션수만큼
-  const startRow = 4;  // 0-indexed (5행)
+  const startRow = 4;  // 0-indexed (5행, 학생 데이터 시작)
   const endRow = startRow + numStudents;
-  const startCol = 1;  // B열 (0-indexed)
+  const startCol = 1;  // B열
   const endCol = startCol + numSessions;
 
-  // 색상 정의 (RGB 0~1)
+  // 색상 정의
   const colors = {
-    '출석':   { red: 0.9, green: 0.96, blue: 0.92 },   // 연한 초록
-    '지각':   { red: 1.0, green: 0.95, blue: 0.88 },   // 연한 주황
-    '조퇴':   { red: 0.99, green: 0.91, blue: 0.9 },   // 연한 빨강
-    '결석':   { red: 0.94, green: 0.94, blue: 0.94 },   // 연한 회색
-    '입실누락': { red: 0.93, green: 0.9, blue: 0.98 },  // 연한 보라
-    '퇴실누락': { red: 0.88, green: 0.94, blue: 1.0 },  // 연한 파랑
+    '출석':   { red: 0.9, green: 0.96, blue: 0.92 },
+    '지각':   { red: 1.0, green: 0.95, blue: 0.88 },
+    '조퇴':   { red: 0.99, green: 0.91, blue: 0.9 },
+    '결석':   { red: 0.94, green: 0.94, blue: 0.94 },
+    '입실누락': { red: 0.93, green: 0.9, blue: 0.98 },
+    '퇴실누락': { red: 0.88, green: 0.94, blue: 1.0 },
   };
-
   const textColors = {
     '출석':   { red: 0.07, green: 0.45, blue: 0.2 },
     '지각':   { red: 0.89, green: 0.45, blue: 0.0 },
@@ -170,17 +172,15 @@ async function formatSummarySheet(sheets, spreadsheetId, sheetTitle, data) {
     '퇴실누락': { red: 0.1, green: 0.4, blue: 0.7 },
   };
 
-  // 기존 조건부 서식 삭제 후 새로 추가
   const requests = [];
 
-  // 기존 조건부 서식 모두 삭제
-  if (sheet.conditionalFormats && sheet.conditionalFormats.length > 0) {
-    for (let i = sheet.conditionalFormats.length - 1; i >= 0; i--) {
-      requests.push({ deleteConditionalFormatRule: { sheetId, index: i } });
-    }
+  // 기존 조건부 서식 삭제 (역순으로)
+  const existingFormats = sheet.conditionalFormats || [];
+  for (let i = existingFormats.length - 1; i >= 0; i--) {
+    requests.push({ deleteConditionalFormatRule: { sheetId, index: i } });
   }
 
-  // 각 상태별 조건부 서식 추가
+  // 조건부 서식 추가
   const statusList = ['출석', '지각', '조퇴', '결석', '입실누락', '퇴실누락'];
   for (const status of statusList) {
     requests.push({
@@ -213,7 +213,7 @@ async function formatSummarySheet(sheets, spreadsheetId, sheetTitle, data) {
     });
   }
 
-  // 헤더 서식: 볼드 + 배경
+  // 헤더 서식
   requests.push({
     repeatCell: {
       range: { sheetId, startRowIndex: 0, endRowIndex: 4, startColumnIndex: 0, endColumnIndex: endCol + 7 },
@@ -228,15 +228,11 @@ async function formatSummarySheet(sheets, spreadsheetId, sheetTitle, data) {
     },
   });
 
-  // 셀 테두리 + 가운데 정렬 (데이터 영역)
+  // 데이터 영역 가운데 정렬
   requests.push({
     repeatCell: {
       range: { sheetId, startRowIndex: startRow, endRowIndex: endRow, startColumnIndex: startCol, endColumnIndex: endCol },
-      cell: {
-        userEnteredFormat: {
-          horizontalAlignment: 'CENTER',
-        },
-      },
+      cell: { userEnteredFormat: { horizontalAlignment: 'CENTER' } },
       fields: 'userEnteredFormat(horizontalAlignment)',
     },
   });
@@ -248,12 +244,12 @@ async function formatSummarySheet(sheets, spreadsheetId, sheetTitle, data) {
     },
   });
 
-  if (requests.length > 0) {
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId,
-      requestBody: { requests },
-    });
-  }
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: { requests },
+  });
+
+  console.log('[Sync] 출결요약 색상 포맷팅 완료 (' + statusList.length + '개 조건부 서식)');
 }
 
 
@@ -314,7 +310,7 @@ async function syncToGoogleSheets(courseId, spreadsheetId) {
   try {
     await formatSummarySheet(sheets, spreadsheetId, summaryTitle, data);
   } catch (err) {
-    console.warn('[Sync] 색상 포맷팅 오류 (무시):', err.message);
+    console.error('[Sync] 색상 포맷팅 오류:', err.message);
   }
 
   // 2. 회차별 시트 업데이트/생성
