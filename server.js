@@ -35,8 +35,13 @@ app.get('/health', async (req, res) => {
 });
 
 
+// ═══ 루트: 수강생 앱으로 안내 ═════════════════════════════════
+app.get('/', (req, res) => {
+  res.redirect('/app');
+});
+
 // ═══ 관리자 대시보드 ═════════════════════════════════════════
-app.get('/', async (req, res) => {
+app.get('/admin', async (req, res) => {
   try {
     const dbCheck = await db.query('SELECT NOW() AS server_time');
     const classrooms = await db.query('SELECT classroom_code, classroom_name FROM classrooms ORDER BY classroom_code');
