@@ -12,7 +12,7 @@ function initPush() {
   }
 
   webpush.setVapidDetails(
-    'mailto:admin@attendance.local',
+    process.env.VAPID_SUBJECT || 'mailto:admin@attendance-system.com',
     publicKey,
     privateKey
   );
@@ -76,7 +76,8 @@ async function sendPush(studentId, payload) {
         await removeSubscription(sub.endpoint);
         results.push({ endpoint: sub.endpoint, status: 'timeout', detail: 'subscription removed (no response)' });
       } else {
-        results.push({ endpoint: sub.endpoint, status: 'error', error: err.message });
+        console.error('[Push] 발송 실패:', { endpoint: sub.endpoint.slice(0, 60), statusCode: err.statusCode, message: err.message, body: err.body });
+        results.push({ endpoint: sub.endpoint, status: 'error', statusCode: err.statusCode, error: err.message, body: err.body });
       }
     }
   }
