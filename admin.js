@@ -1154,7 +1154,7 @@ function renderCoursesPage(classrooms) {
       <div class="form-row" style="margin-top:8px;">
         <div class="form-group"><label>시작일</label><input type="date" id="sStartDate" style="width:140px;"></div>
         <div class="form-group"><label>요일 간격</label>
-          <select id="sInterval" style="width:80px;"><option value="7">매주</option><option value="14">격주</option></select>
+          <select id="sInterval" style="width:80px;"><option value="1">매일</option><option value="7" selected>매주</option><option value="14">격주</option></select>
         </div>
         <div class="form-group"><label>회차 수</label><input type="number" id="sCount" value="15" style="width:70px;"></div>
         <div class="form-group"><label>시작 시각</label><input type="time" id="sStart" value="09:00" style="width:110px;"></div>
@@ -1166,6 +1166,18 @@ function renderCoursesPage(classrooms) {
         <button class="btn btn-success" onclick="bulkAddSessions()">일괄 추가</button>
       </div>
       <div id="sessionAddMsg"></div>
+
+      <div style="margin-top:20px; padding-top:12px; border-top:1px solid #e5e5e7;">
+        <b style="font-size:13px;">📝 자유 입력 (불규칙 일정용)</b>
+        <div style="font-size:12px;color:#86868b;margin:6px 0 8px;">한 줄에 하나씩 입력. 형식: <code>날짜 시작시간 종료시간 [지각기준 조퇴기준] [비고]</code><br>
+        예시:<br>
+        <code>2026-03-02 09:00 18:00</code><br>
+        <code>2026-03-11 13:00 18:00 13:20 17:00</code><br>
+        <code>2026-03-17 10:00 15:00 10:20 14:00 외부워크샵</code></div>
+        <textarea id="freeSessionInput" style="width:100%;min-height:100px;padding:10px;border:1.5px solid #d2d2d7;border-radius:8px;font-size:13px;font-family:monospace;" placeholder="2026-03-02 09:00 18:00&#10;2026-03-03 09:00 18:00&#10;2026-03-11 13:00 18:00 13:20 17:00 오후수업&#10;..."></textarea>
+        <div style="margin-top:6px;"><button class="btn btn-success" onclick="freeAddSessions()">자유 입력 추가</button></div>
+        <div id="freeSessionMsg"></div>
+      </div>
     </div>
   </div>
 
@@ -1388,6 +1400,77 @@ async function deleteSession(sessionId, num) {
   const res = await fetch('/api/admin/sessions/' + sessionId, { method:'DELETE' });
   const r = await res.json();
   if (r.success) { await loadSessionsForCourse(); await loadCourses(); } else { alert('삭제 실패: ' + (r.error||'')); }
+}
+
+async function freeAddSessions() {
+  const courseId = document.getElementById('sessionCourseSelect').value;
+  if (!courseId) { alert('과정을 선택하세요.'); return; }
+  const input = document.getElementById('freeSessionInput').value.trim();
+  const msgEl = document.getElementById('freeSessionMsg');
+  if (!input) { msgEl.innerHTML = '<div class="msg msg-err">입력 내용이 없습니다.</div>'; return; }
+
+  // 기존 회차 수 조회 (session_number 이어서 부여)
+  const existRes = await fetch('/api/admin/sessions/' + courseId);
+  const existing = await existRes.json();
+  let nextNum = existing.length > 0 ? Math.max(...existing.map(s => s.session_number)) + 1 : 1;
+
+  const lines = input.split('\\n').filter(l => l.trim());
+  const sessions = [];
+  const errors = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const parts = lines[i].trim().split(/\\s+/);
+    if (parts.length < 3) { errors.push((i+1) + '번째 줄: 최소 날짜, 시작, 종료 필요'); continue; }
+
+    const dateMatch = parts[0].match(/^\\d{4}-\\d{2}-\\d{2}$/);
+    if (!dateMatch) { errors.push((i+1) + '번째 줄: 날짜 형식 오류 (YYYY-MM-DD)'); continue; }
+
+    const session = {
+      session_number: nextNum++,
+      session_date: parts[0],
+      start_time: parts[1],
+      end_time: parts[2],
+      late_cutoff: parts[3] || parts[1],  // 지각 기준 없으면 시작시간
+      early_leave_cutoff: parts[4] || parts[2],  // 조퇴 기준 없으면 종료시간
+      is_workshop: false,
+    };
+
+    // 5번째 이후는 비고 (note) - 서버에서 별도 처리
+    if (parts.length > 5) {
+      session.note = parts.slice(5).join(' ');
+    }
+
+    sessions.push(session);
+  }
+
+  if (errors.length > 0) {
+    msgEl.innerHTML = '<div class="msg msg-err">⚠️ 형식 오류:\\n' + errors.join('\\n') + '</div>';
+    return;
+  }
+
+  if (sessions.length === 0) { msgEl.innerHTML = '<div class="msg msg-err">유효한 입력이 없습니다.</div>'; return; }
+
+  // 미리보기
+  let preview = sessions.map(s => s.session_number + '회 ' + s.session_date + ' ' + s.start_time + '~' + s.end_time + (s.note ? ' (' + s.note + ')' : '')).join('\\n');
+  if (!confirm(sessions.length + '개 회차를 추가합니다:\\n\\n' + preview)) return;
+
+  // note 포함 회차는 개별 추가 (bulk API에 note 지원 추가)
+  let added = 0;
+  for (const s of sessions) {
+    try {
+      const res = await fetch('/api/admin/sessions', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ course_id: courseId, ...s })
+      });
+      const r = await res.json();
+      if (r.success) added++;
+    } catch (e) { /* skip */ }
+  }
+
+  msgEl.innerHTML = '<div class="msg msg-ok">✅ ' + added + '개 회차 추가 완료</div>';
+  document.getElementById('freeSessionInput').value = '';
+  await loadSessionsForCourse();
+  await loadCourses();
 }
 
 // ─── 강의실 관리 ────────────────────────────────────────
