@@ -1248,17 +1248,30 @@ app.post('/api/push/test', async (req, res) => {
     const studentRes = await db.query('SELECT name FROM students WHERE student_id = $1', [studentId]);
     const name = studentRes.rows.length > 0 ? studentRes.rows[0].name : 'unknown';
 
+    // 실제 출결 레코드 조회 (입실O, 퇴실X)
+    const attRes = await db.query(`
+      SELECT a.attendance_id, c.course_name
+      FROM attendance a
+      JOIN course_sessions cs ON cs.session_id = a.session_id
+      JOIN courses c ON c.course_id = cs.course_id
+      WHERE a.student_id = $1 AND a.check_in_at IS NOT NULL AND a.check_out_at IS NULL
+      ORDER BY a.check_in_at DESC LIMIT 1
+    `, [studentId]);
+
+    const attendanceId = attRes.rows.length > 0 ? attRes.rows[0].attendance_id : null;
+    const courseName = attRes.rows.length > 0 ? attRes.rows[0].course_name : '테스트';
+
     const payload = {
-      title: '테스트 알림',
-      body: name + '님, 퇴실 확인 테스트입니다.',
+      title: '수업이 곧 종료됩니다',
+      body: courseName + ' - 퇴실 확인을 해주세요.',
       url: '/app',
       studentId: studentId,
-      attendanceId: 'test-' + Date.now(),
+      attendanceId: attendanceId,
     };
 
     const results = await push.sendPush(studentId, payload);
     console.log('[Push Test] ' + name + ' 발송 결과:', JSON.stringify(results));
-    res.json({ name, results });
+    res.json({ name, attendanceId: attendanceId || '(입실 기록 없음)', results });
   } catch (err) {
     console.error('[Push Test] 오류:', err);
     res.json({ error: err.message });
