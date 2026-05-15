@@ -307,10 +307,12 @@ async function syncToGoogleSheets(courseId, spreadsheetId) {
   });
 
   // 출결요약 색상 포맷팅
+  let formatResult = 'success';
   try {
     await formatSummarySheet(sheets, spreadsheetId, summaryTitle, data);
   } catch (err) {
     console.error('[Sync] 색상 포맷팅 오류:', err.message);
+    formatResult = err.message;
   }
 
   // 2. 회차별 시트 업데이트/생성
@@ -341,6 +343,7 @@ async function syncToGoogleSheets(courseId, spreadsheetId) {
     courseName: data.course.course_name,
     sheetsUpdated: data.sessions.length + 1,
     studentsCount: data.students.length,
+    formatResult,
   };
 }
 
