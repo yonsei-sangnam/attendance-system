@@ -344,7 +344,13 @@ app.post('/api/admin/sync/:courseId', async (req, res) => {
     const { spreadsheet_id } = courseRes.rows[0];
     if (!spreadsheet_id) return res.status(400).json({ error: '스프레드시트 ID가 설정되지 않았습니다.' });
 
-    const result = await sync.syncToGoogleSheets(req.params.courseId, spreadsheet_id);
+    const { sessionNumbers, includeSummary } = req.body || {};
+    const options = {};
+    if (sessionNumbers && Array.isArray(sessionNumbers) && sessionNumbers.length > 0) {
+      options.sessionNumbers = sessionNumbers;
+      options.includeSummary = includeSummary !== false;
+    }
+    const result = await sync.syncToGoogleSheets(req.params.courseId, spreadsheet_id, options);
     res.json(result);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
