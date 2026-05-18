@@ -158,6 +158,30 @@ async function recordAttendance(studentId, classroomCode) {
       };
     }
 
+    // ─── 기록은 있지만 입실 시각 없음 (관리자가 삭제한 경우) ──
+    // → 입실 재처리 (기존 행 UPDATE)
+    if (!record.check_in_at && !record.check_out_at) {
+      const checkInTimeStr = nowKST.toTimeString().slice(0, 5);
+      const isLate = checkInTimeStr > session.late_cutoff.slice(0, 5);
+
+      await client.query(`
+        UPDATE attendance
+        SET check_in_at = NOW(), exit_type = NULL, is_manual_override = FALSE, updated_at = NOW()
+        WHERE attendance_id = $1
+      `, [record.attendance_id]);
+
+      await client.query('COMMIT');
+      return {
+        success: true,
+        type: 'check_in',
+        message: isLate ? '입실 완료 (지각)' : '입실 완료',
+        courseName: session.course_name,
+        classroomName: session.classroom_name,
+        checkInTime: now.toISOString(),
+        isLate,
+      };
+    }
+
     await client.query('COMMIT');
     return { success: false, type: 'unknown', message: '알 수 없는 상태입니다. 관리자에게 문의하세요.' };
 
