@@ -238,6 +238,37 @@ app.post('/api/auth/verify', async (req, res) => {
   }
 });
 
+// ─── API: 패스키 직접 인증 (전화번호 불필요) ─────────────────
+app.post('/api/auth/passkey-start', async (req, res) => {
+  try {
+    const options = await auth.createPasskeyAuthOptions(req);
+    res.json(options);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/auth/passkey-verify', async (req, res) => {
+  try {
+    const { response, classroomCode } = req.body;
+    const result = await auth.verifyPasskeyAuth(req, response);
+
+    if (!result.verified) {
+      return res.json(result);
+    }
+
+    if (classroomCode) {
+      const attendResult = await attend.recordAttendance(result.studentId, classroomCode);
+      return res.json({ verified: true, studentId: result.studentId, studentName: result.studentName, attendance: attendResult });
+    }
+
+    res.json(result);
+  } catch (err) {
+    if (err.message === 'NOT_FOUND') {
+      return res.json({ verified: false, error: 'NOT_FOUND', message: '등록되지 않은 기기입니다.' });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 // ════════════════════════════════════════════════════════════
 // API 라우트
@@ -386,10 +417,20 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
   <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;">
     <div class="card">
 
-      <!-- Step 1: 전화번호 입력 -->
-      <div id="step1" class="step active">
-        <div class="icon">📱</div>
+      <!-- Step 0: 패스키 직접 인증 (기본) -->
+      <div id="step0" class="step active">
+        <div class="icon">🔐</div>
         <h1>출결 체크</h1>
+        <p class="subtitle">${classroomName}</p>
+        <button class="btn" id="passkeyBtn" onclick="passkeyAuth()" style="font-size:18px;padding:16px 32px;">인증하기</button>
+        <div id="passkeyMsg" style="margin-top:12px;"></div>
+        <div style="margin-top:20px;"><a href="#" onclick="showStep(1);return false;" style="font-size:13px;color:#86868b;">전화번호로 인증 →</a></div>
+      </div>
+
+      <!-- Step 1: 전화번호 입력 (폴백) -->
+      <div id="step1" class="step">
+        <div class="icon">📱</div>
+        <h1>전화번호 인증</h1>
         <p class="subtitle">${classroomName}</p>
         <div class="form-group">
           <label>전화번호 뒷자리 8자리</label>
@@ -397,6 +438,7 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
         </div>
         <button class="btn" id="lookupBtn" onclick="lookupStudent()">확인</button>
         <div id="lookupMsg"></div>
+        <div style="margin-top:12px;"><a href="#" onclick="showStep(0);return false;" style="font-size:13px;color:#86868b;">← 패스키 인증으로 돌아가기</a></div>
       </div>
 
       <!-- Step 2: 본인확인 + 생체인증 -->
@@ -441,12 +483,113 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
       function showStep(n) {
         document.querySelectorAll('.step').forEach(el => el.classList.remove('active'));
         document.getElementById('step' + n).classList.add('active');
+        if (n === 1) {
+          setTimeout(function() { document.getElementById('phoneInput').focus(); }, 100);
+        }
       }
 
       function goBack() {
         showStep(1);
         document.getElementById('phoneInput').value = '';
         document.getElementById('lookupMsg').innerHTML = '';
+      }
+
+      // ─── 0. 패스키 직접 인증 (전화번호 불필요) ───────────
+      async function passkeyAuth() {
+        const btn = document.getElementById('passkeyBtn');
+        const msgEl = document.getElementById('passkeyMsg');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> 인증 중...';
+        msgEl.innerHTML = '';
+
+        try {
+          // 패스키 옵션 요청
+          const optRes = await fetch('/api/auth/passkey-start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+          });
+          const options = await optRes.json();
+          if (options.error) throw new Error(options.error);
+
+          // 브라우저 패스키 인증 실행
+          const authResp = await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON: options });
+
+          // 서버 검증 + 출결 기록
+          const verifyRes = await fetch('/api/auth/passkey-verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ response: authResp, classroomCode: CLASSROOM_CODE })
+          });
+          const verifyData = await verifyRes.json();
+
+          if (verifyData.verified) {
+            currentStudentId = verifyData.studentId || null;
+            currentStudentName = verifyData.studentName;
+            showResult(verifyData);
+          } else if (verifyData.error === 'NOT_FOUND') {
+            // 등록되지 않은 기기 → 전화번호 입력으로 전환
+            msgEl.innerHTML = '<div class="msg msg-info">등록되지 않은 기기입니다. 전화번호로 등록해주세요.</div>';
+            setTimeout(function() { showStep(1); }, 1500);
+          } else {
+            throw new Error(verifyData.error || verifyData.message || '인증 실패');
+          }
+        } catch (err) {
+          if (err.name === 'NotAllowedError') {
+            msgEl.innerHTML = '<div class="msg msg-info">인증이 취소되었습니다.</div>';
+          } else if (err.name === 'AbortError' || err.message.includes('No credentials')) {
+            // 패스키 없음 → 전화번호 입력으로
+            msgEl.innerHTML = '<div class="msg msg-info">등록된 패스키가 없습니다. 전화번호로 진행해주세요.</div>';
+            setTimeout(function() { showStep(1); }, 1500);
+          } else {
+            msgEl.innerHTML = '<div class="msg msg-error">' + (err.message || '인증 오류') + '</div>';
+          }
+        } finally {
+          btn.disabled = false;
+          btn.innerHTML = '인증하기';
+          btn.style.fontSize = '18px';
+        }
+      }
+
+      // ─── 결과 표시 (공통) ─────────────────────────────────
+      function showResult(verifyData) {
+        const a = verifyData.attendance;
+        document.getElementById('doneName').textContent = currentStudentName + '님';
+
+        if (a && a.success) {
+          const typeMap = {
+            'check_in': '🟢 입실 완료',
+            'check_out': '🔵 퇴실 완료',
+            'duplicate': '☑️ 이미 입실됨',
+            'already_done': '✅ 출결 완료',
+          };
+          document.getElementById('doneType').textContent = typeMap[a.type] || a.type;
+          document.getElementById('doneMsg').textContent = a.message;
+          document.getElementById('doneCourse').textContent = a.courseName || '';
+          document.getElementById('doneRoom').textContent = a.classroomName || '';
+
+          if (a.isLate) document.getElementById('doneMsg').textContent += ' ⏰';
+          if (a.isEarlyLeave) document.getElementById('doneMsg').textContent += ' ⏰';
+
+          const timeEl = document.getElementById('doneTime');
+          if (a.checkInTime && a.type === 'check_in') {
+            timeEl.textContent = '입실: ' + new Date(a.checkInTime).toLocaleTimeString('ko-KR', {timeZone:'Asia/Seoul'});
+          } else if (a.checkOutTime) {
+            timeEl.textContent = '퇴실: ' + new Date(a.checkOutTime).toLocaleTimeString('ko-KR', {timeZone:'Asia/Seoul'});
+          } else if (a.checkInTime) {
+            timeEl.textContent = '입실: ' + new Date(a.checkInTime).toLocaleTimeString('ko-KR', {timeZone:'Asia/Seoul'});
+          } else {
+            timeEl.textContent = '';
+          }
+        } else if (a && !a.success) {
+          document.getElementById('doneType').textContent = '⚠️ 출결 처리 불가';
+          document.getElementById('doneMsg').textContent = a.message;
+          document.getElementById('doneCourse').textContent = a.courseName || '';
+          document.getElementById('doneRoom').textContent = a.classroomName || '';
+          document.getElementById('doneTime').textContent = '';
+        }
+        showStep(4);
+        registerPushIfReady();
       }
 
       // ─── 1. 전화번호로 수강생 조회 ──────────────────────
@@ -530,43 +673,7 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
           const verifyData = await verifyRes.json();
 
           if (verifyData.verified) {
-            const a = verifyData.attendance;
-            document.getElementById('doneName').textContent = currentStudentName + '님';
-
-            if (a && a.success) {
-              const typeMap = {
-                'check_in': '🟢 입실 완료',
-                'check_out': '🔵 퇴실 완료',
-                'duplicate': '☑️ 이미 입실됨',
-                'already_done': '✅ 출결 완료',
-              };
-              document.getElementById('doneType').textContent = typeMap[a.type] || a.type;
-              document.getElementById('doneMsg').textContent = a.message;
-              document.getElementById('doneCourse').textContent = a.courseName || '';
-              document.getElementById('doneRoom').textContent = a.classroomName || '';
-
-              if (a.isLate) document.getElementById('doneMsg').textContent += ' ⏰';
-              if (a.isEarlyLeave) document.getElementById('doneMsg').textContent += ' ⏰';
-
-              const timeEl = document.getElementById('doneTime');
-              if (a.checkInTime && a.type === 'check_in') {
-                timeEl.textContent = '입실: ' + new Date(a.checkInTime).toLocaleTimeString('ko-KR', {timeZone:'Asia/Seoul'});
-              } else if (a.checkOutTime) {
-                timeEl.textContent = '퇴실: ' + new Date(a.checkOutTime).toLocaleTimeString('ko-KR', {timeZone:'Asia/Seoul'});
-              } else if (a.checkInTime) {
-                timeEl.textContent = '입실: ' + new Date(a.checkInTime).toLocaleTimeString('ko-KR', {timeZone:'Asia/Seoul'});
-              } else {
-                timeEl.textContent = '';
-              }
-            } else if (a && !a.success) {
-              document.getElementById('doneType').textContent = '⚠️ 출결 처리 불가';
-              document.getElementById('doneMsg').textContent = a.message;
-              document.getElementById('doneCourse').textContent = a.courseName || '';
-              document.getElementById('doneRoom').textContent = a.classroomName || '';
-              document.getElementById('doneTime').textContent = '';
-            }
-            showStep(4);
-            registerPushIfReady();  // 출결 완료 후 푸시 알림 등록
+            showResult(verifyData);
           } else {
             throw new Error(verifyData.error || '인증 실패');
           }
@@ -634,7 +741,6 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
       document.getElementById('phoneInput').addEventListener('keypress', (e) => {
         if (e.key === 'Enter') lookupStudent();
       });
-      document.getElementById('phoneInput').focus();
 
       // ─── 서비스 워커 등록 + 푸시 구독 ──────────────────
       async function registerPushIfReady() {
