@@ -116,6 +116,14 @@ function registerAdminRoutes(app) {
     }
   });
 
+  // ═══ API: 출결 기록 초기화 (삭제) ═══════════════════════════
+  app.delete('/api/admin/attendance/:attendanceId', async (req, res) => {
+    try {
+      await db.query('DELETE FROM attendance WHERE attendance_id = $1', [req.params.attendanceId]);
+      res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
   // ═══ API: 미입실자 결석 일괄 처리 ═════════════════════════
   app.post('/api/admin/mark-absent/:sessionId', async (req, res) => {
     try {
@@ -675,7 +683,7 @@ async function loadAttendance(sessionId) {
       ['출석','지각','조퇴','결석'].forEach(st => {
         html += '<option value="' + st + '"' + (st === s.status ? ' disabled' : '') + '>' + st + '</option>';
       });
-      html += '</select></td>';
+      html += '</select> <button style="background:none;border:none;cursor:pointer;font-size:12px;color:#ff3b30;" onclick="resetAttendance(\\'' + s.attendance_id + '\\', \\'' + s.name + '\\', \\'' + sessionId + '\\')" title="출결 초기화">🗑</button></td>';
     } else {
       html += '<td style="color:#86868b;font-size:12px;">기록 없음</td>';
     }
@@ -708,6 +716,22 @@ async function markAbsent(sessionId) {
   const data = await res.json();
   alert(data.count + '명 결석 처리되었습니다.');
   loadAttendance(sessionId);
+}
+
+// ─── 출결 기록 초기화 ────────────────────────────────────
+async function resetAttendance(attendanceId, name, sessionId) {
+  if (!confirm(name + '의 출결 기록을 초기화하시겠습니까?\\n(입실/퇴실 기록이 삭제되고 다시 QR 스캔으로 입실할 수 있습니다)')) return;
+  try {
+    const res = await fetch('/api/admin/attendance/' + attendanceId, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.success) {
+      loadAttendance(sessionId);
+    } else {
+      alert('초기화 실패: ' + (data.error || ''));
+    }
+  } catch (err) {
+    alert('오류: ' + err.message);
+  }
 }
 
 // ─── 전체 요약 ───────────────────────────────────────────
