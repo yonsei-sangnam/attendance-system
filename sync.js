@@ -284,46 +284,60 @@ function buildSessionSheet(data, sessionIndex) {
 
 
 // ─── 구글시트로 동기화 (메인 함수) ───────────────────────────
-async function syncToGoogleSheets(courseId, spreadsheetId) {
+async function syncToGoogleSheets(courseId, spreadsheetId, options) {
   const sheets = getSheets();
   const data = await getCourseAttendanceData(courseId);
+
+  const opts = options || {};
+  const sessionNumbers = opts.sessionNumbers || null;
+  const includeSummary = sessionNumbers ? (opts.includeSummary !== false) : true;
+
+  // 동기화 대상 회차 필터링
+  const targetSessions = sessionNumbers
+    ? data.sessions.filter(s => sessionNumbers.includes(s.session_number))
+    : data.sessions;
 
   // 기존 시트 탭 목록 확인
   const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
   const existingSheets = spreadsheet.data.sheets.map(s => s.properties.title);
 
-  // 1. "출결요약" 시트 업데이트/생성
-  const summaryTitle = '출결요약';
-  if (!existingSheets.includes(summaryTitle)) {
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId,
-      requestBody: { requests: [{ addSheet: { properties: { title: summaryTitle } } }] },
-    });
-  }
-
-  const summaryData = buildSummarySheet(data);
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: `${summaryTitle}!A1`,
-    valueInputOption: 'USER_ENTERED',
-    requestBody: { values: summaryData },
-  });
-  await delay(API_DELAY);
-
-  // 출결요약 색상 포맷팅
+  let sheetsUpdated = 0;
   let formatResult = 'success';
-  try {
-    await formatSummarySheet(sheets, spreadsheetId, summaryTitle, data);
+
+  // 1. "출결요약" 시트
+  if (includeSummary) {
+    const summaryTitle = '출결요약';
+    if (!existingSheets.includes(summaryTitle)) {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: { requests: [{ addSheet: { properties: { title: summaryTitle } } }] },
+      });
+      await delay(API_DELAY);
+    }
+
+    const summaryData = buildSummarySheet(data);
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${summaryTitle}!A1`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: summaryData },
+    });
     await delay(API_DELAY);
-  } catch (err) {
-    console.error('[Sync] 색상 포맷팅 오류:', err.message);
-    formatResult = err.message;
+    sheetsUpdated++;
+
+    try {
+      await formatSummarySheet(sheets, spreadsheetId, summaryTitle, data);
+      await delay(API_DELAY);
+    } catch (err) {
+      console.error('[Sync] 색상 포맷팅 오류:', err.message);
+      formatResult = err.message;
+    }
   }
 
-  // 2. 회차별 시트 업데이트/생성
-  for (let i = 0; i < data.sessions.length; i++) {
-    const session = data.sessions[i];
+  // 2. 회차별 시트
+  for (const session of targetSessions) {
     const sheetTitle = `${session.session_number}회`;
+    const sessionIndex = data.sessions.findIndex(s => s.session_id === session.session_id);
 
     if (!existingSheets.includes(sheetTitle)) {
       await sheets.spreadsheets.batchUpdate({
@@ -333,7 +347,7 @@ async function syncToGoogleSheets(courseId, spreadsheetId) {
       await delay(API_DELAY);
     }
 
-    const sessionData = buildSessionSheet(data, i);
+    const sessionData = buildSessionSheet(data, sessionIndex);
     if (sessionData) {
       await sheets.spreadsheets.values.update({
         spreadsheetId,
@@ -343,14 +357,16 @@ async function syncToGoogleSheets(courseId, spreadsheetId) {
       });
       await delay(API_DELAY);
     }
+    sheetsUpdated++;
   }
 
   return {
     success: true,
     courseName: data.course.course_name,
-    sheetsUpdated: data.sessions.length + 1,
+    sheetsUpdated,
     studentsCount: data.students.length,
     formatResult,
+    partial: !!sessionNumbers,
   };
 }
 
