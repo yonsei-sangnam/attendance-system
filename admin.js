@@ -1589,7 +1589,8 @@ function renderSyncPage(courses) {
       <td><input type="text" class="sheet-input" id="sheet-${c.course_id}" value="${c.spreadsheet_id || ''}" placeholder="스프레드시트 ID 입력"></td>
       <td>
         <button class="btn btn-small" onclick="saveSheetId('${c.course_id}')">저장</button>
-        <button class="btn btn-small btn-sync" onclick="syncCourse('${c.course_id}')" ${c.spreadsheet_id ? '' : 'disabled'}>동기화</button>
+        <button class="btn btn-small btn-sync" onclick="syncCourse('${c.course_id}')" ${c.spreadsheet_id ? '' : 'disabled'}>전체 동기화</button>
+        <button class="btn btn-small" onclick="showSessionPicker('${c.course_id}')" ${c.spreadsheet_id ? '' : 'disabled'} style="margin-left:2px;">회차 선택</button>
       </td>
       <td class="status-cell" id="status-${c.course_id}"></td>
     </tr>
@@ -1657,6 +1658,12 @@ function renderSyncPage(courses) {
     <div style="margin-top:16px; text-align:right;">
       <button class="btn btn-all" onclick="syncAll()">🔄 전체 동기화</button>
     </div>
+  </div>
+
+  <!-- 회차 선택 모달 -->
+  <div id="sessionPickerCard" class="card" style="display:none;">
+    <h2 id="pickerTitle">회차 선택</h2>
+    <div id="pickerContent"></div>
   </div>
 </div>
 
@@ -1729,6 +1736,95 @@ function renderSyncPage(courses) {
       }
     } catch (err) {
       alert('동기화 오류: ' + err.message);
+    }
+  }
+
+  // ─── 회차 선택 동기화 ──────────────────────────────────
+  async function showSessionPicker(courseId) {
+    const card = document.getElementById('sessionPickerCard');
+    const content = document.getElementById('pickerContent');
+    card.style.display = 'block';
+    content.innerHTML = '<div style="color:#86868b;text-align:center;padding:12px;">불러오는 중...</div>';
+    card.scrollIntoView({ behavior: 'smooth' });
+
+    try {
+      const res = await fetch('/api/admin/sessions/' + courseId);
+      const sessions = await res.json();
+
+      if (sessions.length === 0) {
+        content.innerHTML = '<div style="color:#86868b;">등록된 회차가 없습니다.</div>';
+        return;
+      }
+
+      let html = '<div style="margin-bottom:10px;">';
+      html += '<button class="btn btn-small" onclick="pickerSelectAll(true)" style="margin-right:4px;">전체 선택</button>';
+      html += '<button class="btn btn-small" style="background:#86868b;" onclick="pickerSelectAll(false)">선택 해제</button>';
+      html += '</div>';
+      html += '<div style="max-height:300px;overflow-y:auto;border:1px solid #e5e5e7;border-radius:8px;padding:8px;">';
+
+      for (const s of sessions) {
+        const date = s.session_date ? s.session_date.split('T')[0] : '-';
+        html += '<label style="display:flex;align-items:center;padding:6px 4px;cursor:pointer;border-bottom:1px solid #f5f5f7;">';
+        html += '<input type="checkbox" class="session-pick" value="' + s.session_number + '" style="margin-right:8px;">';
+        html += '<span style="font-weight:600;width:45px;">' + s.session_number + '회</span>';
+        html += '<span style="color:#86868b;font-size:12px;">' + date + '</span>';
+        html += '<span style="color:#1a73e8;font-size:12px;margin-left:auto;">' + s.attendance_count + '명</span>';
+        html += '</label>';
+      }
+
+      html += '</div>';
+      html += '<div style="margin-top:12px;display:flex;gap:8px;align-items:center;">';
+      html += '<label style="font-size:13px;cursor:pointer;"><input type="checkbox" id="pickSummary" checked style="margin-right:4px;">출결요약 포함</label>';
+      html += '<button class="btn btn-sync" onclick="syncSelected(\\''+courseId+'\\')" style="margin-left:auto;">선택 회차 동기화</button>';
+      html += '<button class="btn btn-small" style="background:#86868b;" onclick="document.getElementById(\\'sessionPickerCard\\').style.display=\\'none\\'">닫기</button>';
+      html += '</div>';
+      html += '<div id="pickerStatus" style="margin-top:8px;font-size:12px;"></div>';
+
+      document.getElementById('pickerTitle').textContent = '회차 선택 동기화';
+      content.innerHTML = html;
+    } catch (err) {
+      content.innerHTML = '<div style="color:#ff3b30;">로드 실패: ' + err.message + '</div>';
+    }
+  }
+
+  function pickerSelectAll(checked) {
+    document.querySelectorAll('.session-pick').forEach(function(cb) { cb.checked = checked; });
+  }
+
+  async function syncSelected(courseId) {
+    var selected = [];
+    document.querySelectorAll('.session-pick:checked').forEach(function(cb) { selected.push(parseInt(cb.value)); });
+    var includeSummary = document.getElementById('pickSummary').checked;
+
+    if (selected.length === 0 && !includeSummary) {
+      alert('동기화할 회차를 선택하거나 출결요약을 포함하세요.');
+      return;
+    }
+
+    var statusEl = document.getElementById('pickerStatus');
+    var mainStatus = document.getElementById('status-' + courseId);
+    var totalSheets = selected.length + (includeSummary ? 1 : 0);
+    statusEl.innerHTML = '<span style="color:#1a73e8;">⏳ 동기화 중... (' + totalSheets + '개 시트)</span>';
+    if (mainStatus) mainStatus.innerHTML = '<span style="color:#1a73e8;">⏳ 동기화 중...</span>';
+
+    try {
+      var res = await fetch('/api/admin/sync/' + courseId, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionNumbers: selected, includeSummary: includeSummary })
+      });
+      var data = await res.json();
+
+      if (data.success) {
+        var msg = '✅ 완료 (' + data.sheetsUpdated + '탭)' + (data.formatResult && data.formatResult !== 'success' ? ' ⚠️색상: ' + data.formatResult : '');
+        statusEl.innerHTML = '<span style="color:#34c759;">' + msg + '</span>';
+        if (mainStatus) mainStatus.innerHTML = '<span style="color:#34c759;">' + msg + '</span>';
+      } else {
+        statusEl.innerHTML = '<span style="color:#ff3b30;">❌ ' + (data.error || '실패') + '</span>';
+        if (mainStatus) mainStatus.innerHTML = '<span style="color:#ff3b30;">❌ ' + (data.error || '실패') + '</span>';
+      }
+    } catch (err) {
+      statusEl.innerHTML = '<span style="color:#ff3b30;">❌ ' + err.message + '</span>';
     }
   }
 </script>
