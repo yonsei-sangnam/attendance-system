@@ -6,13 +6,22 @@ const {
 } = require('@simplewebauthn/server');
 const db = require('./db');
 
+// ─── 패스키 전용 챌린지 저장소 (서버 메모리) ─────────────────
+const passkeyChallengStore = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of passkeyChallengStore) {
+    if (val.expires < now) passkeyChallengStore.delete(key);
+  }
+}, 60000);
+
 // ─── RP(Relying Party) 설정 ──────────────────────────────────
 // 서버 도메인에서 자동 추출 (Render 배포 시 자동 적용)
 // ─────────────────────────────────────────────────────────────
 function getRPConfig(req) {
   const host = req.get('host');                        // 예: attendance-system-xxxx.onrender.com
   const rpID = host.split(':')[0];                     // 포트 제거
-  const origin = `https://${host}`;          // 예: https://attendance-system-xxxx.onrender.com
+  const origin = `${req.protocol}://${host}`;          // 예: https://attendance-system-xxxx.onrender.com
   return {
     rpName: '출결 관리 시스템',
     rpID,
@@ -47,7 +56,7 @@ async function createRegistrationOptions(req, studentId, studentName) {
     authenticatorSelection: {
       authenticatorAttachment: 'platform',      // 기기 내장 생체인증만 (USB키 등 제외)
       userVerification: 'required',             // 반드시 생체인증 수행
-      residentKey: 'preferred',
+      residentKey: 'required',
     },
     excludeCredentials,
   });
@@ -216,10 +225,89 @@ async function hasCredential(studentId) {
   return parseInt(res.rows[0].cnt) > 0;
 }
 
+// ─── 6. 패스키 직접 인증 옵션 (전화번호 없이) ────────────────
+async function createPasskeyAuthOptions(req) {
+  const rp = getRPConfig(req);
+
+  const options = await generateAuthenticationOptions({
+    rpID: rp.rpID,
+    userVerification: 'required',
+    // allowCredentials 생략 → 기기에 저장된 패스키 자동 표시
+  });
+
+  // 챌린지를 메모리에 저장 (5분 만료)
+  passkeyChallengStore.set(options.challenge, {
+    expires: Date.now() + 5 * 60 * 1000,
+  });
+
+  return options;
+}
+
+// ─── 7. 패스키 직접 인증 검증 (credential ID로 수강생 조회) ──
+async function verifyPasskeyAuth(req, response) {
+  const rp = getRPConfig(req);
+
+  // credential ID로 수강생 조회
+  const credRes = await db.query(
+    'SELECT student_id, webauthn_cred_id, public_key, counter FROM credentials WHERE webauthn_cred_id = $1',
+    [response.id]
+  );
+  if (credRes.rows.length === 0) {
+    throw new Error('NOT_FOUND');
+  }
+  const cred = credRes.rows[0];
+
+  // 챌린지 검증: response.clientDataJSON에서 challenge 추출
+  // verifyAuthenticationResponse가 내부적으로 처리하므로, expectedChallenge를 찾아서 전달
+  // clientDataJSON을 디코딩하여 challenge 추출
+  const clientData = JSON.parse(Buffer.from(response.response.clientDataJSON, 'base64url').toString());
+  const challenge = clientData.challenge;
+
+  // 저장된 챌린지 확인
+  if (!passkeyChallengStore.has(challenge)) {
+    throw new Error('인증 세션이 만료되었습니다. 다시 시도해주세요.');
+  }
+  passkeyChallengStore.delete(challenge);
+
+  const verification = await verifyAuthenticationResponse({
+    response,
+    expectedChallenge: challenge,
+    expectedOrigin: rp.origin,
+    expectedRPID: rp.rpID,
+    credential: {
+      id: cred.webauthn_cred_id,
+      publicKey: Buffer.from(cred.public_key, 'base64url'),
+      counter: parseInt(cred.counter),
+    },
+  });
+
+  if (!verification.verified) {
+    throw new Error('인증에 실패했습니다.');
+  }
+
+  // 카운터 업데이트
+  await db.query(
+    'UPDATE credentials SET counter = $1, last_used_at = NOW() WHERE webauthn_cred_id = $2',
+    [verification.authenticationInfo.newCounter, response.id]
+  );
+
+  // 수강생 정보 조회
+  const studentRes = await db.query('SELECT name, phone FROM students WHERE student_id = $1', [cred.student_id]);
+  const student = studentRes.rows[0];
+
+  return {
+    verified: true,
+    studentId: cred.student_id,
+    studentName: student ? student.name : 'unknown',
+  };
+}
+
 module.exports = {
   createRegistrationOptions,
   verifyRegistration,
   createAuthenticationOptions,
   verifyAuthentication,
   hasCredential,
+  createPasskeyAuthOptions,
+  verifyPasskeyAuth,
 };
