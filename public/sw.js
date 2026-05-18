@@ -1,6 +1,6 @@
 // Service Worker: PWA 오프라인 + 푸시 알림 처리
 
-const CACHE_NAME = 'attendance-v2';
+const CACHE_NAME = 'attendance-v3';
 
 // ─── 설치: 기본 파일 캐시 ────────────────────────────────────
 self.addEventListener('install', (event) => {
@@ -41,8 +41,8 @@ self.addEventListener('push', (event) => {
     icon: '/icon-192.png',
     badge: '/icon-192.png',
     vibrate: [200, 100, 200],
-    tag: 'attendance-' + Date.now(),
-    renotify: true,
+    tag: 'checkout-reminder',   // 고정 태그: 새 알림이 오면 이전 것을 교체
+    renotify: true,             // 같은 태그여도 진동/소리 다시 울림
     requireInteraction: true,
     data: {
       url: data.url || '/app',
