@@ -1,6 +1,10 @@
 const { google } = require('googleapis');
 const db = require('./db');
 
+// ─── API 속도 제한 방지용 딜레이 ─────────────────────────────
+function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+const API_DELAY = 1500; // 1.5초 (분당 40회 이내 유지)
+
 // ─── Google Sheets 인증 ──────────────────────────────────────
 function getAuth() {
   const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS || '{}');
@@ -304,11 +308,13 @@ async function syncToGoogleSheets(courseId, spreadsheetId) {
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: summaryData },
   });
+  await delay(API_DELAY);
 
   // 출결요약 색상 포맷팅
   let formatResult = 'success';
   try {
     await formatSummarySheet(sheets, spreadsheetId, summaryTitle, data);
+    await delay(API_DELAY);
   } catch (err) {
     console.error('[Sync] 색상 포맷팅 오류:', err.message);
     formatResult = err.message;
@@ -324,6 +330,7 @@ async function syncToGoogleSheets(courseId, spreadsheetId) {
         spreadsheetId,
         requestBody: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] },
       });
+      await delay(API_DELAY);
     }
 
     const sessionData = buildSessionSheet(data, i);
@@ -334,6 +341,7 @@ async function syncToGoogleSheets(courseId, spreadsheetId) {
         valueInputOption: 'USER_ENTERED',
         requestBody: { values: sessionData },
       });
+      await delay(API_DELAY);
     }
   }
 
