@@ -473,6 +473,189 @@ function registerAdminRoutes(app) {
       res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
+
+  // ═══ 시스템 설정 페이지 ═════════════════════════════════════
+  app.get('/admin/settings', (req, res) => {
+    res.send(renderSettingsPage());
+  });
+
+  // ═══ API: 설정 조회 (공개) ═══════════════════════════════════
+  app.get('/api/settings/building', async (req, res) => {
+    try {
+      const r = await db.query(
+        "SELECT key, value FROM system_settings WHERE key IN ('building_lat','building_lng','building_radius','location_check_enabled')"
+      );
+      const s = {};
+      for (const row of r.rows) s[row.key] = row.value;
+      res.json({
+        enabled:  s.location_check_enabled === 'true',
+        lat:      s.building_lat  ? parseFloat(s.building_lat)  : null,
+        lng:      s.building_lng  ? parseFloat(s.building_lng)  : null,
+        radius:   s.building_radius ? parseInt(s.building_radius) : 200,
+      });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ═══ API: 설정 저장 ═════════════════════════════════════════
+  app.put('/api/admin/settings', async (req, res) => {
+    try {
+      const { lat, lng, radius, enabled } = req.body;
+      const upsert = async (key, value) => db.query(`
+        INSERT INTO system_settings (key, value, updated_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
+      `, [key, value == null ? null : String(value)]);
+
+      await upsert('building_lat',           lat);
+      await upsert('building_lng',           lng);
+      await upsert('building_radius',        radius || 200);
+      await upsert('location_check_enabled', enabled ? 'true' : 'false');
+      res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+}
+
+
+// ═════════════════════════════════════════════════════════════
+// 시스템 설정 페이지 HTML
+// ═════════════════════════════════════════════════════════════
+function renderSettingsPage() {
+  return `<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>시스템 설정 - 관리자</title>
+  <style>
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family:-apple-system,'Malgun Gothic',sans-serif; background:#f5f5f7; color:#1d1d1f; padding:16px; }
+    .container { max-width:700px; margin:0 auto; }
+    h1 { font-size:22px; margin-bottom:4px; }
+    .subtitle { color:#86868b; font-size:13px; margin-bottom:20px; }
+    .card { background:#fff; border-radius:12px; padding:20px; margin-bottom:16px; box-shadow:0 1px 3px rgba(0,0,0,0.08); }
+    .card h2 { font-size:16px; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid #e5e5e7; }
+    .form-row { display:flex; gap:8px; flex-wrap:wrap; align-items:end; margin-bottom:10px; }
+    .form-group { display:flex; flex-direction:column; }
+    .form-group label { font-size:11px; color:#86868b; margin-bottom:3px; }
+    .form-group input { padding:8px 10px; border:1.5px solid #d2d2d7; border-radius:8px; font-size:13px; }
+    .form-group input:focus { border-color:#1a73e8; outline:none; }
+    .btn { padding:8px 16px; border:none; border-radius:8px; font-size:13px; cursor:pointer; background:#1a73e8; color:#fff; }
+    .btn:hover { background:#1557b0; }
+    .btn-outline { background:#fff; color:#1a73e8; border:1.5px solid #1a73e8; }
+    .btn-success { background:#34c759; }
+    .back-link { font-size:13px; color:#1a73e8; text-decoration:none; }
+    .toggle-row { display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid #e5e5e7; margin-bottom:12px; }
+    .toggle-switch { position:relative; width:51px; height:31px; }
+    .toggle-switch input { opacity:0; width:0; height:0; }
+    .toggle-slider { position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0; background:#e5e5e7; border-radius:31px; transition:.3s; }
+    .toggle-slider:before { content:""; position:absolute; height:27px; width:27px; left:2px; bottom:2px; background:#fff; border-radius:50%; transition:.3s; box-shadow:0 1px 3px rgba(0,0,0,0.2); }
+    .toggle-switch input:checked + .toggle-slider { background:#34c759; }
+    .toggle-switch input:checked + .toggle-slider:before { transform:translateX(20px); }
+    .info-box { background:#e8f0fe; border-radius:8px; padding:14px 16px; font-size:13px; color:#1a73e8; line-height:1.8; margin-bottom:12px; }
+    .warn-box { background:#fff3e0; border-radius:8px; padding:14px 16px; font-size:13px; color:#e65100; line-height:1.8; margin-top:12px; }
+    #mapPreview { width:100%; height:200px; border-radius:10px; background:#f5f5f7; border:1.5px solid #e5e5e7; display:flex; align-items:center; justify-content:center; font-size:13px; color:#86868b; margin-top:10px; }
+    #msg { font-size:13px; margin-top:8px; min-height:20px; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <a href="/admin" class="back-link">← 대시보드로 돌아가기</a>
+  <h1 style="margin-top:12px;">⚙️ 시스템 설정</h1>
+  <p class="subtitle">퇴실 위치 검증 및 인증 설정</p>
+
+  <div class="card">
+    <h2>📍 건물 위치 설정</h2>
+    <div class="info-box">
+      퇴실 알림 탭 시 수강생의 위치를 확인합니다.<br>
+      수강생이 지정한 건물 반경 안에 있을 때만 퇴실 처리됩니다.<br>
+      <b>퇴실 처리 순서: 위치 확인 → 생체인증 → 퇴실 완료</b>
+    </div>
+
+    <div class="toggle-row">
+      <div>
+        <div style="font-size:15px;font-weight:500;">위치 검증 사용</div>
+        <div style="font-size:12px;color:#86868b;">OFF 시 위치 확인 없이 생체인증만으로 퇴실 처리</div>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" id="locationEnabled">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group"><label>위도 (Latitude)</label><input type="number" id="lat" placeholder="37.123456" step="0.000001" style="width:150px;"></div>
+      <div class="form-group"><label>경도 (Longitude)</label><input type="number" id="lng" placeholder="127.123456" step="0.000001" style="width:150px;"></div>
+      <div class="form-group"><label>허용 반경 (미터)</label><input type="number" id="radius" placeholder="200" style="width:100px;" min="50" max="2000"></div>
+    </div>
+
+    <div class="form-row" style="gap:6px;">
+      <button class="btn btn-outline" onclick="getMyLocation()">📍 현재 위치 가져오기</button>
+      <button class="btn btn-success" onclick="saveSettings()">저장</button>
+    </div>
+
+    <div id="msg"></div>
+
+    <div class="warn-box">
+      <b>⚠️ 주의사항</b><br>
+      - 실내 GPS 오차: 10~50m (건물 구조에 따라 다름)<br>
+      - 반경은 건물 크기 + 여유 50~100m 추가 권장<br>
+      - 위치 권한을 거부한 수강생은 퇴실 처리 불가<br>
+      - 테스트 후 반경을 조정하세요
+    </div>
+  </div>
+</div>
+
+<script>
+  window.addEventListener('load', loadSettings);
+
+  async function loadSettings() {
+    try {
+      const res = await fetch('/api/settings/building');
+      const data = await res.json();
+      document.getElementById('locationEnabled').checked = data.enabled;
+      if (data.lat) document.getElementById('lat').value = data.lat;
+      if (data.lng) document.getElementById('lng').value = data.lng;
+      document.getElementById('radius').value = data.radius || 200;
+    } catch (e) { console.error(e); }
+  }
+
+  function getMyLocation() {
+    if (!navigator.geolocation) { alert('이 브라우저는 위치를 지원하지 않습니다.'); return; }
+    document.getElementById('msg').innerHTML = '<span style="color:#1a73e8;">위치 확인 중...</span>';
+    navigator.geolocation.getCurrentPosition(
+      function(pos) {
+        document.getElementById('lat').value = pos.coords.latitude.toFixed(6);
+        document.getElementById('lng').value = pos.coords.longitude.toFixed(6);
+        document.getElementById('msg').innerHTML = '<span style="color:#34c759;">✅ 현재 위치 적용 완료 (정확도: ' + Math.round(pos.coords.accuracy) + 'm)</span>';
+      },
+      function(err) {
+        document.getElementById('msg').innerHTML = '<span style="color:#ff3b30;">위치 오류: ' + err.message + '</span>';
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }
+
+  async function saveSettings() {
+    const data = {
+      lat:     parseFloat(document.getElementById('lat').value) || null,
+      lng:     parseFloat(document.getElementById('lng').value) || null,
+      radius:  parseInt(document.getElementById('radius').value) || 200,
+      enabled: document.getElementById('locationEnabled').checked,
+    };
+    try {
+      const res = await fetch('/api/admin/settings', {
+        method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)
+      });
+      const r = await res.json();
+      document.getElementById('msg').innerHTML = r.success
+        ? '<span style="color:#34c759;">✅ 저장 완료</span>'
+        : '<span style="color:#ff3b30;">❌ 저장 실패</span>';
+    } catch (e) {
+      document.getElementById('msg').innerHTML = '<span style="color:#ff3b30;">❌ ' + e.message + '</span>';
+    }
+  }
+</script>
+</body>
+</html>`;
 }
 
 
