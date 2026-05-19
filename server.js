@@ -1121,7 +1121,7 @@ function renderAppPage() {
         }
       }
 
-      // ─── 푸시 알림에서 퇴실 처리 (URL 파라미터) ──────────
+      // ─── 푸시 알림에서 퇴실 처리 (위치확인 → 생체인증 → 퇴실) ──
       async function handleCheckoutFromPush() {
         const params = new URLSearchParams(window.location.search);
         if (params.get('checkout') !== 'true') return;
@@ -1133,6 +1133,141 @@ function renderAppPage() {
         // URL 파라미터 제거 (새로고침 시 재실행 방지)
         window.history.replaceState({}, '', '/app');
 
+        const msgEl = document.getElementById('todayStatus');
+
+        function showMsg(text, color) {
+          msgEl.innerHTML = '<div style="text-align:center;padding:20px;background:#f5f5f7;border-radius:12px;margin-bottom:12px;">' + text + '</div>';
+        }
+
+        // ── Step 1: 건물 위치 설정 조회 ──────────────────────
+        showMsg('<div style="font-size:16px;margin-bottom:8px;">⏳</div><div style="font-size:14px;color:#86868b;">퇴실 처리 준비 중...</div>', '#86868b');
+
+        let buildingSettings = { enabled: false };
+        try {
+          const sRes = await fetch('/api/settings/building');
+          buildingSettings = await sRes.json();
+        } catch (e) { /* 설정 조회 실패 시 위치 검증 건너뜀 */ }
+
+        // ── Step 2: 위치 검증 (설정된 경우) ─────────────────
+        if (buildingSettings.enabled && buildingSettings.lat && buildingSettings.lng) {
+          showMsg('<div style="font-size:16px;margin-bottom:8px;">📍</div><div style="font-size:14px;color:#1a73e8;">위치 확인 중...</div><div style="font-size:12px;color:#86868b;margin-top:4px;">잠시만 기다려주세요</div>', '#1a73e8');
+
+          try {
+            const pos = await new Promise(function(resolve, reject) {
+              navigator.geolocation.getCurrentPosition(resolve, reject, {
+                enableHighAccuracy: true,
+                timeout: 12000,
+                maximumAge: 0,
+              });
+            });
+
+            const dist = getDistanceMeters(
+              pos.coords.latitude, pos.coords.longitude,
+              buildingSettings.lat, buildingSettings.lng
+            );
+
+            const radius = buildingSettings.radius || 200;
+            console.log('[Checkout] 거리: ' + Math.round(dist) + 'm / 허용반경: ' + radius + 'm');
+
+            if (dist > radius) {
+              // 건물 외부 → 퇴실 불가
+              showMsg(
+                '<div style="font-size:24px;margin-bottom:8px;">🚫</div>' +
+                '<div style="font-size:15px;font-weight:600;color:#ff3b30;">건물 외부 감지</div>' +
+                '<div style="font-size:13px;color:#86868b;margin-top:6px;">현재 위치가 건물에서 ' + Math.round(dist) + 'm 떨어져 있어<br>퇴실 처리가 되지 않았습니다.</div>',
+                '#ff3b30'
+              );
+              return; // 종료 → 스케줄러가 퇴실누락으로 처리
+            }
+
+            // 위치 확인 성공
+            showMsg('<div style="font-size:16px;margin-bottom:8px;">✅</div><div style="font-size:14px;color:#34c759;">위치 확인 완료 (' + Math.round(dist) + 'm)</div>', '#34c759');
+
+          } catch (locErr) {
+            // 위치 권한 거부 or 타임아웃
+            if (locErr.code === 1) {
+              showMsg(
+                '<div style="font-size:24px;margin-bottom:8px;">📵</div>' +
+                '<div style="font-size:15px;font-weight:600;color:#ff3b30;">위치 권한이 거부되었습니다</div>' +
+                '<div style="font-size:13px;color:#86868b;margin-top:6px;">기기 설정에서 위치 권한을 허용해주세요.</div>',
+                '#ff3b30'
+              );
+            } else {
+              showMsg(
+                '<div style="font-size:24px;margin-bottom:8px;">⚠️</div>' +
+                '<div style="font-size:15px;font-weight:600;color:#ff9500;">위치 확인 실패</div>' +
+                '<div style="font-size:13px;color:#86868b;margin-top:6px;">위치를 확인할 수 없어 퇴실 처리가 되지 않았습니다.</div>',
+                '#ff9500'
+              );
+            }
+            return;
+          }
+        }
+
+        // ── Step 3: 생체인증 ──────────────────────────────────
+        showMsg(
+          '<div style="font-size:16px;margin-bottom:8px;">🔐</div>' +
+          '<div style="font-size:14px;color:#1a73e8;">생체인증을 진행해주세요</div>' +
+          '<div style="font-size:12px;color:#86868b;margin-top:4px;">지문 또는 Face ID로 인증하세요</div>',
+          '#1a73e8'
+        );
+
+        // 짧은 딜레이 후 자동 실행 (UI 렌더링 대기)
+        await new Promise(r => setTimeout(r, 400));
+
+        try {
+          // 패스키 인증 옵션 요청
+          const optRes = await fetch('/api/auth/passkey-start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+          });
+          const options = await optRes.json();
+          if (options.error) throw new Error(options.error);
+
+          // 브라우저 패스키 인증 실행
+          const authResp = await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON: options });
+
+          // 서버 인증 검증 (studentId 확인용 - 출결 처리는 별도)
+          const verifyRes = await fetch('/api/auth/passkey-verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ response: authResp }) // classroomCode 없이 인증만
+          });
+          const verifyData = await verifyRes.json();
+
+          if (!verifyData.verified) {
+            showMsg(
+              '<div style="font-size:24px;margin-bottom:8px;">❌</div>' +
+              '<div style="font-size:15px;font-weight:600;color:#ff3b30;">인증 실패</div>' +
+              '<div style="font-size:13px;color:#86868b;margin-top:6px;">생체인증에 실패했습니다.</div>',
+              '#ff3b30'
+            );
+            return;
+          }
+
+        } catch (authErr) {
+          if (authErr.name === 'NotAllowedError') {
+            showMsg(
+              '<div style="font-size:24px;margin-bottom:8px;">✋</div>' +
+              '<div style="font-size:15px;font-weight:600;color:#ff9500;">인증 취소됨</div>' +
+              '<div style="font-size:13px;color:#86868b;margin-top:6px;">인증이 취소되어 퇴실 처리가 되지 않았습니다.</div>',
+              '#ff9500'
+            );
+          } else {
+            showMsg(
+              '<div style="font-size:24px;margin-bottom:8px;">⚠️</div>' +
+              '<div style="font-size:15px;font-weight:600;color:#ff3b30;">인증 오류</div>' +
+              '<div style="font-size:13px;color:#86868b;margin-top:6px;">' + (authErr.message || '인증 중 오류') + '</div>',
+              '#ff3b30'
+            );
+          }
+          return;
+        }
+
+        // ── Step 4: 퇴실 처리 ────────────────────────────────
+        showMsg('<div style="font-size:16px;margin-bottom:8px;">⏳</div><div style="font-size:14px;color:#1a73e8;">퇴실 처리 중...</div>', '#1a73e8');
+
         try {
           const res = await fetch('/api/push/checkout', {
             method: 'POST',
@@ -1140,19 +1275,35 @@ function renderAppPage() {
             body: JSON.stringify({ studentId: sid, attendanceId: aid }),
           });
           const data = await res.json();
-
-          const msgEl = document.getElementById('todayStatus');
           if (data.success) {
-            msgEl.innerHTML = '<div class="msg msg-success" style="margin-bottom:12px;">✅ ' + (data.message || '퇴실이 처리되었습니다.') + '</div>';
-            // 1.5초 후 오늘 출결 현황 새로고침
+            msgEl.innerHTML =
+              '<div style="text-align:center;padding:20px;background:#e6f4ea;border-radius:12px;margin-bottom:12px;">' +
+              '<div style="font-size:28px;margin-bottom:6px;">✅</div>' +
+              '<div style="font-size:16px;font-weight:600;color:#137333;">' + (data.message || '퇴실이 처리되었습니다.') + '</div>' +
+              '</div>';
             setTimeout(function() { loadTodayStatus(); }, 1500);
           } else {
-            msgEl.innerHTML = '<div class="msg msg-error" style="margin-bottom:12px;">퇴실 처리 실패: ' + (data.error || '') + '</div>';
-            setTimeout(function() { loadTodayStatus(); }, 3000);
+            showMsg(
+              '<div style="font-size:24px;margin-bottom:8px;">❌</div>' +
+              '<div style="font-size:15px;font-weight:600;color:#ff3b30;">퇴실 처리 실패</div>' +
+              '<div style="font-size:13px;color:#86868b;margin-top:6px;">' + (data.error || '') + '</div>',
+              '#ff3b30'
+            );
           }
         } catch (err) {
-          console.error('퇴실 처리 오류:', err);
+          showMsg('<div style="font-size:15px;color:#ff3b30;">네트워크 오류: ' + err.message + '</div>', '#ff3b30');
         }
+      }
+
+      // ─── Haversine 거리 계산 (미터) ──────────────────────
+      function getDistanceMeters(lat1, lon1, lat2, lon2) {
+        var R = 6371000;
+        var p1 = lat1 * Math.PI / 180;
+        var p2 = lat2 * Math.PI / 180;
+        var dp = (lat2 - lat1) * Math.PI / 180;
+        var dl = (lon2 - lon1) * Math.PI / 180;
+        var a = Math.sin(dp/2)*Math.sin(dp/2) + Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)*Math.sin(dl/2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
       }
 
       // ─── 홈 화면 추가 안내 ────────────────────────────────
@@ -1242,6 +1393,10 @@ function renderAdminPage(data) {
     <div class="card"><h2>🏫 교육과정 관리</h2>
       <p style="font-size:14px;color:#86868b;margin-bottom:12px;">교육과정 추가/수정/삭제, 회차 관리, 강의실 관리:</p>
       <a href="/admin/courses" class="btn-link" style="font-size:15px;font-weight:600;">교육과정 관리 페이지 열기 →</a>
+    </div>
+    <div class="card"><h2>⚙️ 시스템 설정</h2>
+      <p style="font-size:14px;color:#86868b;margin-bottom:12px;">퇴실 위치 검증, 건물 반경 설정:</p>
+      <a href="/admin/settings" class="btn-link" style="font-size:15px;font-weight:600;">시스템 설정 열기 →</a>
     </div>
     <div class="card"><h2>📤 구글시트 동기화</h2>
       <p style="font-size:14px;color:#86868b;margin-bottom:12px;">과정별 출결 데이터를 구글시트로 자동 내보내기:</p>
