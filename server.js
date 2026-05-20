@@ -149,7 +149,7 @@ app.get('/app', (req, res) => {
 app.get('/api/my/status/:studentId', async (req, res) => {
   try {
     const r = await db.query(`
-      SELECT a.check_in_at, a.check_out_at, a.status, a.exit_type,
+      SELECT a.attendance_id, a.check_in_at, a.check_out_at, a.status, a.exit_type,
              c.course_name, cr.classroom_name,
              cs.session_number, cs.start_time, cs.end_time
       FROM attendance a
@@ -1039,17 +1039,44 @@ function renderAppPage() {
             return;
           }
 
+          // 퇴실 버튼용 데이터 저장
+          window._checkoutData = null;
+          if (data.check_in_at && !data.check_out_at && data.attendance_id) {
+            window._checkoutData = { sid: appStudentId, aid: data.attendance_id };
+          }
+
           let html = '<div style="background:#f5f5f7;border-radius:10px;padding:14px;">';
           html += '<div style="font-size:13px;font-weight:600;margin-bottom:8px;">오늘 출결 현황</div>';
           html += '<div class="status-row"><span class="status-label2">과정</span><span class="status-value2">' + (data.course_name || '-') + '</span></div>';
           html += '<div class="status-row"><span class="status-label2">입실</span><span class="status-value2">' + (data.check_in_at ? new Date(data.check_in_at).toLocaleTimeString('ko-KR', {timeZone:'Asia/Seoul', hour:'2-digit', minute:'2-digit'}) : '-') + '</span></div>';
           html += '<div class="status-row"><span class="status-label2">퇴실</span><span class="status-value2">' + (data.check_out_at ? new Date(data.check_out_at).toLocaleTimeString('ko-KR', {timeZone:'Asia/Seoul', hour:'2-digit', minute:'2-digit'}) : '-') + '</span></div>';
           html += '<div class="status-row"><span class="status-label2">상태</span><span class="status-value2">' + (data.status || '-') + '</span></div>';
+
+          // 입실O + 퇴실X → 퇴실하기 버튼 표시
+          if (data.check_in_at && !data.check_out_at) {
+            html += '<div style="margin-top:12px;text-align:center;">';
+            html += '<button onclick="manualCheckout()" style="width:100%;padding:14px;background:#1a73e8;color:#fff;border:none;border-radius:10px;font-size:16px;font-weight:600;cursor:pointer;">🔐 퇴실하기</button>';
+            html += '<div style="font-size:11px;color:#86868b;margin-top:4px;">위치 확인 + 생체인증 후 퇴실 처리됩니다</div>';
+            html += '</div>';
+          }
+
           html += '</div>';
           el.innerHTML = html;
         } catch (err) {
           el.innerHTML = '<div class="msg msg-error">현황 조회 실패</div>';
         }
+      }
+
+      // ─── 수동 퇴실 (앱 내 버튼) ────────────────────────────
+      async function manualCheckout() {
+        if (!window._checkoutData) {
+          alert('퇴실할 출결 기록이 없습니다.');
+          return;
+        }
+        // handleCheckoutFromPush와 동일한 플로우 실행
+        const url = '/app?checkout=true&sid=' + encodeURIComponent(window._checkoutData.sid) + '&aid=' + encodeURIComponent(window._checkoutData.aid);
+        window.history.replaceState({}, '', url);
+        await handleCheckoutFromPush();
       }
 
       // ─── 푸시 알림 ────────────────────────────────────────
