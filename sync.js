@@ -70,7 +70,9 @@ function getDetailedStatus(a) {
   if (!hasIn && hasOut) return '입실누락';
   if (hasIn && !hasOut) return '퇴실누락';
 
-  // 입실O, 퇴실O → DB 상태 사용
+  // 입실O, 퇴실O → exit_type 확인
+  if (a.exit_type === '퇴실미확인') return '퇴실미확인';
+
   return a.status || '출석';
 }
 
@@ -86,7 +88,7 @@ function buildSummarySheet(data) {
   // 2행: 헤더 - 회차 번호
   const header1 = ['이름'];
   for (const s of sessions) header1.push(s.session_number + '회');
-  header1.push('출석', '지각', '조퇴', '결석', '입실누락', '퇴실누락', '출석률');
+  header1.push('출석', '지각', '조퇴', '결석', '입실누락', '퇴실누락', '퇴실미확인', '출석률');
   rows.push(header1);
 
   // 3행: 헤더 - 날짜
@@ -95,7 +97,7 @@ function buildSummarySheet(data) {
     const d = s.session_date ? new Date(s.session_date) : null;
     header2.push(d ? `${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getDate().toString().padStart(2,'0')}` : '');
   }
-  header2.push('', '', '', '', '', '', '');
+  header2.push('', '', '', '', '', '', '', '');
   rows.push(header2);
 
   // 4행: 지각/조퇴 기준
@@ -105,13 +107,13 @@ function buildSummarySheet(data) {
     const early = s.early_leave_cutoff ? s.early_leave_cutoff.slice(0, 5) : '';
     header3.push(`지각${late}/조퇴${early}`);
   }
-  header3.push('', '', '', '', '', '', '');
+  header3.push('', '', '', '', '', '', '', '');
   rows.push(header3);
 
   // 수강생별 출결
   for (const student of students) {
     const row = [student.name];
-    let attended = 0, late = 0, earlyLeave = 0, absent = 0, missedIn = 0, missedOut = 0;
+    let attended = 0, late = 0, earlyLeave = 0, absent = 0, missedIn = 0, missedOut = 0, missedConfirm = 0;
 
     for (const session of sessions) {
       const key = student.student_id + '_' + session.session_id;
@@ -125,12 +127,13 @@ function buildSummarySheet(data) {
       else if (status === '결석') absent++;
       else if (status === '입실누락') missedIn++;
       else if (status === '퇴실누락') missedOut++;
+      else if (status === '퇴실미확인') missedConfirm++;
     }
 
     const totalSessions = sessions.length;
     const rate = totalSessions > 0 ? Math.round((attended / totalSessions) * 100) + '%' : '';
 
-    row.push(attended, late, earlyLeave, absent, missedIn, missedOut, rate);
+    row.push(attended, late, earlyLeave, absent, missedIn, missedOut, missedConfirm, rate);
     rows.push(row);
   }
 
@@ -166,6 +169,7 @@ async function formatSummarySheet(sheets, spreadsheetId, sheetTitle, data) {
     '결석':   { red: 0.94, green: 0.94, blue: 0.94 },
     '입실누락': { red: 0.93, green: 0.9, blue: 0.98 },
     '퇴실누락': { red: 0.88, green: 0.94, blue: 1.0 },
+    '퇴실미확인': { red: 1.0, green: 0.92, blue: 0.93 },
   };
   const textColors = {
     '출석':   { red: 0.07, green: 0.45, blue: 0.2 },
@@ -174,6 +178,7 @@ async function formatSummarySheet(sheets, spreadsheetId, sheetTitle, data) {
     '결석':   { red: 0.37, green: 0.39, blue: 0.42 },
     '입실누락': { red: 0.48, green: 0.28, blue: 0.73 },
     '퇴실누락': { red: 0.1, green: 0.4, blue: 0.7 },
+    '퇴실미확인': { red: 0.8, green: 0.15, blue: 0.2 },
   };
 
   const requests = [];
@@ -185,7 +190,7 @@ async function formatSummarySheet(sheets, spreadsheetId, sheetTitle, data) {
   }
 
   // 조건부 서식 추가
-  const statusList = ['출석', '지각', '조퇴', '결석', '입실누락', '퇴실누락'];
+  const statusList = ['출석', '지각', '조퇴', '결석', '입실누락', '퇴실누락', '퇴실미확인'];
   for (const status of statusList) {
     requests.push({
       addConditionalFormatRule: {
@@ -219,7 +224,7 @@ async function formatSummarySheet(sheets, spreadsheetId, sheetTitle, data) {
   // 헤더 서식
   requests.push({
     repeatCell: {
-      range: { sheetId, startRowIndex: 0, endRowIndex: 4, startColumnIndex: 0, endColumnIndex: endCol + 7 },
+      range: { sheetId, startRowIndex: 0, endRowIndex: 4, startColumnIndex: 0, endColumnIndex: endCol + 8 },
       cell: {
         userEnteredFormat: {
           textFormat: { bold: true, fontSize: 10 },
@@ -243,7 +248,7 @@ async function formatSummarySheet(sheets, spreadsheetId, sheetTitle, data) {
   // 열 너비 자동 조정
   requests.push({
     autoResizeDimensions: {
-      dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: endCol + 7 },
+      dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: endCol + 8 },
     },
   });
 
