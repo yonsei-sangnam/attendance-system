@@ -4,16 +4,10 @@ const {
   generateAuthenticationOptions,
   verifyAuthenticationResponse,
 } = require('@simplewebauthn/server');
+const crypto = require('crypto');
 const db = require('./db');
 
-// ─── 패스키 전용 챌린지 저장소 (서버 메모리) ─────────────────
-const passkeyChallengStore = new Map();
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, val] of passkeyChallengStore) {
-    if (val.expires < now) passkeyChallengStore.delete(key);
-  }
-}, 60000);
+// ─── 패스키 챌린지 저장소: DB 사용 (서버 재시작/슬립에도 유지) ──
 
 // ─── RP(Relying Party) 설정 ──────────────────────────────────
 // 서버 도메인에서 자동 추출 (Render 배포 시 자동 적용)
@@ -224,11 +218,13 @@ async function hasCredential(studentId) {
 // ─── 6. 패스키 직접 인증 옵션 ────────────────────────────────
 // studentId 지정 시: 해당 수강생의 크레덴셜만 허용 (퇴실 본인 인증)
 // studentId 없을 시: 기기의 모든 패스키 표시 (QR 스캔 후 본인 선택)
-async function createPasskeyAuthOptions(req, studentId) {
+// discoverable=true: allowCredentials 생략 (iOS PWA에서 QR 프롬프트 방지)
+async function createPasskeyAuthOptions(req, studentId, discoverable) {
   const rp = getRPConfig(req);
 
   let allowCredentials = undefined;
-  if (studentId) {
+  // discoverable 모드가 아닐 때만 allowCredentials 지정
+  if (studentId && !discoverable) {
     const creds = await db.query(
       'SELECT webauthn_cred_id, transports FROM credentials WHERE student_id = $1',
       [studentId]
@@ -237,8 +233,15 @@ async function createPasskeyAuthOptions(req, studentId) {
     allowCredentials = creds.rows.map(row => ({
       id: row.webauthn_cred_id,
       type: 'public-key',
-      transports: row.transports || [],
+      transports: row.transports || ['internal'],
     }));
+  } else if (studentId && discoverable) {
+    // discoverable 모드에서도 크레덴셜 존재 확인
+    const cnt = await db.query(
+      'SELECT COUNT(*) AS cnt FROM credentials WHERE student_id = $1',
+      [studentId]
+    );
+    if (parseInt(cnt.rows[0].cnt) === 0) throw new Error('등록된 생체인증 정보가 없습니다.');
   }
 
   const options = await generateAuthenticationOptions({
@@ -247,11 +250,17 @@ async function createPasskeyAuthOptions(req, studentId) {
     ...(allowCredentials ? { allowCredentials } : {}),
   });
 
-  // 챌린지를 메모리에 저장 (5분 만료), studentId도 함께 저장
-  passkeyChallengStore.set(options.challenge, {
-    expires: Date.now() + 5 * 60 * 1000,
-    studentId: studentId || null,
-  });
+  // 챌린지를 DB에 저장 (서버 재시작에도 유지)
+  // 익명(QR스캔)은 고유 ID로, 실명(퇴실)은 studentId로 저장
+  const dbKey = studentId || ('__anon_' + crypto.randomBytes(8).toString('hex'));
+  await db.query(`
+    INSERT INTO auth_challenges (student_id, challenge, type, expires_at)
+    VALUES ($1, $2, 'passkey', NOW() + INTERVAL '5 minutes')
+    ON CONFLICT (student_id, type) DO UPDATE SET challenge = $2, expires_at = NOW() + INTERVAL '5 minutes'
+  `, [dbKey, options.challenge]);
+
+  // 만료된 passkey 챌린지 정리
+  await db.query("DELETE FROM auth_challenges WHERE type = 'passkey' AND expires_at < NOW()");
 
   return options;
 }
@@ -270,21 +279,28 @@ async function verifyPasskeyAuth(req, response) {
   }
   const cred = credRes.rows[0];
 
-  // 챌린지 검증: response.clientDataJSON에서 challenge 추출
-  // verifyAuthenticationResponse가 내부적으로 처리하므로, expectedChallenge를 찾아서 전달
-  // clientDataJSON을 디코딩하여 challenge 추출
+  // clientDataJSON에서 challenge 추출
   const clientData = JSON.parse(Buffer.from(response.response.clientDataJSON, 'base64url').toString());
   const challenge = clientData.challenge;
 
-  // 챌린지 저장 시 기록된 studentId와 교차 검증
-  const storedData = passkeyChallengStore.get(challenge);
-  if (!storedData) {
+  // DB에서 챌린지 검증 (해당 수강생 또는 anonymous)
+  const challengeRes = await db.query(
+    "SELECT student_id FROM auth_challenges WHERE challenge = $1 AND type = 'passkey' AND expires_at > NOW()",
+    [challenge]
+  );
+  if (challengeRes.rows.length === 0) {
     throw new Error('인증 세션이 만료되었습니다. 다시 시도해주세요.');
   }
-  passkeyChallengStore.delete(challenge);
+  const storedStudentId = challengeRes.rows[0].student_id;
+
+  // 챌린지 삭제 (1회용)
+  await db.query(
+    "DELETE FROM auth_challenges WHERE challenge = $1 AND type = 'passkey'",
+    [challenge]
+  );
 
   // studentId가 지정된 경우 인증한 크레덴셜이 해당 수강생의 것인지 확인
-  if (storedData.studentId && cred.student_id !== storedData.studentId) {
+  if (storedStudentId && !storedStudentId.startsWith('__anon_') && cred.student_id !== storedStudentId) {
     throw new Error('WRONG_STUDENT');
   }
 
