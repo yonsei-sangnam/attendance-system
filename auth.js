@@ -36,16 +36,6 @@ function getRPConfig(req) {
 async function createRegistrationOptions(req, studentId, studentName) {
   const rp = getRPConfig(req);
 
-  // 이미 등록된 크레덴셜 조회 (중복 방지)
-  const existing = await db.query(
-    'SELECT webauthn_cred_id FROM credentials WHERE student_id = $1',
-    [studentId]
-  );
-  const excludeCredentials = existing.rows.map(row => ({
-    id: row.webauthn_cred_id,
-    type: 'public-key',
-  }));
-
   const options = await generateRegistrationOptions({
     rpName: rp.rpName,
     rpID: rp.rpID,
@@ -58,7 +48,7 @@ async function createRegistrationOptions(req, studentId, studentName) {
       userVerification: 'required',             // 반드시 생체인증 수행
       residentKey: 'required',
     },
-    excludeCredentials,
+    // excludeCredentials 제거: 재등록 허용 (기존 크레덴셜은 검증 시 삭제됨)
   });
 
   // 챌린지를 DB에 임시 저장 (검증 시 비교용)
@@ -100,7 +90,13 @@ async function verifyRegistration(req, studentId, response) {
 
   const { credential } = verification.registrationInfo;
 
-  // 크레덴셜 DB 저장
+  // 기존 크레덴셜 삭제 (1인 1기기 정책: 새 기기 등록 시 기존 전부 삭제)
+  await db.query('DELETE FROM credentials WHERE student_id = $1', [studentId]);
+
+  // 기존 푸시 구독도 삭제 (구 기기 구독은 무의미)
+  await db.query('DELETE FROM push_subscriptions WHERE student_id = $1', [studentId]);
+
+  // 새 크레덴셜 저장
   await db.query(`
     INSERT INTO credentials (student_id, webauthn_cred_id, public_key, counter, transports)
     VALUES ($1, $2, $3, $4, $5)
