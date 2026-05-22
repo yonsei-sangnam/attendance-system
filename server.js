@@ -241,8 +241,8 @@ app.post('/api/auth/verify', async (req, res) => {
 // ─── API: 패스키 직접 인증 (전화번호 불필요) ─────────────────
 app.post('/api/auth/passkey-start', async (req, res) => {
   try {
-    const { studentId } = req.body || {};
-    const options = await auth.createPasskeyAuthOptions(req, studentId || null);
+    const { studentId, discoverable } = req.body || {};
+    const options = await auth.createPasskeyAuthOptions(req, studentId || null, !!discoverable);
     res.json(options);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -290,12 +290,13 @@ app.post('/api/auth/passkey-verify', async (req, res) => {
     res.json(result);
   } catch (err) {
     if (err.message === 'NOT_FOUND') {
-      return res.json({ verified: false, error: 'NOT_FOUND', message: '등록되지 않은 기기입니다.' });
+      return res.json({ verified: false, error: 'NOT_FOUND', message: '등록되지 않은 기기입니다. /register 에서 재등록해주세요.' });
     }
     if (err.message === 'WRONG_STUDENT') {
       return res.json({ verified: false, error: 'WRONG_STUDENT', message: '본인 기기로 인증해주세요.' });
     }
-    res.status(500).json({ error: err.message });
+    console.error('[passkey-verify] 오류:', err.message);
+    return res.json({ verified: false, error: err.message, message: err.message });
   }
 });
 
@@ -344,10 +345,10 @@ app.post('/api/auth/checkout', async (req, res) => {
     return res.json({ success: true, message: record.rows[0].name + '님 퇴실이 처리되었습니다.' });
 
   } catch (err) {
-    if (err.message === 'NOT_FOUND') return res.json({ success: false, error: '등록되지 않은 기기입니다.' });
+    if (err.message === 'NOT_FOUND') return res.json({ success: false, error: '등록되지 않은 기기입니다. /register 에서 재등록해주세요.' });
     if (err.message === 'WRONG_STUDENT') return res.json({ success: false, error: '본인 기기로 인증해주세요.' });
-    console.error('[Auth Checkout] 오류:', err);
-    return res.json({ success: false, error: '인증 또는 퇴실 처리 중 오류가 발생했습니다.' });
+    console.error('[Auth Checkout] 오류:', err.message);
+    return res.json({ success: false, error: err.message || '인증 또는 퇴실 처리 중 오류가 발생했습니다.' });
   }
 });
 
@@ -1278,12 +1279,18 @@ function renderAppPage() {
         await new Promise(function(r) { setTimeout(r, 400); });
 
         try {
+          // discoverable: true → allowCredentials 미포함 (iOS PWA QR 프롬프트 방지)
           var optRes = await fetch('/api/auth/passkey-start', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ studentId: studentId })
+            body: JSON.stringify({ studentId: studentId, discoverable: true })
           });
           var options = await optRes.json();
           if (options.error) throw new Error(options.error);
+
+          // 안전장치: allowCredentials가 포함되어 있으면 제거 (iOS PWA 호환)
+          if (options.allowCredentials) {
+            delete options.allowCredentials;
+          }
 
           var authResp = await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON: options });
 
@@ -1295,7 +1302,8 @@ function renderAppPage() {
           var verifyData = await verifyRes.json();
 
           if (!verifyData.verified) {
-            showMsg('<div style="font-size:24px;margin-bottom:8px;">❌</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">' + (verifyData.message || '인증 실패') + '</div>');
+            var errMsg = verifyData.message || verifyData.error || '인증 실패';
+            showMsg('<div style="font-size:24px;margin-bottom:8px;">❌</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">' + errMsg + '</div>');
             return;
           }
 
