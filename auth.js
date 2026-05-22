@@ -221,19 +221,36 @@ async function hasCredential(studentId) {
   return parseInt(res.rows[0].cnt) > 0;
 }
 
-// ─── 6. 패스키 직접 인증 옵션 (전화번호 없이) ────────────────
-async function createPasskeyAuthOptions(req) {
+// ─── 6. 패스키 직접 인증 옵션 ────────────────────────────────
+// studentId 지정 시: 해당 수강생의 크레덴셜만 허용 (퇴실 본인 인증)
+// studentId 없을 시: 기기의 모든 패스키 표시 (QR 스캔 후 본인 선택)
+async function createPasskeyAuthOptions(req, studentId) {
   const rp = getRPConfig(req);
+
+  let allowCredentials = undefined;
+  if (studentId) {
+    const creds = await db.query(
+      'SELECT webauthn_cred_id, transports FROM credentials WHERE student_id = $1',
+      [studentId]
+    );
+    if (creds.rows.length === 0) throw new Error('등록된 생체인증 정보가 없습니다.');
+    allowCredentials = creds.rows.map(row => ({
+      id: row.webauthn_cred_id,
+      type: 'public-key',
+      transports: row.transports || [],
+    }));
+  }
 
   const options = await generateAuthenticationOptions({
     rpID: rp.rpID,
     userVerification: 'required',
-    // allowCredentials 생략 → 기기에 저장된 패스키 자동 표시
+    ...(allowCredentials ? { allowCredentials } : {}),
   });
 
-  // 챌린지를 메모리에 저장 (5분 만료)
+  // 챌린지를 메모리에 저장 (5분 만료), studentId도 함께 저장
   passkeyChallengStore.set(options.challenge, {
     expires: Date.now() + 5 * 60 * 1000,
+    studentId: studentId || null,
   });
 
   return options;
@@ -259,11 +276,17 @@ async function verifyPasskeyAuth(req, response) {
   const clientData = JSON.parse(Buffer.from(response.response.clientDataJSON, 'base64url').toString());
   const challenge = clientData.challenge;
 
-  // 저장된 챌린지 확인
-  if (!passkeyChallengStore.has(challenge)) {
+  // 챌린지 저장 시 기록된 studentId와 교차 검증
+  const storedData = passkeyChallengStore.get(challenge);
+  if (!storedData) {
     throw new Error('인증 세션이 만료되었습니다. 다시 시도해주세요.');
   }
   passkeyChallengStore.delete(challenge);
+
+  // studentId가 지정된 경우 인증한 크레덴셜이 해당 수강생의 것인지 확인
+  if (storedData.studentId && cred.student_id !== storedData.studentId) {
+    throw new Error('WRONG_STUDENT');
+  }
 
   const verification = await verifyAuthenticationResponse({
     response,
