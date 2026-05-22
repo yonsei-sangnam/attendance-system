@@ -1,8 +1,8 @@
 // Service Worker: PWA 오프라인 + 푸시 알림 처리
 
-const CACHE_NAME = 'attendance-v3';
+const CACHE_NAME = 'attendance-v4';
 
-// ─── 설치: 기본 파일 캐시 ────────────────────────────────────
+// ─── 설치 ────────────────────────────────────────────────────
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
@@ -12,7 +12,7 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
-// ─── 활성화: 이전 캐시 삭제 ─────────────────────────────────
+// ─── 활성화 ──────────────────────────────────────────────────
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((names) => {
@@ -26,7 +26,7 @@ self.addEventListener('activate', (event) => {
 
 // ─── 푸시 알림 수신 ──────────────────────────────────────────
 self.addEventListener('push', (event) => {
-  let data = { title: '출결 알림', body: '퇴실 확인을 해주세요.', url: '/app' };
+  var data = { title: '출결 알림', body: '퇴실 확인을 해주세요.', url: '/app' };
 
   if (event.data) {
     try {
@@ -36,13 +36,13 @@ self.addEventListener('push', (event) => {
     }
   }
 
-  const options = {
+  var options = {
     body: data.body,
     icon: '/icon-192.png',
     badge: '/icon-192.png',
     vibrate: [200, 100, 200],
-    tag: 'checkout-reminder',   // 고정 태그: 새 알림이 오면 이전 것을 교체
-    renotify: true,             // 같은 태그여도 진동/소리 다시 울림
+    tag: 'checkout-reminder',
+    renotify: true,
     requireInteraction: true,
     data: {
       url: data.url || '/app',
@@ -60,64 +60,28 @@ self.addEventListener('push', (event) => {
 });
 
 // ─── 알림 클릭 처리 ──────────────────────────────────────────
+// 모든 퇴실 처리는 앱 페이지에서 (위치확인 + 생체인증) 진행
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
-  var action = event.action;
   var data = event.notification.data || {};
 
-  // 퇴실 처리용 URL 생성 (앱 페이지에서 처리하도록)
-  var checkoutUrl = '/app';
+  // 퇴실 처리용 URL (앱 페이지에서 위치확인 + 생체인증 수행)
+  var targetUrl = '/app';
   if (data.studentId && data.attendanceId) {
-    checkoutUrl = '/app?checkout=true&sid=' + encodeURIComponent(data.studentId) + '&aid=' + encodeURIComponent(data.attendanceId);
+    targetUrl = '/app?checkout=true&sid=' + encodeURIComponent(data.studentId) + '&aid=' + encodeURIComponent(data.attendanceId);
   }
 
-  // ── "퇴실 확인" 액션 버튼 (안드로이드) ──
-  // 안드로이드: SW에서 직접 API 호출 시도 → 실패 시 앱 페이지로 이동
-  if (action === 'checkout' && data.studentId && data.attendanceId) {
-    event.waitUntil(
-      fetch('/api/push/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          studentId: data.studentId,
-          attendanceId: data.attendanceId,
-        }),
-      })
-      .then(function(res) { return res.json(); })
-      .then(function(result) {
-        if (result.success) {
-          return self.registration.showNotification('퇴실 완료', {
-            body: result.message || '퇴실이 정상 처리되었습니다.',
-            icon: '/icon-192.png',
-            tag: 'checkout-confirm',
-          });
-        } else {
-          // API 실패 → 앱 페이지에서 재시도하도록 열기
-          return clients.openWindow(checkoutUrl);
-        }
-      })
-      .catch(function() {
-        // 네트워크 오류 → 앱 페이지에서 재시도
-        return clients.openWindow(checkoutUrl);
-      })
-    );
-    return;
-  }
-
-  // ── 일반 클릭 (알림 본문 탭) ──
-  // iOS + Android 공통: 앱 페이지를 URL 파라미터와 함께 열어서 퇴실 처리
+  // 앱 페이지 열기 (이미 열려있으면 이동 + 포커스)
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
-      // 이미 열린 앱 창이 있으면 URL 변경 + 포커스
       for (var i = 0; i < clientList.length; i++) {
         var client = clientList[i];
         if (client.url.includes('/app') && 'navigate' in client) {
-          return client.navigate(checkoutUrl).then(function(c) { return c.focus(); });
+          return client.navigate(targetUrl).then(function(c) { return c.focus(); });
         }
       }
-      // 없으면 새 창 열기
-      return clients.openWindow(checkoutUrl);
+      return clients.openWindow(targetUrl);
     })
   );
 });
