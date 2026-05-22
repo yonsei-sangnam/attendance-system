@@ -241,7 +241,8 @@ app.post('/api/auth/verify', async (req, res) => {
 // ─── API: 패스키 직접 인증 (전화번호 불필요) ─────────────────
 app.post('/api/auth/passkey-start', async (req, res) => {
   try {
-    const options = await auth.createPasskeyAuthOptions(req);
+    const { studentId } = req.body || {};
+    const options = await auth.createPasskeyAuthOptions(req, studentId || null);
     res.json(options);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -264,6 +265,9 @@ app.post('/api/auth/passkey-verify', async (req, res) => {
   } catch (err) {
     if (err.message === 'NOT_FOUND') {
       return res.json({ verified: false, error: 'NOT_FOUND', message: '등록되지 않은 기기입니다.' });
+    }
+    if (err.message === 'WRONG_STUDENT') {
+      return res.json({ verified: false, error: 'WRONG_STUDENT', message: '본인 기기로 인증해주세요.' });
     }
     res.status(500).json({ error: err.message });
   }
@@ -509,11 +513,11 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
         msgEl.innerHTML = '';
 
         try {
-          // 패스키 옵션 요청
+          // 패스키 옵션 요청 (sid 수강생의 크레덴셜만 허용)
           const optRes = await fetch('/api/auth/passkey-start', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({})
+            body: JSON.stringify({ studentId: sid })
           });
           const options = await optRes.json();
           if (options.error) throw new Error(options.error);
