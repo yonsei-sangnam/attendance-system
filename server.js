@@ -249,16 +249,42 @@ app.post('/api/auth/passkey-start', async (req, res) => {
 
 app.post('/api/auth/passkey-verify', async (req, res) => {
   try {
-    const { response, classroomCode } = req.body;
+    const { response, classroomCode, attendanceId } = req.body;
     const result = await auth.verifyPasskeyAuth(req, response);
 
     if (!result.verified) {
       return res.json(result);
     }
 
+    // 출결 기록 (QR 스캔 입실용)
     if (classroomCode) {
       const attendResult = await attend.recordAttendance(result.studentId, classroomCode);
       return res.json({ verified: true, studentId: result.studentId, studentName: result.studentName, attendance: attendResult });
+    }
+
+    // 퇴실 처리 (패스키 인증 + 퇴실 통합)
+    if (attendanceId) {
+      // attendanceId가 인증된 수강생의 것인지 확인
+      const attCheck = await db.query(
+        'SELECT attendance_id, student_id, check_out_at FROM attendance WHERE attendance_id = $1',
+        [attendanceId]
+      );
+      if (attCheck.rows.length === 0) {
+        return res.json({ verified: true, checkoutSuccess: false, error: '출결 기록을 찾을 수 없습니다.' });
+      }
+      if (attCheck.rows[0].student_id !== result.studentId) {
+        return res.json({ verified: true, checkoutSuccess: false, error: '본인의 출결 기록이 아닙니다.' });
+      }
+      if (attCheck.rows[0].check_out_at) {
+        return res.json({ verified: true, checkoutSuccess: true, message: '이미 퇴실 처리되었습니다.' });
+      }
+
+      await db.query(
+        "UPDATE attendance SET check_out_at = NOW(), exit_type = '인증퇴실', updated_at = NOW() WHERE attendance_id = $1",
+        [attendanceId]
+      );
+      console.log('[Checkout] ' + result.studentName + ' 퇴실 처리 완료 (인증퇴실)');
+      return res.json({ verified: true, checkoutSuccess: true, message: result.studentName + '님 퇴실이 처리되었습니다.' });
     }
 
     res.json(result);
@@ -270,6 +296,58 @@ app.post('/api/auth/passkey-verify', async (req, res) => {
       return res.json({ verified: false, error: 'WRONG_STUDENT', message: '본인 기기로 인증해주세요.' });
     }
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── API: 패스키 인증 + 퇴실 처리 (원자적) ──────────────────
+// 패스키 검증 성공 시 서버에서 직접 퇴실 처리 (클라이언트가 별도 API 호출 불필요)
+app.post('/api/auth/checkout', async (req, res) => {
+  try {
+    const { response, studentId, attendanceId } = req.body;
+    if (!response || !studentId || !attendanceId) {
+      return res.json({ success: false, error: '필수 정보가 누락되었습니다.' });
+    }
+
+    // 1. 패스키 검증
+    const authResult = await auth.verifyPasskeyAuth(req, response);
+    if (!authResult.verified) {
+      return res.json({ success: false, error: authResult.message || '인증 실패' });
+    }
+
+    // 2. 인증된 수강생과 퇴실 대상 일치 확인
+    if (authResult.studentId !== studentId) {
+      return res.json({ success: false, error: '본인 기기로 인증해주세요.' });
+    }
+
+    // 3. 출결 기록 확인
+    const record = await db.query(`
+      SELECT a.attendance_id, a.check_out_at, s.name
+      FROM attendance a
+      JOIN students s ON s.student_id = a.student_id
+      WHERE a.attendance_id = $1 AND a.student_id = $2
+    `, [attendanceId, studentId]);
+
+    if (record.rows.length === 0) {
+      return res.json({ success: false, error: '출결 기록을 찾을 수 없습니다.' });
+    }
+    if (record.rows[0].check_out_at) {
+      return res.json({ success: true, message: '이미 퇴실 처리되었습니다.' });
+    }
+
+    // 4. 퇴실 처리
+    await db.query(`
+      UPDATE attendance SET check_out_at = NOW(), exit_type = '생체인증', updated_at = NOW()
+      WHERE attendance_id = $1
+    `, [attendanceId]);
+
+    console.log('[Auth Checkout] ' + record.rows[0].name + ' 퇴실 처리 완료 (생체인증)');
+    return res.json({ success: true, message: record.rows[0].name + '님 퇴실이 처리되었습니다.' });
+
+  } catch (err) {
+    if (err.message === 'NOT_FOUND') return res.json({ success: false, error: '등록되지 않은 기기입니다.' });
+    if (err.message === 'WRONG_STUDENT') return res.json({ success: false, error: '본인 기기로 인증해주세요.' });
+    console.error('[Auth Checkout] 오류:', err);
+    return res.json({ success: false, error: '인증 또는 퇴실 처리 중 오류가 발생했습니다.' });
   }
 });
 
@@ -513,11 +591,11 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
         msgEl.innerHTML = '';
 
         try {
-          // 패스키 옵션 요청 (sid 수강생의 크레덴셜만 허용)
+          // 패스키 옵션 요청 (입실: 수강생 미특정 → 기기의 모든 패스키 표시)
           const optRes = await fetch('/api/auth/passkey-start', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ studentId: sid })
+            body: JSON.stringify({})
           });
           const options = await optRes.json();
           if (options.error) throw new Error(options.error);
@@ -1157,175 +1235,82 @@ function renderAppPage() {
 
       // ─── 푸시 알림에서 퇴실 처리 (위치확인 → 생체인증 → 퇴실) ──
       async function handleCheckoutFromPush() {
-        const params = new URLSearchParams(window.location.search);
+        var params = new URLSearchParams(window.location.search);
         if (params.get('checkout') !== 'true') return;
 
-        const sid = params.get('sid');
-        const aid = params.get('aid');
-        if (!sid || !aid) return;
+        var studentId = params.get('sid');
+        var attendanceId = params.get('aid');
+        if (!studentId || !attendanceId) return;
 
-        // URL 파라미터 제거 (새로고침 시 재실행 방지)
         window.history.replaceState({}, '', '/app');
 
-        const msgEl = document.getElementById('todayStatus');
-
-        function showMsg(text, color) {
+        var msgEl = document.getElementById('todayStatus');
+        function showMsg(text) {
           msgEl.innerHTML = '<div style="text-align:center;padding:20px;background:#f5f5f7;border-radius:12px;margin-bottom:12px;">' + text + '</div>';
         }
 
-        // ── Step 1: 건물 위치 설정 조회 ──────────────────────
-        showMsg('<div style="font-size:16px;margin-bottom:8px;">⏳</div><div style="font-size:14px;color:#86868b;">퇴실 처리 준비 중...</div>', '#86868b');
+        // ── Step 1: 위치 설정 조회 ────────────────────────────
+        showMsg('<div style="font-size:16px;margin-bottom:8px;">⏳</div><div style="font-size:14px;color:#86868b;">퇴실 처리 준비 중...</div>');
 
-        let buildingSettings = { enabled: false };
-        try {
-          const sRes = await fetch('/api/settings/building');
-          buildingSettings = await sRes.json();
-        } catch (e) { /* 설정 조회 실패 시 위치 검증 건너뜀 */ }
+        var buildingSettings = { enabled: false };
+        try { var sRes = await fetch('/api/settings/building'); buildingSettings = await sRes.json(); } catch (e) {}
 
-        // ── Step 2: 위치 검증 (설정된 경우) ─────────────────
+        // ── Step 2: 위치 검증 ──────────────────────────────────
         if (buildingSettings.enabled && buildingSettings.lat && buildingSettings.lng) {
-          showMsg('<div style="font-size:16px;margin-bottom:8px;">📍</div><div style="font-size:14px;color:#1a73e8;">위치 확인 중...</div><div style="font-size:12px;color:#86868b;margin-top:4px;">잠시만 기다려주세요</div>', '#1a73e8');
-
+          showMsg('<div style="font-size:16px;margin-bottom:8px;">📍</div><div style="font-size:14px;color:#1a73e8;">위치 확인 중...</div>');
           try {
-            const pos = await new Promise(function(resolve, reject) {
-              navigator.geolocation.getCurrentPosition(resolve, reject, {
-                enableHighAccuracy: true,
-                timeout: 12000,
-                maximumAge: 0,
-              });
+            var pos = await new Promise(function(resolve, reject) {
+              navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
             });
-
-            const dist = getDistanceMeters(
-              pos.coords.latitude, pos.coords.longitude,
-              buildingSettings.lat, buildingSettings.lng
-            );
-
-            const radius = buildingSettings.radius || 200;
-            console.log('[Checkout] 거리: ' + Math.round(dist) + 'm / 허용반경: ' + radius + 'm');
-
-            if (dist > radius) {
-              // 건물 외부 → 퇴실 불가
-              showMsg(
-                '<div style="font-size:24px;margin-bottom:8px;">🚫</div>' +
-                '<div style="font-size:15px;font-weight:600;color:#ff3b30;">건물 외부 감지</div>' +
-                '<div style="font-size:13px;color:#86868b;margin-top:6px;">현재 위치가 건물에서 ' + Math.round(dist) + 'm 떨어져 있어<br>퇴실 처리가 되지 않았습니다.</div>',
-                '#ff3b30'
-              );
-              return; // 종료 → 스케줄러가 퇴실누락으로 처리
+            var dist = getDistanceMeters(pos.coords.latitude, pos.coords.longitude, buildingSettings.lat, buildingSettings.lng);
+            if (dist > (buildingSettings.radius || 200)) {
+              showMsg('<div style="font-size:24px;margin-bottom:8px;">🚫</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">건물 외부 감지</div><div style="font-size:13px;color:#86868b;margin-top:6px;">건물에서 ' + Math.round(dist) + 'm 떨어져 있어 퇴실 처리가 되지 않았습니다.</div>');
+              return;
             }
-
-            // 위치 확인 성공
-            showMsg('<div style="font-size:16px;margin-bottom:8px;">✅</div><div style="font-size:14px;color:#34c759;">위치 확인 완료 (' + Math.round(dist) + 'm)</div>', '#34c759');
-
           } catch (locErr) {
-            // 위치 권한 거부 or 타임아웃
-            if (locErr.code === 1) {
-              showMsg(
-                '<div style="font-size:24px;margin-bottom:8px;">📵</div>' +
-                '<div style="font-size:15px;font-weight:600;color:#ff3b30;">위치 권한이 거부되었습니다</div>' +
-                '<div style="font-size:13px;color:#86868b;margin-top:6px;">기기 설정에서 위치 권한을 허용해주세요.</div>',
-                '#ff3b30'
-              );
-            } else {
-              showMsg(
-                '<div style="font-size:24px;margin-bottom:8px;">⚠️</div>' +
-                '<div style="font-size:15px;font-weight:600;color:#ff9500;">위치 확인 실패</div>' +
-                '<div style="font-size:13px;color:#86868b;margin-top:6px;">위치를 확인할 수 없어 퇴실 처리가 되지 않았습니다.</div>',
-                '#ff9500'
-              );
-            }
+            showMsg('<div style="font-size:24px;margin-bottom:8px;">📵</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">' + (locErr.code === 1 ? '위치 권한이 거부되었습니다' : '위치 확인 실패') + '</div><div style="font-size:13px;color:#86868b;margin-top:6px;">퇴실 처리가 되지 않았습니다.</div>');
             return;
           }
         }
 
-        // ── Step 3: 생체인증 ──────────────────────────────────
-        showMsg(
-          '<div style="font-size:16px;margin-bottom:8px;">🔐</div>' +
-          '<div style="font-size:14px;color:#1a73e8;">생체인증을 진행해주세요</div>' +
-          '<div style="font-size:12px;color:#86868b;margin-top:4px;">지문 또는 Face ID로 인증하세요</div>',
-          '#1a73e8'
-        );
-
-        // 짧은 딜레이 후 자동 실행 (UI 렌더링 대기)
-        await new Promise(r => setTimeout(r, 400));
+        // ── Step 3: 생체인증 + 퇴실 처리 (통합) ─────────────
+        showMsg('<div style="font-size:16px;margin-bottom:8px;">🔐</div><div style="font-size:14px;color:#1a73e8;">생체인증을 진행해주세요</div>');
+        await new Promise(function(r) { setTimeout(r, 400); });
 
         try {
-          // 패스키 인증 옵션 요청
-          const optRes = await fetch('/api/auth/passkey-start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({})
+          var optRes = await fetch('/api/auth/passkey-start', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ studentId: studentId })
           });
-          const options = await optRes.json();
+          var options = await optRes.json();
           if (options.error) throw new Error(options.error);
 
-          // 브라우저 패스키 인증 실행
-          const authResp = await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON: options });
+          var authResp = await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON: options });
 
-          // 서버 인증 검증 (studentId 확인용 - 출결 처리는 별도)
-          const verifyRes = await fetch('/api/auth/passkey-verify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ response: authResp }) // classroomCode 없이 인증만
+          // 패스키 검증 + 퇴실 처리를 한 번에 (attendanceId 전달)
+          var verifyRes = await fetch('/api/auth/passkey-verify', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ response: authResp, attendanceId: attendanceId })
           });
-          const verifyData = await verifyRes.json();
+          var verifyData = await verifyRes.json();
 
           if (!verifyData.verified) {
-            showMsg(
-              '<div style="font-size:24px;margin-bottom:8px;">❌</div>' +
-              '<div style="font-size:15px;font-weight:600;color:#ff3b30;">인증 실패</div>' +
-              '<div style="font-size:13px;color:#86868b;margin-top:6px;">생체인증에 실패했습니다.</div>',
-              '#ff3b30'
-            );
+            showMsg('<div style="font-size:24px;margin-bottom:8px;">❌</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">' + (verifyData.message || '인증 실패') + '</div>');
             return;
           }
 
-        } catch (authErr) {
-          if (authErr.name === 'NotAllowedError') {
-            showMsg(
-              '<div style="font-size:24px;margin-bottom:8px;">✋</div>' +
-              '<div style="font-size:15px;font-weight:600;color:#ff9500;">인증 취소됨</div>' +
-              '<div style="font-size:13px;color:#86868b;margin-top:6px;">인증이 취소되어 퇴실 처리가 되지 않았습니다.</div>',
-              '#ff9500'
-            );
-          } else {
-            showMsg(
-              '<div style="font-size:24px;margin-bottom:8px;">⚠️</div>' +
-              '<div style="font-size:15px;font-weight:600;color:#ff3b30;">인증 오류</div>' +
-              '<div style="font-size:13px;color:#86868b;margin-top:6px;">' + (authErr.message || '인증 중 오류') + '</div>',
-              '#ff3b30'
-            );
-          }
-          return;
-        }
-
-        // ── Step 4: 퇴실 처리 ────────────────────────────────
-        showMsg('<div style="font-size:16px;margin-bottom:8px;">⏳</div><div style="font-size:14px;color:#1a73e8;">퇴실 처리 중...</div>', '#1a73e8');
-
-        try {
-          const res = await fetch('/api/push/checkout', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ studentId: sid, attendanceId: aid }),
-          });
-          const data = await res.json();
-          if (data.success) {
-            msgEl.innerHTML =
-              '<div style="text-align:center;padding:20px;background:#e6f4ea;border-radius:12px;margin-bottom:12px;">' +
-              '<div style="font-size:28px;margin-bottom:6px;">✅</div>' +
-              '<div style="font-size:16px;font-weight:600;color:#137333;">' + (data.message || '퇴실이 처리되었습니다.') + '</div>' +
-              '</div>';
+          if (verifyData.checkoutSuccess) {
+            msgEl.innerHTML = '<div style="text-align:center;padding:20px;background:#e6f4ea;border-radius:12px;margin-bottom:12px;"><div style="font-size:28px;margin-bottom:6px;">✅</div><div style="font-size:16px;font-weight:600;color:#137333;">' + (verifyData.message || '퇴실 처리 완료') + '</div></div>';
             setTimeout(function() { loadTodayStatus(); }, 1500);
           } else {
-            showMsg(
-              '<div style="font-size:24px;margin-bottom:8px;">❌</div>' +
-              '<div style="font-size:15px;font-weight:600;color:#ff3b30;">퇴실 처리 실패</div>' +
-              '<div style="font-size:13px;color:#86868b;margin-top:6px;">' + (data.error || '') + '</div>',
-              '#ff3b30'
-            );
+            showMsg('<div style="font-size:24px;margin-bottom:8px;">⚠️</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">퇴실 처리 실패</div><div style="font-size:13px;color:#86868b;margin-top:6px;">' + (verifyData.error || '') + '</div>');
           }
-        } catch (err) {
-          showMsg('<div style="font-size:15px;color:#ff3b30;">네트워크 오류: ' + err.message + '</div>', '#ff3b30');
+        } catch (authErr) {
+          if (authErr.name === 'NotAllowedError') {
+            showMsg('<div style="font-size:24px;margin-bottom:8px;">✋</div><div style="font-size:15px;font-weight:600;color:#ff9500;">인증 취소됨</div><div style="font-size:13px;color:#86868b;margin-top:6px;">앱의 "퇴실하기" 버튼으로 재시도하세요.</div>');
+          } else {
+            showMsg('<div style="font-size:24px;margin-bottom:8px;">⚠️</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">인증 오류</div><div style="font-size:13px;color:#86868b;margin-top:6px;">' + (authErr.message || '오류 발생') + '</div>');
+          }
         }
       }
 
