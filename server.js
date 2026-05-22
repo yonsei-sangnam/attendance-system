@@ -847,7 +847,9 @@ function renderRegisterPage() {
           });
           const data = await res.json();
           if (!data.found) { msgEl.innerHTML = '<div class="msg msg-error">등록되지 않은 전화번호입니다.</div>'; return; }
-          if (data.hasCredential) { msgEl.innerHTML = '<div class="msg msg-info">이미 생체인증이 등록되어 있습니다.</div>'; return; }
+          if (data.hasCredential) {
+            if (!confirm('이미 등록된 생체인증이 있습니다.\\n새로 등록하면 기존 기기의 인증이 해제됩니다.\\n새 기기로 다시 등록하시겠습니까?')) return;
+          }
 
           currentStudentId = data.studentId;
           document.getElementById('studentName').textContent = data.name + '님';
