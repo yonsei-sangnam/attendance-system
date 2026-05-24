@@ -4,10 +4,18 @@ const {
   generateAuthenticationOptions,
   verifyAuthenticationResponse,
 } = require('@simplewebauthn/server');
-const crypto = require('crypto');
 const db = require('./db');
 
-// ─── 패스키 챌린지 저장소: DB 사용 (서버 재시작/슬립에도 유지) ──
+// ─── 패스키 챌린지 저장소 ─────────────────────────────────────
+// 익명(QR 입실): 메모리 Map (FK 제약 회피, 서버 슬립 시 유실되어도 재스캔하면 됨)
+// 실명(퇴실): DB auth_challenges 테이블 (서버 슬립에도 유지, FK 유효)
+const anonChallengeStore = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of anonChallengeStore) {
+    if (val.expires < now) anonChallengeStore.delete(key);
+  }
+}, 60000);
 
 // ─── RP(Relying Party) 설정 ──────────────────────────────────
 // 서버 도메인에서 자동 추출 (Render 배포 시 자동 적용)
@@ -250,17 +258,21 @@ async function createPasskeyAuthOptions(req, studentId, discoverable) {
     ...(allowCredentials ? { allowCredentials } : {}),
   });
 
-  // 챌린지를 DB에 저장 (서버 재시작에도 유지)
-  // 익명(QR스캔)은 랜덤 UUID로, 실명(퇴실)은 studentId로 저장
-  const dbKey = studentId || crypto.randomUUID();
-  await db.query(`
-    INSERT INTO auth_challenges (student_id, challenge, type, expires_at)
-    VALUES ($1, $2, 'passkey', NOW() + INTERVAL '5 minutes')
-    ON CONFLICT (student_id, type) DO UPDATE SET challenge = $2, expires_at = NOW() + INTERVAL '5 minutes'
-  `, [dbKey, options.challenge]);
-
-  // 만료된 passkey 챌린지 정리
-  await db.query("DELETE FROM auth_challenges WHERE type = 'passkey' AND expires_at < NOW()");
+  // 챌린지 저장: 실명(퇴실)→DB, 익명(QR입실)→메모리
+  if (studentId) {
+    // 퇴실용: DB 저장 (서버 슬립에도 유지, FK 유효)
+    await db.query(`
+      INSERT INTO auth_challenges (student_id, challenge, type, expires_at)
+      VALUES ($1, $2, 'passkey', NOW() + INTERVAL '5 minutes')
+      ON CONFLICT (student_id, type) DO UPDATE SET challenge = $2, expires_at = NOW() + INTERVAL '5 minutes'
+    `, [studentId, options.challenge]);
+  } else {
+    // QR 입실용: 메모리 저장 (FK 제약 회피)
+    anonChallengeStore.set(options.challenge, {
+      expires: Date.now() + 5 * 60 * 1000,
+      studentId: null,
+    });
+  }
 
   return options;
 }
@@ -283,31 +295,36 @@ async function verifyPasskeyAuth(req, response) {
   const clientData = JSON.parse(Buffer.from(response.response.clientDataJSON, 'base64url').toString());
   const challenge = clientData.challenge;
 
-  // DB에서 챌린지 검증 (해당 수강생 또는 anonymous)
+  // DB 또는 메모리에서 챌린지 검증
+  let storedStudentId = null;
+  let foundInDB = false;
+
+  // 1) DB 검색 (퇴실용 실명 챌린지)
   const challengeRes = await db.query(
     "SELECT student_id FROM auth_challenges WHERE challenge = $1 AND type = 'passkey' AND expires_at > NOW()",
     [challenge]
   );
-  if (challengeRes.rows.length === 0) {
-    throw new Error('인증 세션이 만료되었습니다. 다시 시도해주세요.');
+  if (challengeRes.rows.length > 0) {
+    storedStudentId = challengeRes.rows[0].student_id;
+    foundInDB = true;
+    await db.query("DELETE FROM auth_challenges WHERE challenge = $1 AND type = 'passkey'", [challenge]);
   }
-  const storedStudentId = challengeRes.rows[0].student_id;
 
-  // 챌린지 삭제 (1회용)
-  await db.query(
-    "DELETE FROM auth_challenges WHERE challenge = $1 AND type = 'passkey'",
-    [challenge]
-  );
-
-  // studentId가 실제 수강생인 경우, 인증한 크레덴셜이 해당 수강생의 것인지 확인
-  // 랜덤 UUID(익명 QR 스캔)는 students 테이블에 없으므로 통과
-  if (storedStudentId && cred.student_id !== storedStudentId) {
-    const isRealStudent = await db.query(
-      'SELECT 1 FROM students WHERE student_id = $1', [storedStudentId]
-    );
-    if (isRealStudent.rows.length > 0) {
-      throw new Error('WRONG_STUDENT');
+  // 2) 메모리 검색 (QR 입실용 익명 챌린지)
+  if (!foundInDB) {
+    const memData = anonChallengeStore.get(challenge);
+    if (memData && memData.expires > Date.now()) {
+      storedStudentId = null; // 익명
+      anonChallengeStore.delete(challenge);
+    } else {
+      if (memData) anonChallengeStore.delete(challenge);
+      throw new Error('인증 세션이 만료되었습니다. 다시 시도해주세요.');
     }
+  }
+
+  // 실명 세션이면 크레덴셜 소유자 교차 검증
+  if (storedStudentId && cred.student_id !== storedStudentId) {
+    throw new Error('WRONG_STUDENT');
   }
 
   const verification = await verifyAuthenticationResponse({
