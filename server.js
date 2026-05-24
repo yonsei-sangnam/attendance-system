@@ -171,14 +171,48 @@ app.get('/api/my/status/:studentId', async (req, res) => {
 // ════════════════════════════════════════════════════════════
 
 // ─── 등록 페이지 ─────────────────────────────────────────────
-app.get('/register', (req, res) => {
-  res.send(renderRegisterPage());
+app.get('/register', async (req, res) => {
+  const { token } = req.query;
+
+  // 토큰 없이 직접 접근 → 안내 페이지
+  if (!token) {
+    return res.send(renderRegisterNoTokenPage());
+  }
+
+  // 토큰 검증
+  try {
+    const tokenRes = await db.query(`
+      SELECT ac.student_id, s.name
+      FROM auth_challenges ac
+      JOIN students s ON s.student_id = ac.student_id
+      WHERE ac.challenge = $1 AND ac.type = 'reg_token' AND ac.expires_at > NOW()
+    `, [token]);
+
+    if (tokenRes.rows.length === 0) {
+      return res.send(renderRegisterExpiredPage());
+    }
+
+    res.send(renderRegisterPage(token, tokenRes.rows[0].student_id, tokenRes.rows[0].name));
+  } catch (err) {
+    res.status(500).send(renderRegisterNoTokenPage());
+  }
 });
 
 // ─── API: 등록 옵션 생성 ─────────────────────────────────────
 app.post('/api/register/options', async (req, res) => {
   try {
-    const { studentId } = req.body;
+    const { studentId, token } = req.body;
+
+    // 토큰 검증 (studentId와 token이 일치해야 함)
+    const tokenRes = await db.query(`
+      SELECT student_id FROM auth_challenges
+      WHERE challenge = $1 AND student_id = $2 AND type = 'reg_token' AND expires_at > NOW()
+    `, [token, studentId]);
+
+    if (tokenRes.rows.length === 0) {
+      return res.status(403).json({ error: '유효하지 않은 등록 링크입니다. 관리자에게 새 링크를 요청하세요.' });
+    }
+
     const student = await db.query('SELECT student_id, name FROM students WHERE student_id = $1', [studentId]);
     if (student.rows.length === 0) return res.status(404).json({ error: '수강생 정보 없음' });
 
@@ -192,8 +226,28 @@ app.post('/api/register/options', async (req, res) => {
 // ─── API: 등록 검증 ─────────────────────────────────────────
 app.post('/api/register/verify', async (req, res) => {
   try {
-    const { studentId, response } = req.body;
+    const { studentId, token, response } = req.body;
+
+    // 토큰 재확인
+    const tokenRes = await db.query(`
+      SELECT student_id FROM auth_challenges
+      WHERE challenge = $1 AND student_id = $2 AND type = 'reg_token' AND expires_at > NOW()
+    `, [token, studentId]);
+
+    if (tokenRes.rows.length === 0) {
+      return res.status(403).json({ error: '유효하지 않은 등록 링크입니다.' });
+    }
+
     const result = await auth.verifyRegistration(req, studentId, response);
+
+    if (result.verified) {
+      // 등록 성공 → 토큰 소멸 (1회용)
+      await db.query(
+        "DELETE FROM auth_challenges WHERE student_id = $1 AND type = 'reg_token'",
+        [studentId]
+      );
+    }
+
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -867,10 +921,10 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
 }
 
 
-// ─── 생체인증 단독 등록 페이지 ───────────────────────────────
-function renderRegisterPage() {
+// ─── 등록 페이지 (토큰 유효 시) ─────────────────────────────
+function renderRegisterPage(token, studentId, studentName) {
   return `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title>생체인증 등록</title>
+  <title>생체인증 등록 - ${studentName}</title>
   <style>${COMMON_CSS}</style>
   <script src="https://unpkg.com/@simplewebauthn/browser@11/dist/bundle/index.umd.min.js"></script>
   </head>
@@ -880,99 +934,93 @@ function renderRegisterPage() {
       <div id="step1" class="step active">
         <div class="icon">🔐</div>
         <h1>생체인증 등록</h1>
-        <p class="subtitle">전화번호로 본인확인 후 지문 또는 Face ID를 등록합니다.</p>
-        <div class="form-group">
-          <label>전화번호 뒷자리 8자리</label>
-          <input type="tel" id="phoneInput" placeholder="12345678" maxlength="8" inputmode="numeric" autocomplete="off">
-        </div>
-        <button class="btn" id="lookupBtn" onclick="lookupAndRegister()">확인</button>
+        <div class="student-name" style="margin-top:8px;">${studentName}님</div>
+        <p class="subtitle" style="margin-top:8px;">아래 버튼을 눌러 이 기기의 지문 또는 Face ID를 등록하세요.</p>
+        <button class="btn" id="regBtn" onclick="doRegister()" style="margin-top:8px;">지문 / Face ID 등록하기</button>
         <div id="msg1"></div>
       </div>
 
       <div id="step2" class="step">
-        <div class="icon">👋</div>
-        <div class="student-name" id="studentName"></div>
-        <div class="student-phone" id="studentPhone"></div>
-        <p class="subtitle">본인이 맞으면 아래 버튼을 눌러 등록하세요.</p>
-        <button class="btn" id="regBtn" onclick="doRegister()">지문 / Face ID 등록하기</button>
-        <div id="msg2"></div>
-      </div>
-
-      <div id="step3" class="step">
         <div class="icon">✅</div>
         <h1>등록 완료!</h1>
-        <p class="subtitle">이제 QR 스캔 시 지문/Face ID로 출결 체크가 됩니다.</p>
+        <div class="student-name">${studentName}님</div>
+        <p class="subtitle" style="margin-top:8px;">이제 강의실 QR 스캔 시 이 기기로만 출결 체크가 됩니다.</p>
       </div>
 
     </div>
 
     <script>
-      let currentStudentId = null;
+      const REG_TOKEN = '${token}';
+      const STUDENT_ID = '${studentId}';
 
       function showStep(n) {
         document.querySelectorAll('.step').forEach(el => el.classList.remove('active'));
         document.getElementById('step' + n).classList.add('active');
       }
 
-      async function lookupAndRegister() {
-        const input = document.getElementById('phoneInput').value.trim();
-        const msgEl = document.getElementById('msg1');
-        if (input.length < 7) { msgEl.innerHTML = '<div class="msg msg-error">전화번호 뒷자리 8자리를 입력해주세요.</div>'; return; }
-
-        const phone = '010-' + input.slice(0, 4) + '-' + input.slice(4);
-        const btn = document.getElementById('lookupBtn');
-        btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
-
-        try {
-          const res = await fetch('/api/student/lookup', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ phone })
-          });
-          const data = await res.json();
-          if (!data.found) { msgEl.innerHTML = '<div class="msg msg-error">등록되지 않은 전화번호입니다.</div>'; return; }
-          if (data.hasCredential) {
-            if (!confirm('이미 등록된 생체인증이 있습니다.\\n새로 등록하면 기존 기기의 인증이 해제됩니다.\\n새 기기로 다시 등록하시겠습니까?')) return;
-          }
-
-          currentStudentId = data.studentId;
-          document.getElementById('studentName').textContent = data.name + '님';
-          document.getElementById('studentPhone').textContent = phone;
-          showStep(2);
-        } catch (err) {
-          msgEl.innerHTML = '<div class="msg msg-error">' + err.message + '</div>';
-        } finally { btn.disabled = false; btn.textContent = '확인'; }
-      }
-
       async function doRegister() {
         const btn = document.getElementById('regBtn');
-        const msgEl = document.getElementById('msg2');
+        const msgEl = document.getElementById('msg1');
         btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 등록 중...';
+        msgEl.innerHTML = '';
 
         try {
           const optRes = await fetch('/api/register/options', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ studentId: currentStudentId })
+            body: JSON.stringify({ studentId: STUDENT_ID, token: REG_TOKEN })
           });
           const options = await optRes.json();
           if (options.error) throw new Error(options.error);
 
           const regResp = await SimpleWebAuthnBrowser.startRegistration({ optionsJSON: options });
+
           const verifyRes = await fetch('/api/register/verify', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ studentId: currentStudentId, response: regResp })
+            body: JSON.stringify({ studentId: STUDENT_ID, token: REG_TOKEN, response: regResp })
           });
           const verifyData = await verifyRes.json();
-          if (verifyData.verified) { showStep(3); }
-          else throw new Error(verifyData.error || '등록 실패');
-        } catch (err) {
-          const msg = err.name === 'NotAllowedError' ? '등록이 취소되었습니다. 다시 시도해주세요.' : err.message;
-          msgEl.innerHTML = '<div class="msg msg-error">' + msg + '</div>';
-        } finally { btn.disabled = false; btn.textContent = '지문 / Face ID 등록하기'; }
-      }
 
-      document.getElementById('phoneInput').addEventListener('keypress', (e) => { if (e.key === 'Enter') lookupAndRegister(); });
-      document.getElementById('phoneInput').focus();
+          if (verifyData.verified) {
+            showStep(2);
+          } else {
+            throw new Error(verifyData.error || '등록 실패');
+          }
+        } catch (err) {
+          const msg = err.name === 'NotAllowedError' ? '등록이 취소되었습니다. 다시 시도해주세요.'
+            : err.name === 'InvalidStateError' ? '이미 이 기기에 등록되어 있습니다. 관리자에게 초기화를 요청하세요.'
+            : err.message;
+          msgEl.innerHTML = '<div class="msg msg-error">' + msg + '</div>';
+        } finally {
+          btn.disabled = false; btn.textContent = '지문 / Face ID 등록하기';
+        }
+      }
     </script>
+  </body></html>`;
+}
+
+// ─── 등록 페이지 (토큰 없이 직접 접근 시) ───────────────────
+function renderRegisterNoTokenPage() {
+  return `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>생체인증 등록</title><style>${COMMON_CSS}</style></head>
+  <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;">
+    <div class="card">
+      <div class="icon">🔒</div>
+      <h1>등록 링크가 필요합니다</h1>
+      <p class="subtitle" style="margin-top:8px;">생체인증 등록은 관리자가 발급한 개인 링크로만 가능합니다.<br>담당자에게 등록 링크를 요청하세요.</p>
+    </div>
+  </body></html>`;
+}
+
+// ─── 등록 페이지 (토큰 만료 시) ─────────────────────────────
+function renderRegisterExpiredPage() {
+  return `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>링크 만료</title><style>${COMMON_CSS}</style></head>
+  <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;">
+    <div class="card">
+      <div class="icon">⏰</div>
+      <h1>등록 링크가 만료되었습니다</h1>
+      <p class="subtitle" style="margin-top:8px;">링크는 발급 후 24시간만 유효합니다.<br>담당자에게 새 링크를 요청하세요.</p>
+    </div>
   </body></html>`;
 }
 
