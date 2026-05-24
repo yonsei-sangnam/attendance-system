@@ -321,6 +321,27 @@ function registerAdminRoutes(app) {
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
 
+  // ═══ API: 등록 토큰 발급 (1회용, 24시간 유효) ════════════════
+  app.post('/api/admin/reg-token/:studentId', async (req, res) => {
+    try {
+      const studentRes = await db.query(
+        'SELECT name FROM students WHERE student_id = $1', [req.params.studentId]
+      );
+      if (studentRes.rows.length === 0) return res.status(404).json({ error: '수강생 없음' });
+
+      const crypto = require('crypto');
+      const token = crypto.randomBytes(24).toString('base64url');
+
+      await db.query(`
+        INSERT INTO auth_challenges (student_id, challenge, type, expires_at)
+        VALUES ($1, $2, 'reg_token', NOW() + INTERVAL '24 hours')
+        ON CONFLICT (student_id, type) DO UPDATE SET challenge = $2, expires_at = NOW() + INTERVAL '24 hours'
+      `, [req.params.studentId, token]);
+
+      res.json({ token, studentName: studentRes.rows[0].name });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
   // ═══ API: 통합 관리 시트 동기화 ══════════════════════════════
   app.post('/api/admin/sync-management', async (req, res) => {
     try {
@@ -1145,6 +1166,7 @@ async function loadStudents() {
     if (s.has_credential) {
       html += '<button class="btn btn-small btn-outline" onclick="resetCred(\\'' + s.student_id + '\\', \\'' + s.name + '\\')">인증초기화</button> ';
     }
+    html += '<button class="btn btn-small" style="background:#34c759;color:#fff;" onclick="issueRegToken(\\'' + s.student_id + '\\', \\'' + s.name + '\\')">등록링크</button> ';
     html += '<button class="btn btn-small btn-danger" onclick="deactivateStudent(\\'' + s.student_id + '\\', \\'' + s.name + '\\')">삭제</button>';
     html += '</td>';
     html += '</tr>';
@@ -1218,6 +1240,45 @@ async function resetCred(studentId, name) {
   await loadStudents();
 }
 
+// ─── 등록 링크 발급 ──────────────────────────────────────
+async function issueRegToken(studentId, name) {
+  try {
+    const res = await fetch('/api/admin/reg-token/' + studentId, { method: 'POST' });
+    const data = await res.json();
+    if (data.error) { alert('발급 실패: ' + data.error); return; }
+
+    const baseUrl = location.origin;
+    const regUrl = baseUrl + '/register?token=' + data.token;
+
+    // 모달 표시
+    document.getElementById('regTokenName').textContent = name + '님 등록 링크';
+    document.getElementById('regTokenUrl').value = regUrl;
+    document.getElementById('regTokenModal').style.display = 'flex';
+
+    // QR 코드 생성 (qrious 라이브러리 사용)
+    if (window.QRious) {
+      const qr = new QRious({ element: document.getElementById('regTokenQR'), value: regUrl, size: 200, level: 'M', background: '#fff', foreground: '#000' });
+    } else {
+      // qrious 없으면 동적 로드
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js';
+      script.onload = () => {
+        new QRious({ element: document.getElementById('regTokenQR'), value: regUrl, size: 200, level: 'M', background: '#fff', foreground: '#000' });
+      };
+      document.head.appendChild(script);
+    }
+  } catch (err) { alert('오류: ' + err.message); }
+}
+
+function copyRegUrl() {
+  const url = document.getElementById('regTokenUrl').value;
+  navigator.clipboard.writeText(url).then(() => {
+    const btn = document.getElementById('copyBtn');
+    btn.textContent = '✅ 복사됨';
+    setTimeout(() => { btn.textContent = '복사'; }, 2000);
+  });
+}
+
 // ─── 수강생 비활성화 ─────────────────────────────────────
 async function deactivateStudent(studentId, name) {
   if (!confirm(name + '을(를) 이 과정에서 삭제하시겠습니까?')) return;
@@ -1255,13 +1316,25 @@ async function syncManagement() {
   }
 }
 </script>
+
+<!-- 등록 링크 모달 -->
+<div id="regTokenModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:16px;padding:28px 24px;max-width:420px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.2);">
+    <div style="font-size:18px;font-weight:700;margin-bottom:4px;" id="regTokenName"></div>
+    <div style="font-size:13px;color:#86868b;margin-bottom:16px;">24시간 유효 · 1회 사용 가능</div>
+    <canvas id="regTokenQR" style="border-radius:8px;border:1px solid #e5e5e7;"></canvas>
+    <div style="margin-top:14px;display:flex;gap:8px;">
+      <input id="regTokenUrl" type="text" readonly style="flex:1;padding:10px;border:1px solid #d2d2d7;border-radius:8px;font-size:12px;color:#444;background:#f5f5f7;">
+      <button id="copyBtn" onclick="copyRegUrl()" style="padding:10px 16px;background:#1a73e8;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;">복사</button>
+    </div>
+    <div style="font-size:12px;color:#86868b;margin-top:10px;line-height:1.6;">
+      수강생이 이 QR을 스캔하거나 링크를 열면<br>본인 생체인증만 등록 가능합니다.
+    </div>
+    <button onclick="document.getElementById('regTokenModal').style.display='none'" style="margin-top:16px;width:100%;padding:12px;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:8px;font-size:14px;cursor:pointer;">닫기</button>
+  </div>
+</div>
 </body>
 </html>`;
-}
-
-
-// ═════════════════════════════════════════════════════════════
-// 구글시트 동기화 페이지 HTML
 // ═════════════════════════════════════════════════════════════
 // ═════════════════════════════════════════════════════════════
 // 교육과정 관리 페이지 HTML
