@@ -251,8 +251,8 @@ async function createPasskeyAuthOptions(req, studentId, discoverable) {
   });
 
   // 챌린지를 DB에 저장 (서버 재시작에도 유지)
-  // 익명(QR스캔)은 고유 ID로, 실명(퇴실)은 studentId로 저장
-  const dbKey = studentId || ('__anon_' + crypto.randomBytes(8).toString('hex'));
+  // 익명(QR스캔)은 랜덤 UUID로, 실명(퇴실)은 studentId로 저장
+  const dbKey = studentId || crypto.randomUUID();
   await db.query(`
     INSERT INTO auth_challenges (student_id, challenge, type, expires_at)
     VALUES ($1, $2, 'passkey', NOW() + INTERVAL '5 minutes')
@@ -299,9 +299,15 @@ async function verifyPasskeyAuth(req, response) {
     [challenge]
   );
 
-  // studentId가 지정된 경우 인증한 크레덴셜이 해당 수강생의 것인지 확인
-  if (storedStudentId && !storedStudentId.startsWith('__anon_') && cred.student_id !== storedStudentId) {
-    throw new Error('WRONG_STUDENT');
+  // studentId가 실제 수강생인 경우, 인증한 크레덴셜이 해당 수강생의 것인지 확인
+  // 랜덤 UUID(익명 QR 스캔)는 students 테이블에 없으므로 통과
+  if (storedStudentId && cred.student_id !== storedStudentId) {
+    const isRealStudent = await db.query(
+      'SELECT 1 FROM students WHERE student_id = $1', [storedStudentId]
+    );
+    if (isRealStudent.rows.length > 0) {
+      throw new Error('WRONG_STUDENT');
+    }
   }
 
   const verification = await verifyAuthenticationResponse({
