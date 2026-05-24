@@ -342,6 +342,79 @@ function registerAdminRoutes(app) {
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
 
+  // ═══ API: 등록 토큰 일괄 발급 (과정 전체) ═══════════════════
+  app.post('/api/admin/reg-token-bulk/:courseId', async (req, res) => {
+    try {
+      const crypto = require('crypto');
+
+      // 해당 과정 수강생 전원 조회 (등록 여부 무관)
+      const students = await db.query(`
+        SELECT s.student_id, s.name
+        FROM students s
+        JOIN enrollments e ON e.student_id = s.student_id
+        WHERE e.course_id = $1 AND s.status = 'active'
+        ORDER BY s.name
+      `, [req.params.courseId]);
+
+      if (students.rows.length === 0) {
+        return res.json({ success: false, error: '수강생이 없습니다.' });
+      }
+
+      const tokens = [];
+      for (const s of students.rows) {
+        const token = crypto.randomBytes(24).toString('base64url');
+        await db.query(`
+          INSERT INTO auth_challenges (student_id, challenge, type, expires_at)
+          VALUES ($1, $2, 'reg_token', NOW() + INTERVAL '24 hours')
+          ON CONFLICT (student_id, type) DO UPDATE SET challenge = $2, expires_at = NOW() + INTERVAL '24 hours'
+        `, [s.student_id, token]);
+        tokens.push({ studentId: s.student_id, name: s.name, token });
+      }
+
+      res.json({ success: true, tokens });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ═══ 등록 QR 인쇄 페이지 ═════════════════════════════════════
+  app.get('/admin/reg-print/:courseId', async (req, res) => {
+    try {
+      const crypto = require('crypto');
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+
+      // 과정명 조회
+      const courseRes = await db.query(
+        'SELECT course_name, cohort FROM courses WHERE course_id = $1',
+        [req.params.courseId]
+      );
+      if (courseRes.rows.length === 0) return res.status(404).send('과정 없음');
+      const course = courseRes.rows[0];
+
+      // 수강생 전원 토큰 일괄 발급 (있으면 갱신)
+      const students = await db.query(`
+        SELECT s.student_id, s.name
+        FROM students s
+        JOIN enrollments e ON e.student_id = s.student_id
+        WHERE e.course_id = $1 AND s.status = 'active'
+        ORDER BY s.name
+      `, [req.params.courseId]);
+
+      if (students.rows.length === 0) return res.status(404).send('수강생 없음');
+
+      const cards = [];
+      for (const s of students.rows) {
+        const token = crypto.randomBytes(24).toString('base64url');
+        await db.query(`
+          INSERT INTO auth_challenges (student_id, challenge, type, expires_at)
+          VALUES ($1, $2, 'reg_token', NOW() + INTERVAL '24 hours')
+          ON CONFLICT (student_id, type) DO UPDATE SET challenge = $2, expires_at = NOW() + INTERVAL '24 hours'
+        `, [s.student_id, token]);
+        cards.push({ name: s.name, url: `${baseUrl}/register?token=${token}` });
+      }
+
+      res.send(renderRegPrintPage(course, cards));
+    } catch (err) { res.status(500).send('오류: ' + err.message); }
+  });
+
   // ═══ API: 통합 관리 시트 동기화 ══════════════════════════════
   app.post('/api/admin/sync-management', async (req, res) => {
     try {
@@ -1148,7 +1221,10 @@ async function loadStudents() {
   html += '<div class="stat"><div class="stat-num" style="color:#1a73e8;">' + pushOk + '</div><div class="stat-label">푸시 구독</div></div>';
   html += '</div>';
 
-  html += '<div style="margin-bottom:12px;"><button class="btn btn-small" onclick="loadStudents()">🔄 새로고침</button></div>';
+  html += '<div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">';
+  html += '<button class="btn btn-small" onclick="loadStudents()">🔄 새로고침</button>';
+  html += '<button class="btn btn-small" style="background:#ff9500;" onclick="openRegPrint()">🖨️ 전체 등록링크 발급·인쇄</button>';
+  html += '</div>';
 
   html += '<div style="overflow-x:auto;"><table>';
   html += '<tr><th>#</th><th>이름</th><th>전화번호</th><th>생체인증</th><th>마지막 인증</th><th>푸시</th><th>관리</th></tr>';
@@ -1238,6 +1314,13 @@ async function resetCred(studentId, name) {
     await fetch('/api/admin/credentials/' + studentId, { method: 'DELETE' });
   } catch (err) { alert('초기화 오류: ' + err.message); }
   await loadStudents();
+}
+
+// ─── 전체 등록링크 인쇄 페이지 열기 ─────────────────────────
+function openRegPrint() {
+  const courseId = document.getElementById('courseSelect').value;
+  if (!courseId) { alert('먼저 과정을 선택하세요.'); return; }
+  window.open('/admin/reg-print/' + courseId, '_blank');
 }
 
 // ─── 등록 링크 발급 ──────────────────────────────────────
@@ -2086,6 +2169,79 @@ function renderSyncPage(courses) {
     }
   }
 </script>
+</body>
+</html>`;
+}
+
+// ═════════════════════════════════════════════════════════════
+// 등록 QR 인쇄 페이지 HTML
+// ═════════════════════════════════════════════════════════════
+function renderRegPrintPage(course, cards) {
+  const title = course.course_name + (course.cohort ? ' ' + course.cohort : '');
+  const today = new Date().toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul' });
+
+  return `<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>생체인증 등록 QR - ${title}</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, 'Malgun Gothic', sans-serif; background: #f5f5f7; padding: 20px; }
+    .header { text-align: center; margin-bottom: 24px; }
+    .header h1 { font-size: 20px; }
+    .header p { font-size: 13px; color: #555; margin-top: 4px; }
+    .print-btn { display: inline-block; margin-top: 12px; padding: 10px 24px; background: #1a73e8; color: #fff; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+    .card { background: #fff; border: 1.5px solid #e5e5e7; border-radius: 12px; padding: 14px 10px; text-align: center; }
+    .card .name { font-size: 15px; font-weight: 700; margin-bottom: 8px; word-break: keep-all; }
+    .card canvas { border-radius: 4px; }
+    .card .hint { font-size: 10px; color: #86868b; margin-top: 6px; line-height: 1.4; }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .header .print-btn { display: none; }
+      .header { margin-bottom: 12px; }
+      .grid { grid-template-columns: repeat(4, 1fr); gap: 8px; }
+      .card { border: 1px solid #ccc; border-radius: 8px; padding: 10px 8px; break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🔐 생체인증 등록 QR — ${title}</h1>
+    <p>발급일: ${today} · 유효기간: 24시간 · 1회 사용 후 만료</p>
+    <button class="print-btn" onclick="window.print()">🖨️ 인쇄하기</button>
+  </div>
+  <div class="grid" id="grid"></div>
+
+  <script>
+    const cards = ${JSON.stringify(cards)};
+    const grid = document.getElementById('grid');
+
+    cards.forEach(function(card) {
+      const div = document.createElement('div');
+      div.className = 'card';
+
+      const name = document.createElement('div');
+      name.className = 'name';
+      name.textContent = card.name;
+
+      const canvas = document.createElement('canvas');
+      canvas.id = 'qr-' + Math.random().toString(36).slice(2);
+
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = 'QR 스캔 후 지문/Face ID 등록';
+
+      div.appendChild(name);
+      div.appendChild(canvas);
+      div.appendChild(hint);
+      grid.appendChild(div);
+
+      new QRious({ element: canvas, value: card.url, size: 140, level: 'M', background: '#fff', foreground: '#000' });
+    });
+  </script>
 </body>
 </html>`;
 }
