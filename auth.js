@@ -109,7 +109,7 @@ async function verifyRegistration(req, studentId, response, isReRegister = false
       credential.id,
       Buffer.from(credential.publicKey).toString('base64url'),
       credential.counter,
-      response.response.transports || [],
+      JSON.stringify(response.response.transports || []),
     ]);
 
     await db.query(
