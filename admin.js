@@ -379,7 +379,7 @@ function registerAdminRoutes(app) {
   app.get('/api/admin/pending-creds', async (req, res) => {
     try {
       const r = await db.query(`
-        SELECT pc.pending_id, pc.student_id, pc.requested_at,
+        SELECT pc.student_id, pc.requested_at, pc.status,
                s.name, s.phone,
                (SELECT STRING_AGG(c2.course_name, ', ')
                 FROM enrollments e2 JOIN courses c2 ON c2.course_id = e2.course_id
@@ -394,13 +394,13 @@ function registerAdminRoutes(app) {
   });
 
   // ═══ API: 보류 등록 승인 ═════════════════════════════════════
-  app.post('/api/admin/pending-creds/:pendingId/approve', async (req, res) => {
+  app.post('/api/admin/pending-creds/:studentId/approve', async (req, res) => {
     const client = await db.connect();
     try {
       await client.query('BEGIN');
       const pc = await client.query(
-        "SELECT * FROM pending_credentials WHERE pending_id = $1 AND status = 'pending'",
-        [req.params.pendingId]
+        "SELECT * FROM pending_credentials WHERE student_id = $1 AND status = 'pending'",
+        [req.params.studentId]
       );
       if (pc.rows.length === 0) return res.status(404).json({ error: '보류 건 없음' });
       const p = pc.rows[0];
@@ -413,7 +413,7 @@ function registerAdminRoutes(app) {
         VALUES ($1, $2, $3, $4, $5, NOW())
       `, [p.student_id, p.webauthn_cred_id, p.public_key, p.counter, p.transports]);
 
-      await client.query("UPDATE pending_credentials SET status = 'approved' WHERE pending_id = $1", [p.pending_id]);
+      await client.query("UPDATE pending_credentials SET status = 'approved' WHERE student_id = $1", [p.student_id]);
       await client.query('COMMIT');
 
       const name = await db.query('SELECT name FROM students WHERE student_id = $1', [p.student_id]);
@@ -425,11 +425,11 @@ function registerAdminRoutes(app) {
   });
 
   // ═══ API: 보류 등록 거부 ═════════════════════════════════════
-  app.post('/api/admin/pending-creds/:pendingId/reject', async (req, res) => {
+  app.post('/api/admin/pending-creds/:studentId/reject', async (req, res) => {
     try {
       await db.query(
-        "UPDATE pending_credentials SET status = 'rejected' WHERE pending_id = $1",
-        [req.params.pendingId]
+        "UPDATE pending_credentials SET status = 'rejected' WHERE student_id = $1",
+        [req.params.studentId]
       );
       res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1294,8 +1294,10 @@ async function loadStudents() {
   if (!courseId) { el.innerHTML = ''; return; }
 
   el.innerHTML = '<div id="loading">불러오는 중...</div>';
-  const res = await fetch('/api/admin/students/' + courseId);
-  const students = await res.json();
+  try {
+    const res = await fetch('/api/admin/students/' + courseId);
+    const students = await res.json();
+    if (!Array.isArray(students)) { el.innerHTML = '<div class="msg msg-error">조회 실패: ' + (students.error || '알 수 없는 오류') + '</div>'; return; }
 
   const total = students.length;
   const bioOk = students.filter(s => s.has_credential).length;
@@ -1338,6 +1340,9 @@ async function loadStudents() {
 
   html += '</table></div>';
   el.innerHTML = html;
+  } catch (err) {
+    el.innerHTML = '<div class="msg msg-error">수강생 조회 오류: ' + err.message + '</div>';
+  }
 }
 
 // ─── 일괄 등록 ───────────────────────────────────────────
@@ -1446,8 +1451,8 @@ async function loadPending() {
       html += '<td style="padding:7px 8px;font-size:12px;">' + (r.courses || '-') + '</td>';
       html += '<td style="padding:7px 8px;">' + t + '</td>';
       html += '<td style="padding:7px 8px;white-space:nowrap;">';
-      html += '<button class="btn btn-small" style="background:#34c759;margin-right:4px;" onclick="approvePending('' + r.pending_id + '', '' + r.name + '')">✅ 승인</button>';
-      html += '<button class="btn btn-small btn-danger" onclick="rejectPending('' + r.pending_id + '', '' + r.name + '')">❌ 거부</button>';
+      html += '<button class="btn btn-small" style="background:#34c759;margin-right:4px;" onclick="approvePending('' + r.student_id + '', '' + r.name + '')">✅ 승인</button>';
+      html += '<button class="btn btn-small btn-danger" onclick="rejectPending('' + r.student_id + '', '' + r.name + '')">❌ 거부</button>';
       html += '</td></tr>';
     });
     html += '</table>';
