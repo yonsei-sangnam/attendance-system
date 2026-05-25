@@ -994,6 +994,13 @@ function renderRegisterPage(token, studentId, studentName) {
         <p class="subtitle" style="margin-top:8px;">이제 강의실 QR 스캔 시 이 기기로만 출결 체크가 됩니다.</p>
       </div>
 
+      <div id="step3" class="step">
+        <div class="icon">⏳</div>
+        <h1>재등록 요청 접수</h1>
+        <div class="student-name">${studentName}님</div>
+        <p class="subtitle" style="margin-top:8px;">이미 등록된 번호이므로 관리자 승인 후 변경됩니다.<br>승인 전까지 기존 기기로 출결 체크가 가능합니다.</p>
+      </div>
+
     </div>
 
     <script>
@@ -1028,7 +1035,11 @@ function renderRegisterPage(token, studentId, studentName) {
           const verifyData = await verifyRes.json();
 
           if (verifyData.verified) {
-            showStep(2);
+            if (verifyData.pending) {
+              showStep(3); // 재등록 → 관리자 승인 대기
+            } else {
+              showStep(2); // 신규 등록 완료
+            }
           } else {
             throw new Error(verifyData.error || '등록 실패');
           }
