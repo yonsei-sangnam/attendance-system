@@ -64,12 +64,10 @@ async function createRegistrationOptions(req, studentId, studentName) {
 }
 
 // ─── 2. 등록 검증 ────────────────────────────────────────────
-// 브라우저에서 생체인증 완료 후 보내온 응답을 검증하고 DB에 저장
-// ─────────────────────────────────────────────────────────────
-async function verifyRegistration(req, studentId, response) {
+// isReRegister=true 이면 pending_credentials에 저장 (관리자 승인 대기)
+async function verifyRegistration(req, studentId, response, isReRegister = false) {
   const rp = getRPConfig(req);
 
-  // 저장된 챌린지 조회
   const challengeRes = await db.query(
     "SELECT challenge FROM auth_challenges WHERE student_id = $1 AND type = 'registration' AND expires_at > NOW()",
     [studentId]
@@ -92,16 +90,45 @@ async function verifyRegistration(req, studentId, response) {
 
   const { credential } = verification.registrationInfo;
 
-  // 기존 크레덴셜 삭제 (1인 1기기 정책: 새 기기 등록 시 기존 전부 삭제)
-  await db.query('DELETE FROM credentials WHERE student_id = $1', [studentId]);
+  if (isReRegister) {
+    // ── 재등록: pending_credentials에 보류 저장 ─────────────
+    // 기존 보류 건이 있으면 덮어씀
+    await db.query(`
+      INSERT INTO pending_credentials
+        (student_id, webauthn_cred_id, public_key, counter, transports, requested_at, status)
+      VALUES ($1, $2, $3, $4, $5, NOW(), 'pending')
+      ON CONFLICT (student_id) DO UPDATE SET
+        webauthn_cred_id = EXCLUDED.webauthn_cred_id,
+        public_key       = EXCLUDED.public_key,
+        counter          = EXCLUDED.counter,
+        transports       = EXCLUDED.transports,
+        requested_at     = NOW(),
+        status           = 'pending'
+    `, [
+      studentId,
+      credential.id,
+      Buffer.from(credential.publicKey).toString('base64url'),
+      credential.counter,
+      response.response.transports || [],
+    ]);
 
-  // 기존 푸시 구독도 삭제 (구 기기 구독은 무의미)
+    await db.query(
+      "DELETE FROM auth_challenges WHERE student_id = $1 AND type = 'registration'",
+      [studentId]
+    );
+
+    // 수강생 이름 조회 (로그용)
+    const nameRes = await db.query('SELECT name FROM students WHERE student_id = $1', [studentId]);
+    return { verified: true, pending: true, studentName: nameRes.rows[0]?.name || '' };
+  }
+
+  // ── 신규 등록: credentials에 즉시 저장 ──────────────────
+  await db.query('DELETE FROM credentials WHERE student_id = $1', [studentId]);
   await db.query('DELETE FROM push_subscriptions WHERE student_id = $1', [studentId]);
 
-  // 새 크레덴셜 저장
   await db.query(`
-    INSERT INTO credentials (student_id, webauthn_cred_id, public_key, counter, transports)
-    VALUES ($1, $2, $3, $4, $5)
+    INSERT INTO credentials (student_id, webauthn_cred_id, public_key, counter, transports, registered_at)
+    VALUES ($1, $2, $3, $4, $5, NOW())
   `, [
     studentId,
     credential.id,
@@ -110,13 +137,13 @@ async function verifyRegistration(req, studentId, response) {
     response.response.transports || [],
   ]);
 
-  // 챌린지 삭제
   await db.query(
     "DELETE FROM auth_challenges WHERE student_id = $1 AND type = 'registration'",
     [studentId]
   );
 
-  return { verified: true };
+  const nameRes = await db.query('SELECT name FROM students WHERE student_id = $1', [studentId]);
+  return { verified: true, pending: false, studentName: nameRes.rows[0]?.name || '' };
 }
 
 // ─── 3. 인증 옵션 생성 ───────────────────────────────────────
