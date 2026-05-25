@@ -375,6 +375,83 @@ function registerAdminRoutes(app) {
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
 
+  // ═══ API: 보류 등록 목록 조회 ════════════════════════════════
+  app.get('/api/admin/pending-creds', async (req, res) => {
+    try {
+      const r = await db.query(`
+        SELECT pc.pending_id, pc.student_id, pc.requested_at,
+               s.name, s.phone,
+               (SELECT STRING_AGG(c2.course_name, ', ')
+                FROM enrollments e2 JOIN courses c2 ON c2.course_id = e2.course_id
+                WHERE e2.student_id = pc.student_id) AS courses
+        FROM pending_credentials pc
+        JOIN students s ON s.student_id = pc.student_id
+        WHERE pc.status = 'pending'
+        ORDER BY pc.requested_at DESC
+      `);
+      res.json(r.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ═══ API: 보류 등록 승인 ═════════════════════════════════════
+  app.post('/api/admin/pending-creds/:pendingId/approve', async (req, res) => {
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      const pc = await client.query(
+        "SELECT * FROM pending_credentials WHERE pending_id = $1 AND status = 'pending'",
+        [req.params.pendingId]
+      );
+      if (pc.rows.length === 0) return res.status(404).json({ error: '보류 건 없음' });
+      const p = pc.rows[0];
+
+      // 기존 크레덴셜 + 푸시 삭제 후 신규 등록
+      await client.query('DELETE FROM credentials WHERE student_id = $1', [p.student_id]);
+      await client.query('DELETE FROM push_subscriptions WHERE student_id = $1', [p.student_id]);
+      await client.query(`
+        INSERT INTO credentials (student_id, webauthn_cred_id, public_key, counter, transports, registered_at)
+        VALUES ($1, $2, $3, $4, $5, NOW())
+      `, [p.student_id, p.webauthn_cred_id, p.public_key, p.counter, p.transports]);
+
+      await client.query("UPDATE pending_credentials SET status = 'approved' WHERE pending_id = $1", [p.pending_id]);
+      await client.query('COMMIT');
+
+      const name = await db.query('SELECT name FROM students WHERE student_id = $1', [p.student_id]);
+      res.json({ success: true, studentName: name.rows[0]?.name });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      res.status(500).json({ error: err.message });
+    } finally { client.release(); }
+  });
+
+  // ═══ API: 보류 등록 거부 ═════════════════════════════════════
+  app.post('/api/admin/pending-creds/:pendingId/reject', async (req, res) => {
+    try {
+      await db.query(
+        "UPDATE pending_credentials SET status = 'rejected' WHERE pending_id = $1",
+        [req.params.pendingId]
+      );
+      res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ═══ API: 최근 등록 로그 ═════════════════════════════════════
+  app.get('/api/admin/reg-log', async (req, res) => {
+    try {
+      const recent = await db.query(`
+        SELECT s.name, s.phone, c.registered_at, 'completed' AS type
+        FROM credentials c JOIN students s ON s.student_id = c.student_id
+        WHERE c.registered_at > NOW() - INTERVAL '24 hours'
+        UNION ALL
+        SELECT s.name, s.phone, pc.requested_at AS registered_at, 'pending' AS type
+        FROM pending_credentials pc JOIN students s ON s.student_id = pc.student_id
+        WHERE pc.requested_at > NOW() - INTERVAL '24 hours' AND pc.status = 'pending'
+        ORDER BY registered_at DESC LIMIT 20
+      `);
+      res.json(recent.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
   // ═══ 등록 QR 인쇄 페이지 ═════════════════════════════════════
   app.get('/admin/reg-print/:courseId', async (req, res) => {
     try {
@@ -1157,6 +1234,12 @@ function renderStudentsPage(courses) {
   <h1 style="margin-top:12px;">👥 수강생 관리</h1>
   <p class="subtitle">수강생 조회, 일괄 등록, 생체인증 현황</p>
 
+  <div class="card" id="pendingCard" style="display:none;">
+    <h2>⚠️ 재등록 승인 대기</h2>
+    <p style="font-size:13px;color:#86868b;margin-bottom:12px;">이미 등록된 수강생이 재등록을 시도했습니다. 본인 확인 후 승인하세요.</p>
+    <div id="pendingList"></div>
+  </div>
+
   <div class="card">
     <h2>📋 수강생 조회</h2>
     <select id="courseSelect" onchange="loadStudents()">
@@ -1164,6 +1247,11 @@ function renderStudentsPage(courses) {
       ${courseOptions}
     </select>
     <div id="studentList" style="margin-top:16px;"></div>
+  </div>
+
+  <div class="card">
+    <h2>🕐 실시간 등록 현황 <span style="font-size:12px;color:#86868b;font-weight:400;">(최근 24시간 · 5초 자동 갱신)</span></h2>
+    <div id="regLog" style="font-size:13px;min-height:40px;"></div>
   </div>
 
   <div class="card">
@@ -1315,6 +1403,79 @@ async function resetCred(studentId, name) {
   } catch (err) { alert('초기화 오류: ' + err.message); }
   await loadStudents();
 }
+
+// ─── 실시간 등록 로그 폴링 ───────────────────────────────────
+async function loadRegLog() {
+  try {
+    const res = await fetch('/api/admin/reg-log');
+    const rows = await res.json();
+    const el = document.getElementById('regLog');
+    if (!el) return;
+    if (!rows.length) { el.innerHTML = '<span style="color:#86868b;">최근 등록 내역이 없습니다.</span>'; return; }
+    let html = '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
+    html += '<tr><th style="text-align:left;padding:6px 8px;background:#f5f5f7;font-size:12px;">이름</th><th style="text-align:left;padding:6px 8px;background:#f5f5f7;font-size:12px;">전화번호</th><th style="text-align:left;padding:6px 8px;background:#f5f5f7;font-size:12px;">등록 시각</th><th style="text-align:left;padding:6px 8px;background:#f5f5f7;font-size:12px;">상태</th></tr>';
+    rows.forEach(function(r) {
+      const t = new Date(r.registered_at).toLocaleTimeString('ko-KR', { timeZone:'Asia/Seoul', hour:'2-digit', minute:'2-digit', second:'2-digit' });
+      const badge = r.type === 'pending'
+        ? '<span style="background:#fff3cd;color:#856404;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">⚠️ 승인대기</span>'
+        : '<span style="background:#e6f4ea;color:#137333;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">✅ 등록완료</span>';
+      html += '<tr style="border-top:1px solid #f0f0f0;"><td style="padding:7px 8px;font-weight:600;">' + r.name + '</td><td style="padding:7px 8px;color:#86868b;">' + r.phone + '</td><td style="padding:7px 8px;">' + t + '</td><td style="padding:7px 8px;">' + badge + '</td></tr>';
+    });
+    html += '</table>';
+    el.innerHTML = html;
+  } catch(e) {}
+}
+
+// ─── 보류 등록 목록 로드 ─────────────────────────────────────
+async function loadPending() {
+  try {
+    const res = await fetch('/api/admin/pending-creds');
+    const rows = await res.json();
+    const card = document.getElementById('pendingCard');
+    const el = document.getElementById('pendingList');
+    if (!card || !el) return;
+    if (!rows.length) { card.style.display = 'none'; return; }
+    card.style.display = 'block';
+    let html = '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
+    html += '<tr><th style="text-align:left;padding:6px 8px;background:#fff8e1;font-size:12px;">이름</th><th style="text-align:left;padding:6px 8px;background:#fff8e1;font-size:12px;">전화번호</th><th style="text-align:left;padding:6px 8px;background:#fff8e1;font-size:12px;">수강과정</th><th style="text-align:left;padding:6px 8px;background:#fff8e1;font-size:12px;">요청 시각</th><th style="padding:6px 8px;background:#fff8e1;font-size:12px;">처리</th></tr>';
+    rows.forEach(function(r) {
+      const t = new Date(r.requested_at).toLocaleTimeString('ko-KR', { timeZone:'Asia/Seoul', hour:'2-digit', minute:'2-digit' });
+      html += '<tr style="border-top:1px solid #f0f0f0;">';
+      html += '<td style="padding:7px 8px;font-weight:600;">' + r.name + '</td>';
+      html += '<td style="padding:7px 8px;color:#86868b;font-size:12px;">' + r.phone + '</td>';
+      html += '<td style="padding:7px 8px;font-size:12px;">' + (r.courses || '-') + '</td>';
+      html += '<td style="padding:7px 8px;">' + t + '</td>';
+      html += '<td style="padding:7px 8px;white-space:nowrap;">';
+      html += '<button class="btn btn-small" style="background:#34c759;margin-right:4px;" onclick="approvePending('' + r.pending_id + '', '' + r.name + '')">✅ 승인</button>';
+      html += '<button class="btn btn-small btn-danger" onclick="rejectPending('' + r.pending_id + '', '' + r.name + '')">❌ 거부</button>';
+      html += '</td></tr>';
+    });
+    html += '</table>';
+    el.innerHTML = html;
+  } catch(e) {}
+}
+
+async function approvePending(pendingId, name) {
+  if (!confirm(name + '님의 재등록을 승인하시겠습니까?\n기존 기기 인증이 해제되고 새 기기로 변경됩니다.')) return;
+  const res = await fetch('/api/admin/pending-creds/' + pendingId + '/approve', { method: 'POST' });
+  const data = await res.json();
+  if (data.success) { alert('✅ ' + name + '님 재등록이 승인되었습니다.'); loadPending(); loadRegLog(); }
+  else alert('오류: ' + data.error);
+}
+
+async function rejectPending(pendingId, name) {
+  if (!confirm(name + '님의 재등록 요청을 거부하시겠습니까?\n기존 등록이 유지됩니다.')) return;
+  const res = await fetch('/api/admin/pending-creds/' + pendingId + '/reject', { method: 'POST' });
+  const data = await res.json();
+  if (data.success) { alert('❌ ' + name + '님 재등록이 거부되었습니다.'); loadPending(); }
+  else alert('오류: ' + data.error);
+}
+
+// ─── 페이지 로드 시 폴링 시작 ────────────────────────────────
+loadRegLog();
+loadPending();
+setInterval(function() { loadRegLog(); loadPending(); }, 5000);
+
 
 // ─── 전체 등록링크 인쇄 페이지 열기 ─────────────────────────
 function openRegPrint() {
