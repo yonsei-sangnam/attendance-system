@@ -1451,8 +1451,8 @@ async function loadPending() {
       html += '<td style="padding:7px 8px;font-size:12px;">' + (r.courses || '-') + '</td>';
       html += '<td style="padding:7px 8px;">' + t + '</td>';
       html += '<td style="padding:7px 8px;white-space:nowrap;">';
-      html += '<button class="btn btn-small" style="background:#34c759;margin-right:4px;" onclick="approvePending('' + r.student_id + '', '' + r.name + '')">✅ 승인</button>';
-      html += '<button class="btn btn-small btn-danger" onclick="rejectPending('' + r.student_id + '', '' + r.name + '')">❌ 거부</button>';
+      html += '<button class="btn btn-small" style="background:#34c759;margin-right:4px;" onclick="approvePending(\\'' + r.student_id + '\\', \\'' + r.name + '\\')">✅ 승인</button>';
+      html += '<button class="btn btn-small btn-danger" onclick="rejectPending(\\'' + r.student_id + '\\', \\'' + r.name + '\\')">❌ 거부</button>';
       html += '</td></tr>';
     });
     html += '</table>';
@@ -1461,7 +1461,7 @@ async function loadPending() {
 }
 
 async function approvePending(pendingId, name) {
-  if (!confirm(name + '님의 재등록을 승인하시겠습니까?\n기존 기기 인증이 해제되고 새 기기로 변경됩니다.')) return;
+  if (!confirm(name + '님의 재등록을 승인하시겠습니까?\\n기존 기기 인증이 해제되고 새 기기로 변경됩니다.')) return;
   const res = await fetch('/api/admin/pending-creds/' + pendingId + '/approve', { method: 'POST' });
   const data = await res.json();
   if (data.success) { alert('✅ ' + name + '님 재등록이 승인되었습니다.'); loadPending(); loadRegLog(); }
@@ -1469,7 +1469,7 @@ async function approvePending(pendingId, name) {
 }
 
 async function rejectPending(pendingId, name) {
-  if (!confirm(name + '님의 재등록 요청을 거부하시겠습니까?\n기존 등록이 유지됩니다.')) return;
+  if (!confirm(name + '님의 재등록 요청을 거부하시겠습니까?\\n기존 등록이 유지됩니다.')) return;
   const res = await fetch('/api/admin/pending-creds/' + pendingId + '/reject', { method: 'POST' });
   const data = await res.json();
   if (data.success) { alert('❌ ' + name + '님 재등록이 거부되었습니다.'); loadPending(); }
