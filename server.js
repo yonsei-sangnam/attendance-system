@@ -174,9 +174,9 @@ app.get('/api/my/status/:studentId', async (req, res) => {
 app.get('/register', async (req, res) => {
   const { token } = req.query;
 
-  // 토큰 없이 직접 접근 → 안내 페이지
+  // 토큰 없이 접근 → 전화번호 입력 페이지 (공용 등록 입구)
   if (!token) {
-    return res.send(renderRegisterNoTokenPage());
+    return res.send(renderRegisterPhonePage());
   }
 
   // 토큰 검증
@@ -194,7 +194,50 @@ app.get('/register', async (req, res) => {
 
     res.send(renderRegisterPage(token, tokenRes.rows[0].student_id, tokenRes.rows[0].name));
   } catch (err) {
-    res.status(500).send(renderRegisterNoTokenPage());
+    res.status(500).send(renderRegisterExpiredPage());
+  }
+});
+
+// ─── API: 전화번호로 토큰 조회 ───────────────────────────────
+app.post('/api/register/phone-lookup', async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone) return res.json({ found: false, error: '전화번호를 입력하세요.' });
+
+    // 전화번호 정규화 (숫자만 추출 후 010-XXXX-XXXX 형식)
+    const digits = phone.replace(/\D/g, '');
+    let normalized = '';
+    if (digits.length === 11) {
+      normalized = digits.slice(0,3) + '-' + digits.slice(3,7) + '-' + digits.slice(7);
+    } else if (digits.length === 8) {
+      normalized = '010-' + digits.slice(0,4) + '-' + digits.slice(4);
+    } else {
+      return res.json({ found: false, error: '올바른 전화번호 형식이 아닙니다.' });
+    }
+
+    // 수강생 조회
+    const studentRes = await db.query(
+      "SELECT student_id, name FROM students WHERE phone = $1 AND status = 'active'",
+      [normalized]
+    );
+    if (studentRes.rows.length === 0) {
+      return res.json({ found: false, error: '등록되지 않은 번호입니다.' });
+    }
+    const student = studentRes.rows[0];
+
+    // 발급된 토큰 조회
+    const tokenRes = await db.query(
+      "SELECT challenge FROM auth_challenges WHERE student_id = $1 AND type = 'reg_token' AND expires_at > NOW()",
+      [student.student_id]
+    );
+    if (tokenRes.rows.length === 0) {
+      return res.json({ found: true, hasToken: false, name: student.name,
+        error: '등록 링크가 발급되지 않았습니다. 담당자에게 문의하세요.' });
+    }
+
+    res.json({ found: true, hasToken: true, token: tokenRes.rows[0].challenge, name: student.name });
+  } catch (err) {
+    res.status(500).json({ found: false, error: err.message });
   }
 });
 
@@ -203,7 +246,6 @@ app.post('/api/register/options', async (req, res) => {
   try {
     const { studentId, token } = req.body;
 
-    // 토큰 검증 (studentId와 token이 일치해야 함)
     const tokenRes = await db.query(`
       SELECT student_id FROM auth_challenges
       WHERE challenge = $1 AND student_id = $2 AND type = 'reg_token' AND expires_at > NOW()
@@ -228,7 +270,6 @@ app.post('/api/register/verify', async (req, res) => {
   try {
     const { studentId, token, response } = req.body;
 
-    // 토큰 재확인
     const tokenRes = await db.query(`
       SELECT student_id FROM auth_challenges
       WHERE challenge = $1 AND student_id = $2 AND type = 'reg_token' AND expires_at > NOW()
@@ -238,10 +279,16 @@ app.post('/api/register/verify', async (req, res) => {
       return res.status(403).json({ error: '유효하지 않은 등록 링크입니다.' });
     }
 
-    const result = await auth.verifyRegistration(req, studentId, response);
+    // 기존 등록 여부 확인 → 있으면 보류 처리
+    const existingCred = await db.query(
+      'SELECT COUNT(*) AS cnt FROM credentials WHERE student_id = $1', [studentId]
+    );
+    const isReRegister = parseInt(existingCred.rows[0].cnt) > 0;
+
+    const result = await auth.verifyRegistration(req, studentId, response, isReRegister);
 
     if (result.verified) {
-      // 등록 성공 → 토큰 소멸 (1회용)
+      // 토큰 소멸 (보류 포함 1회용)
       await db.query(
         "DELETE FROM auth_challenges WHERE student_id = $1 AND type = 'reg_token'",
         [studentId]
@@ -998,16 +1045,66 @@ function renderRegisterPage(token, studentId, studentName) {
   </body></html>`;
 }
 
-// ─── 등록 페이지 (토큰 없이 직접 접근 시) ───────────────────
-function renderRegisterNoTokenPage() {
-  return `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title>생체인증 등록</title><style>${COMMON_CSS}</style></head>
+// ─── 등록 페이지 (공용 입구 - 전화번호 입력) ────────────────
+function renderRegisterPhonePage() {
+  return `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>생체인증 등록</title><style>${COMMON_CSS}</style>
+  </head>
   <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;">
-    <div class="card">
-      <div class="icon">🔒</div>
-      <h1>등록 링크가 필요합니다</h1>
-      <p class="subtitle" style="margin-top:8px;">생체인증 등록은 관리자가 발급한 개인 링크로만 가능합니다.<br>담당자에게 등록 링크를 요청하세요.</p>
+  <div class="card">
+
+    <div id="step1" class="step active">
+      <div class="icon">🔐</div>
+      <h1>생체인증 등록</h1>
+      <p class="subtitle" style="margin-top:6px;">전화번호를 입력하면 본인 등록 페이지로 이동합니다.</p>
+      <div class="form-group" style="margin-top:16px;">
+        <label>전화번호 뒷자리 8자리</label>
+        <input type="tel" id="phoneInput" placeholder="12345678" maxlength="8" inputmode="numeric" autocomplete="off">
+      </div>
+      <button class="btn" id="lookupBtn" onclick="doLookup()">확인</button>
+      <div id="msg1" style="margin-top:10px;"></div>
     </div>
+
+    <div id="step2" class="step">
+      <div class="icon">⏳</div>
+      <h1>이동 중...</h1>
+    </div>
+
+  </div>
+  <script>
+    async function doLookup() {
+      const input = document.getElementById('phoneInput').value.trim();
+      const msgEl = document.getElementById('msg1');
+      msgEl.innerHTML = '';
+      if (input.length < 8) {
+        msgEl.innerHTML = '<div class="msg msg-error">전화번호 뒷자리 8자리를 입력해주세요.</div>'; return;
+      }
+      const btn = document.getElementById('lookupBtn');
+      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+      try {
+        const res = await fetch('/api/register/phone-lookup', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: input })
+        });
+        const data = await res.json();
+        if (!data.found || !data.hasToken) {
+          msgEl.innerHTML = '<div class="msg msg-error">' + (data.error || '등록 링크가 없습니다.') + '</div>';
+          return;
+        }
+        // 개인 등록 페이지로 이동
+        document.querySelectorAll('.step').forEach(el => el.classList.remove('active'));
+        document.getElementById('step2').classList.add('active');
+        location.href = '/register?token=' + encodeURIComponent(data.token);
+      } catch (err) {
+        msgEl.innerHTML = '<div class="msg msg-error">오류: ' + err.message + '</div>';
+      } finally {
+        btn.disabled = false; btn.textContent = '확인';
+      }
+    }
+    document.getElementById('phoneInput').addEventListener('keypress', e => { if (e.key === 'Enter') doLookup(); });
+    document.getElementById('phoneInput').focus();
+  </script>
   </body></html>`;
 }
 
