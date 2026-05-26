@@ -315,9 +315,19 @@ function registerAdminRoutes(app) {
   // ═══ API: 생체인증 초기화 ════════════════════════════════════
   app.delete('/api/admin/credentials/:studentId', async (req, res) => {
     try {
+      const crypto = require('crypto');
       await db.query('DELETE FROM credentials WHERE student_id = $1', [req.params.studentId]);
       await db.query('DELETE FROM push_subscriptions WHERE student_id = $1', [req.params.studentId]);
-      res.json({ success: true });
+
+      // 인증초기화와 동시에 재등록 토큰 자동 발급 (24시간)
+      const token = crypto.randomBytes(24).toString('base64url');
+      await db.query(`
+        INSERT INTO auth_challenges (student_id, challenge, type, expires_at)
+        VALUES ($1, $2, 'reg_token', NOW() + INTERVAL '24 hours')
+        ON CONFLICT (student_id, type) DO UPDATE SET challenge = $2, expires_at = NOW() + INTERVAL '24 hours'
+      `, [req.params.studentId, token]);
+
+      res.json({ success: true, token });
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
 
@@ -1402,9 +1412,15 @@ async function bulkRegister() {
 
 // ─── 생체인증 초기화 ─────────────────────────────────────
 async function resetCred(studentId, name) {
-  if (!confirm(name + '의 생체인증 등록을 초기화하시겠습니까?\\n(재등록이 필요합니다)')) return;
+  if (!confirm(name + '의 생체인증 등록을 초기화하시겠습니까?\\n(재등록 링크가 자동 발급됩니다)')) return;
   try {
-    await fetch('/api/admin/credentials/' + studentId, { method: 'DELETE' });
+    const res = await fetch('/api/admin/credentials/' + studentId, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.success) {
+      alert('✅ 초기화 완료.\\n' + name + '님이 /register 에서 전화번호를 입력하면 바로 재등록할 수 있습니다. (24시간 유효)');
+    } else {
+      alert('초기화 실패: ' + (data.error || '알 수 없는 오류'));
+    }
   } catch (err) { alert('초기화 오류: ' + err.message); }
   await loadStudents();
 }
