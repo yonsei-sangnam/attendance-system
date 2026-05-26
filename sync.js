@@ -61,7 +61,7 @@ async function getCourseAttendanceData(courseId) {
 
 // ─── 출결 상태 결정 (세분화) ─────────────────────────────────
 function getDetailedStatus(a) {
-  if (!a) return '';  // 기록 없음 (미래 회차 등)
+  if (!a) return '결석';  // 기록 없음 → 결석
 
   const hasIn = !!a.check_in_at;
   const hasOut = !!a.check_out_at;
