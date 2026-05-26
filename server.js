@@ -204,7 +204,7 @@ app.post('/api/register/phone-lookup', async (req, res) => {
     const { phone } = req.body;
     if (!phone) return res.json({ found: false, error: '전화번호를 입력하세요.' });
 
-    // 전화번호 정규화 (숫자만 추출 후 010-XXXX-XXXX 형식)
+    // 전화번호 정규화
     const digits = phone.replace(/\D/g, '');
     let normalized = '';
     if (digits.length === 11) {
@@ -225,17 +225,36 @@ app.post('/api/register/phone-lookup', async (req, res) => {
     }
     const student = studentRes.rows[0];
 
-    // 발급된 토큰 조회
-    const tokenRes = await db.query(
-      "SELECT challenge FROM auth_challenges WHERE student_id = $1 AND type = 'reg_token' AND expires_at > NOW()",
+    // 크레덴셜(생체인증) 등록 여부 확인
+    const credRes = await db.query(
+      'SELECT COUNT(*) AS cnt FROM credentials WHERE student_id = $1',
       [student.student_id]
     );
-    if (tokenRes.rows.length === 0) {
-      return res.json({ found: true, hasToken: false, name: student.name,
-        error: '등록 링크가 발급되지 않았습니다. 담당자에게 문의하세요.' });
+    const hasCredential = parseInt(credRes.rows[0].cnt) > 0;
+
+    if (hasCredential) {
+      // ── 재등록: 관리자 발급 토큰 필요 ───────────────────────
+      const tokenRes = await db.query(
+        "SELECT challenge FROM auth_challenges WHERE student_id = $1 AND type = 'reg_token' AND expires_at > NOW()",
+        [student.student_id]
+      );
+      if (tokenRes.rows.length === 0) {
+        return res.json({ found: true, hasToken: false, name: student.name,
+          error: '이미 등록된 번호입니다. 기기 변경이 필요하면 담당자에게 문의하세요.' });
+      }
+      return res.json({ found: true, hasToken: true, token: tokenRes.rows[0].challenge, name: student.name });
     }
 
-    res.json({ found: true, hasToken: true, token: tokenRes.rows[0].challenge, name: student.name });
+    // ── 신규 등록: 토큰 자동 생성 후 즉시 등록 허용 ─────────
+    const crypto = require('crypto');
+    const token = crypto.randomBytes(24).toString('base64url');
+    await db.query(`
+      INSERT INTO auth_challenges (student_id, challenge, type, expires_at)
+      VALUES ($1, $2, 'reg_token', NOW() + INTERVAL '10 minutes')
+      ON CONFLICT (student_id, type) DO UPDATE SET challenge = $2, expires_at = NOW() + INTERVAL '10 minutes'
+    `, [student.student_id, token]);
+
+    res.json({ found: true, hasToken: true, token, name: student.name, isNew: true });
   } catch (err) {
     res.status(500).json({ found: false, error: err.message });
   }
