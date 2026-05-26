@@ -400,7 +400,7 @@ app.post('/api/auth/passkey-verify', async (req, res) => {
       }
 
       await db.query(
-        "UPDATE attendance SET check_out_at = NOW(), exit_type = '인증퇴실', updated_at = NOW() WHERE attendance_id = $1",
+        "UPDATE attendance SET check_out_at = NOW(), exit_type = '정상', updated_at = NOW() WHERE attendance_id = $1",
         [attendanceId]
       );
       console.log('[Checkout] ' + result.studentName + ' 퇴실 처리 완료 (인증퇴실)');
@@ -457,7 +457,7 @@ app.post('/api/auth/checkout', async (req, res) => {
 
     // 4. 퇴실 처리
     await db.query(`
-      UPDATE attendance SET check_out_at = NOW(), exit_type = '생체인증', updated_at = NOW()
+      UPDATE attendance SET check_out_at = NOW(), exit_type = '정상', updated_at = NOW()
       WHERE attendance_id = $1
     `, [attendanceId]);
 
@@ -1742,7 +1742,7 @@ app.post('/api/push/checkout', async (req, res) => {
     await db.query(`
       UPDATE attendance 
       SET check_out_at = NOW(),
-          exit_type = '알림탭',
+          exit_type = '정상',
           updated_at = NOW()
       WHERE attendance_id = $1
     `, [attendanceId]);
