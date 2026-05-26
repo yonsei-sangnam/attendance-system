@@ -85,9 +85,9 @@ async function sendPush(studentId, payload) {
 }
 
 
-// ─── 퇴실 리마인더 발송 (수업 종료 10분 전) ─────────────────
+// ─── 퇴실 리마인더 발송 (수업 종료 10분 전 ~ 종료 후 8분) ──
 async function sendExitReminders() {
-  // 현재 KST 시간 기준, 10분 후에 종료되는 수업 찾기
+  // T-10 ~ T+8 범위에 종료되는 수업 중 퇴실 미처리 수강생 찾기
   const sessions = await db.query(`
     SELECT cs.session_id, cs.end_time, c.course_name,
            COALESCE(cr.classroom_name, dcr.classroom_name) AS classroom_name
@@ -96,8 +96,8 @@ async function sendExitReminders() {
     LEFT JOIN classrooms cr ON cr.classroom_id = cs.classroom_id
     LEFT JOIN classrooms dcr ON dcr.classroom_id = c.default_classroom_id
     WHERE cs.session_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::DATE
-      AND cs.end_time BETWEEN 
-        (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::TIME + INTERVAL '9 minutes'
+      AND cs.end_time BETWEEN
+        (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::TIME - INTERVAL '8 minutes'
         AND (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::TIME + INTERVAL '11 minutes'
   `);
 
@@ -106,7 +106,7 @@ async function sendExitReminders() {
   let totalSent = 0;
 
   for (const session of sessions.rows) {
-    // 이 세션에 입실했지만 퇴실 안 한 수강생 조회
+    // 퇴실 미처리 수강생 조회
     const students = await db.query(`
       SELECT a.attendance_id, a.student_id, s.name
       FROM attendance a
@@ -116,10 +116,25 @@ async function sendExitReminders() {
         AND a.check_out_at IS NULL
     `, [session.session_id]);
 
+    // 종료까지 남은 분 계산 (음수 = 종료 후)
+    const nowKST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+    const [endH, endM] = session.end_time.slice(0, 5).split(':').map(Number);
+    const endMinutes = endH * 60 + endM;
+    const nowMinutes = nowKST.getHours() * 60 + nowKST.getMinutes();
+    const minutesLeft = endMinutes - nowMinutes;
+
+    // 메시지 구분 (종료 전 / 종료 후)
+    let body;
+    if (minutesLeft > 0) {
+      body = `${session.course_name} 종료 ${minutesLeft}분 전입니다. 퇴실 확인을 해주세요.`;
+    } else {
+      body = `${session.course_name} 수업이 종료되었습니다. 퇴실 확인을 해주세요.`;
+    }
+
     for (const student of students.rows) {
       const payload = {
-        title: '수업이 곧 종료됩니다',
-        body: `${session.course_name} - 퇴실 확인을 해주세요.`,
+        title: '퇴실 확인 요청',
+        body,
         url: '/',
         studentId: student.student_id,
         attendanceId: student.attendance_id,
@@ -185,7 +200,7 @@ async function sendMissedExitAlerts() {
 
 // ─── 스케줄러 시작 (1분마다 체크) ────────────────────────────
 function startScheduler() {
-  console.log('[Scheduler] 퇴실 리마인더 스케줄러 시작 (1분 간격)');
+  console.log('[Scheduler] 퇴실 리마인더 스케줄러 시작 (2분 간격)');
 
   setInterval(async () => {
     try {
@@ -201,7 +216,7 @@ function startScheduler() {
     } catch (err) {
       console.error('[Scheduler] 오류:', err.message);
     }
-  }, 60 * 1000); // 1분마다
+  }, 2 * 60 * 1000); // 2분마다
 }
 
 
