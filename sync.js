@@ -280,7 +280,7 @@ function buildSessionSheet(data, sessionIndex) {
       const status = getDetailedStatus(a);
       rows.push([student.name, checkIn, checkOut, status, a.exit_type || '']);
     } else {
-      rows.push([student.name, '', '', '', '']);
+      rows.push([student.name, '', '', '결석', '']);
     }
   }
 
