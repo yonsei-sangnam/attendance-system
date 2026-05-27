@@ -65,8 +65,7 @@ app.get('/admin', async (req, res) => {
       attendanceCount: attendanceCount.rows[0].cnt,
     }));
   } catch (err) {
-    res.status(500).send(`<html><body style="font-family:sans-serif;padding:40px;"><h1>DB 연결 실패</h1><p>${err.message}</p></div>
-</body></html>`);
+    res.status(500).send(`<html><body style="font-family:sans-serif;padding:40px;"><h1>DB 연결 실패</h1><p>${err.message}</p></body></html>`);
   }
 });
 
@@ -574,177 +573,41 @@ app.post('/api/admin/sync-all', async (req, res) => {
 
 // ─── 공통 CSS ────────────────────────────────────────────────
 const COMMON_CSS = `
-/* ─── 연세대학교 출결 시스템 UI ─── */
-:root {
-  --yonsei-blue:  #003876;
-  --yonsei-blue2: #1a5299;
-  --yonsei-dark:  #1d1d1f;
-  --yonsei-gray:  #656668;
-  --yonsei-light: #f0f2f5;
-  --yonsei-gold:  #b59a5c;
-  --radius: 14px;
-  --shadow: 0 4px 20px rgba(0,56,118,0.10);
-}
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-  font-family: 'Pretendard', -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
-  background: var(--yonsei-light);
-  color: var(--yonsei-dark);
-  -webkit-font-smoothing: antialiased;
-}
-
-/* 헤더 */
-.yonsei-header {
-  background: var(--yonsei-blue);
-  padding: 12px 20px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-}
-.yonsei-header img.sym {
-  width: 32px; height: 32px; opacity: 0.95;
-}
-.yonsei-header img.txt {
-  height: 18px; opacity: 0.95;
-}
-.yonsei-header .sub-title {
-  margin-left: auto;
-  font-size: 13px;
-  color: rgba(255,255,255,0.75);
-  font-weight: 400;
-}
-
-/* 카드 */
-.card {
-  background: #fff;
-  border-radius: var(--radius);
-  padding: 28px 24px;
-  box-shadow: var(--shadow);
-  width: 100%;
-  max-width: 420px;
-  text-align: center;
-}
-h1 {
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--yonsei-blue);
-  letter-spacing: -0.3px;
-}
-.subtitle {
-  font-size: 14px;
-  color: var(--yonsei-gray);
-  line-height: 1.6;
-  margin-top: 6px;
-}
-.student-name {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--yonsei-blue);
-}
-
-/* 버튼 */
-.btn {
-  display: block;
-  width: 100%;
-  padding: 15px 20px;
-  background: var(--yonsei-blue);
-  color: #fff;
-  border: none;
-  border-radius: 10px;
-  font-size: 16px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s, transform 0.1s;
-  margin-top: 14px;
-  letter-spacing: 0.2px;
-}
-.btn:hover { background: var(--yonsei-blue2); }
-.btn:active { transform: scale(0.98); }
-.btn:disabled { background: #b0bec5; cursor: not-allowed; }
-.btn-outline {
-  background: transparent;
-  border: 1.5px solid var(--yonsei-blue);
-  color: var(--yonsei-blue);
-}
-.btn-outline:hover { background: rgba(0,56,118,0.05); }
-
-/* 폼 */
-.form-group { text-align: left; margin-top: 16px; }
-.form-group label {
-  display: block;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--yonsei-gray);
-  margin-bottom: 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-.form-group input {
-  width: 100%;
-  padding: 13px 16px;
-  border: 1.5px solid #dde2e8;
-  border-radius: 10px;
-  font-size: 17px;
-  font-weight: 600;
-  text-align: center;
-  letter-spacing: 2px;
-  outline: none;
-  transition: border-color 0.15s;
-}
-.form-group input:focus { border-color: var(--yonsei-blue); }
-
-/* 메시지 */
-.msg { padding: 12px 16px; border-radius: 8px; font-size: 14px; margin-top: 10px; text-align: left; }
-.msg-error { background: #fff0f0; color: #c0392b; border-left: 3px solid #e74c3c; }
-.msg-success { background: #f0faf4; color: #1a7a42; border-left: 3px solid #27ae60; }
-.msg-info { background: #f0f5ff; color: var(--yonsei-blue); border-left: 3px solid var(--yonsei-blue); }
-
-/* 스텝 */
-.step { display: none; }
-.step.active { display: block; }
-
-/* 아이콘 */
-.icon { font-size: 44px; margin-bottom: 10px; }
-
-/* 스피너 */
-.spinner {
-  display: inline-block; width: 16px; height: 16px;
-  border: 2px solid rgba(255,255,255,0.4);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-  margin-right: 8px; vertical-align: middle;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-
-/* 체크인 상태 배지 */
-.status-badge {
-  display: inline-block;
-  padding: 6px 16px;
-  border-radius: 20px;
-  font-size: 13px;
-  font-weight: 600;
-}
-.status-in { background: #e8f5e9; color: #2e7d32; }
-.status-out { background: #e3f2fd; color: #1565c0; }
-.status-none { background: #f5f5f5; color: #757575; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, 'Malgun Gothic', sans-serif; background: #f5f5f7; color: #1d1d1f; }
+  .container { max-width: 1000px; margin: 0 auto; padding: 20px; }
+  .card { background: #fff; border-radius: 16px; padding: 32px 24px; max-width: 400px; width: 100%; margin: 0 auto; text-align: center; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
+  .icon { font-size: 48px; margin-bottom: 16px; }
+  h1 { font-size: 22px; margin-bottom: 8px; }
+  h2 { font-size: 16px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #e5e5e7; }
+  .subtitle { color: #86868b; font-size: 14px; margin-bottom: 24px; }
+  .form-group { margin-bottom: 16px; text-align: left; }
+  .form-group label { display: block; font-size: 13px; color: #86868b; margin-bottom: 6px; }
+  .form-group input { width: 100%; padding: 12px 14px; border: 1.5px solid #d2d2d7; border-radius: 10px; font-size: 16px; outline: none; }
+  .form-group input:focus { border-color: #1a73e8; }
+  .btn { display: inline-block; width: 100%; padding: 14px; background: #1a73e8; color: #fff; border: none; border-radius: 10px; font-size: 16px; font-weight: 600; cursor: pointer; }
+  .btn:hover { background: #1557b0; }
+  .btn:disabled { background: #d2d2d7; cursor: not-allowed; }
+  .btn-outline { background: #fff; color: #1a73e8; border: 1.5px solid #1a73e8; }
+  .msg { padding: 12px; border-radius: 10px; font-size: 14px; margin: 16px 0; line-height: 1.5; }
+  .msg-success { background: #e6f4ea; color: #137333; }
+  .msg-error { background: #fce8e6; color: #c5221f; }
+  .msg-info { background: #e8f0fe; color: #1a73e8; }
+  .student-name { font-size: 20px; font-weight: 700; margin: 12px 0 4px; }
+  .student-phone { font-size: 14px; color: #86868b; margin-bottom: 20px; }
+  .step { display: none; }
+  .step.active { display: block; }
+  .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 `;
 
 // ─── 에러 페이지 ─────────────────────────────────────────────
 function renderErrorPage(message) {
   return `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>오류</title>
   <style>${COMMON_CSS}</style></head>
-  <body style="min-height:100vh;background:#003776;">
-  <div class="yonsei-header">
-    <img class="sym" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADWElEQVR4nNWaTWtUVxjHf8+ZECLtortubBE0FqpFq11oQfFLxJY24MJ160JFycKFBVf9AOrOhRv9EtJCRYT4QlIXFiwkWbgKFEkTZ+b+XTznOIfLzctkZjL3/mG4M3funPP7nzmvzzlGn5IUADOzbnbvG+AscBo4AuwHPgMm4iNdYBVYBhaBx8CfZvYyS6MFyMyKfpl2Cm4xk/T5S0lXJf0laV39a13SE0nXJB3IjUiyYcOH7P0hSbcl/VcC6krqxGtRAVyUnsn1TtJdSV9V5Tko/ES8Tkq6UQJvbwG8nZKhdsnIb5L25XkPA/64pKcl8N1Ab2UmN/JM0smBTGTwP8SSGQX4VkbWJM3uykQGfylLvDNC8LLyvK70ZSKD/yVLbJSlvpkK9Yxc3pEJxW5S0kz84airzHbKq9RPOWOSZfDBzApJXwNPgan41XC6s91LQAF0gFNm9jyxQjQgHzhCfD0BvsVHz1ZlknuvxLIIfAe0gcLMPg4WIU4NruLwHeoDD87Swacpc5E1AJh8xBM+f3kF7MP/meEO54MrVaU2buQNYAEvfQHXgE/iQ3WDB2cS3jbnIrOlNvA58A9uID1cRyle14FpM1tJbeBH4FO8sdQVHpyti1fzWeh1kedxd3WGT0pVaUZSMEnTwEu8bjXFBMB74ETAV1JT1LfxVqkLTALnAr4MhF4DaZK+D8DR+KEppQ891iMB+KJ0swlKrPtN0hreLTVRXZPUxLr/UeOeKg+sAPw/bogB1A14xAya1Y0m1tUALJVuNkGJdTkAC6WbTVBiXQx4oBWaNQ4kPQ7AH/j8Oq3MmqAWvjJ7FMzsNTBPb8lWd3Vx1hfAqzQOPKA3z6670pT/oZkVzV9SSpows7fAPXpLtroqLXnvm9mKpFbTwioCNvCwyr+ApRBdMLMl4BbeG9XxX0jBrN/N7A3OXDQttLiAhxY75KHFGCSSmbXxcMUaXoXq0K2mXmcDmDWzDZxVkE2nY2S6ZWZ/AxfidwXj7VpFr+pcNLMXkXHzglWTNzgqTPyaJTiuLab+4CtMjHOT7+ddwVeYOKa93Wad16DbrBUm9mqj+6akqaHAZybyowYHNZqjBnckHa7Kc1gmRnXY47oGOOzR93xHmx+3OYPHWY+yh8dtPgAZWhM2yTz5FAAAAABJRU5ErkJggg==" alt="연세">
-    <img class="txt" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAW0AAAAgCAYAAADZsCkkAAAAj0lEQVR4nO3UQQ0AIBDAMMC/58MCP7KkVbDX9szMAiDh/A4A4J1pA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QMgFUisEPDdUbosAAAAASUVORK5CYII=" alt="연세대학교">
-    <span class="sub-title">출결 관리 시스템</span>
-  </div>
-  <div style="display:flex;align-items:center;justify-content:center;padding:28px 20px;">
+  <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;background:#003776;">
     <div class="card"><div class="icon">❌</div><h1>스캔 실패</h1><p style="color:#86868b;margin-top:12px;">${message}</p></div>
-  </div>
-</body></html>`;
+  </body></html>`;
 }
 
 
@@ -760,13 +623,7 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
   <style>${COMMON_CSS}</style>
   <script src="https://unpkg.com/@simplewebauthn/browser@11/dist/bundle/index.umd.min.js"></script>
   </head>
-  <body style="min-height:100vh;background:#003776;">
-  <div class="yonsei-header">
-    <img class="sym" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADWElEQVR4nNWaTWtUVxjHf8+ZECLtortubBE0FqpFq11oQfFLxJY24MJ160JFycKFBVf9AOrOhRv9EtJCRYT4QlIXFiwkWbgKFEkTZ+b+XTznOIfLzctkZjL3/mG4M3funPP7nzmvzzlGn5IUADOzbnbvG+AscBo4AuwHPgMm4iNdYBVYBhaBx8CfZvYyS6MFyMyKfpl2Cm4xk/T5S0lXJf0laV39a13SE0nXJB3IjUiyYcOH7P0hSbcl/VcC6krqxGtRAVyUnsn1TtJdSV9V5Tko/ES8Tkq6UQJvbwG8nZKhdsnIb5L25XkPA/64pKcl8N1Ab2UmN/JM0smBTGTwP8SSGQX4VkbWJM3uykQGfylLvDNC8LLyvK70ZSKD/yVLbJSlvpkK9Yxc3pEJxW5S0kz84airzHbKq9RPOWOSZfDBzApJXwNPgan41XC6s91LQAF0gFNm9jyxQjQgHzhCfD0BvsVHz1ZlknuvxLIIfAe0gcLMPg4WIU4NruLwHeoDD87Swacpc5E1AJh8xBM+f3kF7MP/meEO54MrVaU2buQNYAEvfQHXgE/iQ3WDB2cS3jbnIrOlNvA58A9uID1cRyle14FpM1tJbeBH4FO8sdQVHpyti1fzWeh1kedxd3WGT0pVaUZSMEnTwEu8bjXFBMB74ETAV1JT1LfxVqkLTALnAr4MhF4DaZK+D8DR+KEppQ891iMB+KJ0swlKrPtN0hreLTVRXZPUxLr/UeOeKg+sAPw/bogB1A14xAya1Y0m1tUALJVuNkGJdTkAC6WbTVBiXQx4oBWaNQ4kPQ7AH/j8Oq3MmqAWvjJ7FMzsNTBPb8lWd3Vx1hfAqzQOPKA3z6670pT/oZkVzV9SSpows7fAPXpLtroqLXnvm9mKpFbTwioCNvCwyr+ApRBdMLMl4BbeG9XxX0jBrN/N7A3OXDQttLiAhxY75KHFGCSSmbXxcMUaXoXq0K2mXmcDmDWzDZxVkE2nY2S6ZWZ/AxfidwXj7VpFr+pcNLMXkXHzglWTNzgqTPyaJTiuLab+4CtMjHOT7+ddwVeYOKa93Wad16DbrBUm9mqj+6akqaHAZybyowYHNZqjBnckHa7Kc1gmRnXY47oGOOzR93xHmx+3OYPHWY+yh8dtPgAZWhM2yTz5FAAAAABJRU5ErkJggg==" alt="연세">
-    <img class="txt" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAW0AAAAgCAYAAADZsCkkAAAAj0lEQVR4nO3UQQ0AIBDAMMC/58MCP7KkVbDX9szMAiDh/A4A4J1pA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QMgFUisEPDdUbosAAAAASUVORK5CYII=" alt="연세대학교">
-    <span class="sub-title">출결 관리 시스템</span>
-  </div>
-  <div style="display:flex;align-items:center;justify-content:center;padding:28px 20px;">
+  <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;background:#003776;">
     <div class="card">
 
       <!-- Step 0: 패스키 직접 인증 (기본) -->
@@ -1126,8 +983,7 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
         } catch (e) { console.log('Push 등록 스킵:', e.message); }
       }
     </script>
-  </div>
-</body></html>`;
+  </body></html>`;
 }
 
 
@@ -1138,13 +994,7 @@ function renderRegisterPage(token, studentId, studentName) {
   <style>${COMMON_CSS}</style>
   <script src="https://unpkg.com/@simplewebauthn/browser@11/dist/bundle/index.umd.min.js"></script>
   </head>
-  <body style="min-height:100vh;background:#003776;">
-  <div class="yonsei-header">
-    <img class="sym" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADWElEQVR4nNWaTWtUVxjHf8+ZECLtortubBE0FqpFq11oQfFLxJY24MJ160JFycKFBVf9AOrOhRv9EtJCRYT4QlIXFiwkWbgKFEkTZ+b+XTznOIfLzctkZjL3/mG4M3funPP7nzmvzzlGn5IUADOzbnbvG+AscBo4AuwHPgMm4iNdYBVYBhaBx8CfZvYyS6MFyMyKfpl2Cm4xk/T5S0lXJf0laV39a13SE0nXJB3IjUiyYcOH7P0hSbcl/VcC6krqxGtRAVyUnsn1TtJdSV9V5Tko/ES8Tkq6UQJvbwG8nZKhdsnIb5L25XkPA/64pKcl8N1Ab2UmN/JM0smBTGTwP8SSGQX4VkbWJM3uykQGfylLvDNC8LLyvK70ZSKD/yVLbJSlvpkK9Yxc3pEJxW5S0kz84airzHbKq9RPOWOSZfDBzApJXwNPgan41XC6s91LQAF0gFNm9jyxQjQgHzhCfD0BvsVHz1ZlknuvxLIIfAe0gcLMPg4WIU4NruLwHeoDD87Swacpc5E1AJh8xBM+f3kF7MP/meEO54MrVaU2buQNYAEvfQHXgE/iQ3WDB2cS3jbnIrOlNvA58A9uID1cRyle14FpM1tJbeBH4FO8sdQVHpyti1fzWeh1kedxd3WGT0pVaUZSMEnTwEu8bjXFBMB74ETAV1JT1LfxVqkLTALnAr4MhF4DaZK+D8DR+KEppQ891iMB+KJ0swlKrPtN0hreLTVRXZPUxLr/UeOeKg+sAPw/bogB1A14xAya1Y0m1tUALJVuNkGJdTkAC6WbTVBiXQx4oBWaNQ4kPQ7AH/j8Oq3MmqAWvjJ7FMzsNTBPb8lWd3Vx1hfAqzQOPKA3z6670pT/oZkVzV9SSpows7fAPXpLtroqLXnvm9mKpFbTwioCNvCwyr+ApRBdMLMl4BbeG9XxX0jBrN/N7A3OXDQttLiAhxY75KHFGCSSmbXxcMUaXoXq0K2mXmcDmDWzDZxVkE2nY2S6ZWZ/AxfidwXj7VpFr+pcNLMXkXHzglWTNzgqTPyaJTiuLab+4CtMjHOT7+ddwVeYOKa93Wad16DbrBUm9mqj+6akqaHAZybyowYHNZqjBnckHa7Kc1gmRnXY47oGOOzR93xHmx+3OYPHWY+yh8dtPgAZWhM2yTz5FAAAAABJRU5ErkJggg==" alt="연세">
-    <img class="txt" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAW0AAAAgCAYAAADZsCkkAAAAj0lEQVR4nO3UQQ0AIBDAMMC/58MCP7KkVbDX9szMAiDh/A4A4J1pA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QMgFUisEPDdUbosAAAAASUVORK5CYII=" alt="연세대학교">
-    <span class="sub-title">출결 관리 시스템</span>
-  </div>
-  <div style="display:flex;align-items:center;justify-content:center;padding:28px 20px;">
+  <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;background:#003776;">
     <div class="card">
 
       <div id="step1" class="step active">
@@ -1222,8 +1072,7 @@ function renderRegisterPage(token, studentId, studentName) {
         }
       }
     </script>
-  </div>
-</body></html>`;
+  </body></html>`;
 }
 
 // ─── 등록 페이지 (공용 입구 - 전화번호 입력) ────────────────
@@ -1232,13 +1081,7 @@ function renderRegisterPhonePage() {
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>생체인증 등록</title><style>${COMMON_CSS}</style>
   </head>
-  <body style="min-height:100vh;background:#003776;">
-  <div class="yonsei-header">
-    <img class="sym" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADWElEQVR4nNWaTWtUVxjHf8+ZECLtortubBE0FqpFq11oQfFLxJY24MJ160JFycKFBVf9AOrOhRv9EtJCRYT4QlIXFiwkWbgKFEkTZ+b+XTznOIfLzctkZjL3/mG4M3funPP7nzmvzzlGn5IUADOzbnbvG+AscBo4AuwHPgMm4iNdYBVYBhaBx8CfZvYyS6MFyMyKfpl2Cm4xk/T5S0lXJf0laV39a13SE0nXJB3IjUiyYcOH7P0hSbcl/VcC6krqxGtRAVyUnsn1TtJdSV9V5Tko/ES8Tkq6UQJvbwG8nZKhdsnIb5L25XkPA/64pKcl8N1Ab2UmN/JM0smBTGTwP8SSGQX4VkbWJM3uykQGfylLvDNC8LLyvK70ZSKD/yVLbJSlvpkK9Yxc3pEJxW5S0kz84airzHbKq9RPOWOSZfDBzApJXwNPgan41XC6s91LQAF0gFNm9jyxQjQgHzhCfD0BvsVHz1ZlknuvxLIIfAe0gcLMPg4WIU4NruLwHeoDD87Swacpc5E1AJh8xBM+f3kF7MP/meEO54MrVaU2buQNYAEvfQHXgE/iQ3WDB2cS3jbnIrOlNvA58A9uID1cRyle14FpM1tJbeBH4FO8sdQVHpyti1fzWeh1kedxd3WGT0pVaUZSMEnTwEu8bjXFBMB74ETAV1JT1LfxVqkLTALnAr4MhF4DaZK+D8DR+KEppQ891iMB+KJ0swlKrPtN0hreLTVRXZPUxLr/UeOeKg+sAPw/bogB1A14xAya1Y0m1tUALJVuNkGJdTkAC6WbTVBiXQx4oBWaNQ4kPQ7AH/j8Oq3MmqAWvjJ7FMzsNTBPb8lWd3Vx1hfAqzQOPKA3z6670pT/oZkVzV9SSpows7fAPXpLtroqLXnvm9mKpFbTwioCNvCwyr+ApRBdMLMl4BbeG9XxX0jBrN/N7A3OXDQttLiAhxY75KHFGCSSmbXxcMUaXoXq0K2mXmcDmDWzDZxVkE2nY2S6ZWZ/AxfidwXj7VpFr+pcNLMXkXHzglWTNzgqTPyaJTiuLab+4CtMjHOT7+ddwVeYOKa93Wad16DbrBUm9mqj+6akqaHAZybyowYHNZqjBnckHa7Kc1gmRnXY47oGOOzR93xHmx+3OYPHWY+yh8dtPgAZWhM2yTz5FAAAAABJRU5ErkJggg==" alt="연세">
-    <img class="txt" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAW0AAAAgCAYAAADZsCkkAAAAj0lEQVR4nO3UQQ0AIBDAMMC/58MCP7KkVbDX9szMAiDh/A4A4J1pA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QMgFUisEPDdUbosAAAAASUVORK5CYII=" alt="연세대학교">
-    <span class="sub-title">출결 관리 시스템</span>
-  </div>
-  <div style="display:flex;align-items:center;justify-content:center;padding:28px 20px;">
+  <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;background:#003776;">
   <div class="card">
 
     <div id="step1" class="step active">
@@ -1292,28 +1135,20 @@ function renderRegisterPhonePage() {
     document.getElementById('phoneInput').addEventListener('keypress', e => { if (e.key === 'Enter') doLookup(); });
     document.getElementById('phoneInput').focus();
   </script>
-  </div>
-</body></html>`;
+  </body></html>`;
 }
 
 // ─── 등록 페이지 (토큰 만료 시) ─────────────────────────────
 function renderRegisterExpiredPage() {
   return `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>링크 만료</title><style>${COMMON_CSS}</style></head>
-  <body style="min-height:100vh;background:#003776;">
-  <div class="yonsei-header">
-    <img class="sym" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADWElEQVR4nNWaTWtUVxjHf8+ZECLtortubBE0FqpFq11oQfFLxJY24MJ160JFycKFBVf9AOrOhRv9EtJCRYT4QlIXFiwkWbgKFEkTZ+b+XTznOIfLzctkZjL3/mG4M3funPP7nzmvzzlGn5IUADOzbnbvG+AscBo4AuwHPgMm4iNdYBVYBhaBx8CfZvYyS6MFyMyKfpl2Cm4xk/T5S0lXJf0laV39a13SE0nXJB3IjUiyYcOH7P0hSbcl/VcC6krqxGtRAVyUnsn1TtJdSV9V5Tko/ES8Tkq6UQJvbwG8nZKhdsnIb5L25XkPA/64pKcl8N1Ab2UmN/JM0smBTGTwP8SSGQX4VkbWJM3uykQGfylLvDNC8LLyvK70ZSKD/yVLbJSlvpkK9Yxc3pEJxW5S0kz84airzHbKq9RPOWOSZfDBzApJXwNPgan41XC6s91LQAF0gFNm9jyxQjQgHzhCfD0BvsVHz1ZlknuvxLIIfAe0gcLMPg4WIU4NruLwHeoDD87Swacpc5E1AJh8xBM+f3kF7MP/meEO54MrVaU2buQNYAEvfQHXgE/iQ3WDB2cS3jbnIrOlNvA58A9uID1cRyle14FpM1tJbeBH4FO8sdQVHpyti1fzWeh1kedxd3WGT0pVaUZSMEnTwEu8bjXFBMB74ETAV1JT1LfxVqkLTALnAr4MhF4DaZK+D8DR+KEppQ891iMB+KJ0swlKrPtN0hreLTVRXZPUxLr/UeOeKg+sAPw/bogB1A14xAya1Y0m1tUALJVuNkGJdTkAC6WbTVBiXQx4oBWaNQ4kPQ7AH/j8Oq3MmqAWvjJ7FMzsNTBPb8lWd3Vx1hfAqzQOPKA3z6670pT/oZkVzV9SSpows7fAPXpLtroqLXnvm9mKpFbTwioCNvCwyr+ApRBdMLMl4BbeG9XxX0jBrN/N7A3OXDQttLiAhxY75KHFGCSSmbXxcMUaXoXq0K2mXmcDmDWzDZxVkE2nY2S6ZWZ/AxfidwXj7VpFr+pcNLMXkXHzglWTNzgqTPyaJTiuLab+4CtMjHOT7+ddwVeYOKa93Wad16DbrBUm9mqj+6akqaHAZybyowYHNZqjBnckHa7Kc1gmRnXY47oGOOzR93xHmx+3OYPHWY+yh8dtPgAZWhM2yTz5FAAAAABJRU5ErkJggg==" alt="연세">
-    <img class="txt" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAW0AAAAgCAYAAADZsCkkAAAAj0lEQVR4nO3UQQ0AIBDAMMC/58MCP7KkVbDX9szMAiDh/A4A4J1pA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QMgFUisEPDdUbosAAAAASUVORK5CYII=" alt="연세대학교">
-    <span class="sub-title">출결 관리 시스템</span>
-  </div>
-  <div style="display:flex;align-items:center;justify-content:center;padding:28px 20px;">
+  <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;background:#003776;">
     <div class="card">
       <div class="icon">⏰</div>
       <h1>등록 링크가 만료되었습니다</h1>
       <p class="subtitle" style="margin-top:8px;">링크는 발급 후 24시간만 유효합니다.<br>담당자에게 새 링크를 요청하세요.</p>
     </div>
-  </div>
-</body></html>`;
+  </body></html>`;
 }
 
 
@@ -1343,13 +1178,7 @@ function renderAppPage() {
     .install-guide { background:#fff3e0; border-radius:10px; padding:14px 18px; margin-top:16px; font-size:13px; color:#e65100; line-height:1.8; }
   </style>
   </head>
-  <body style="min-height:100vh;background:#003776;">
-  <div class="yonsei-header">
-    <img class="sym" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADWElEQVR4nNWaTWtUVxjHf8+ZECLtortubBE0FqpFq11oQfFLxJY24MJ160JFycKFBVf9AOrOhRv9EtJCRYT4QlIXFiwkWbgKFEkTZ+b+XTznOIfLzctkZjL3/mG4M3funPP7nzmvzzlGn5IUADOzbnbvG+AscBo4AuwHPgMm4iNdYBVYBhaBx8CfZvYyS6MFyMyKfpl2Cm4xk/T5S0lXJf0laV39a13SE0nXJB3IjUiyYcOH7P0hSbcl/VcC6krqxGtRAVyUnsn1TtJdSV9V5Tko/ES8Tkq6UQJvbwG8nZKhdsnIb5L25XkPA/64pKcl8N1Ab2UmN/JM0smBTGTwP8SSGQX4VkbWJM3uykQGfylLvDNC8LLyvK70ZSKD/yVLbJSlvpkK9Yxc3pEJxW5S0kz84airzHbKq9RPOWOSZfDBzApJXwNPgan41XC6s91LQAF0gFNm9jyxQjQgHzhCfD0BvsVHz1ZlknuvxLIIfAe0gcLMPg4WIU4NruLwHeoDD87Swacpc5E1AJh8xBM+f3kF7MP/meEO54MrVaU2buQNYAEvfQHXgE/iQ3WDB2cS3jbnIrOlNvA58A9uID1cRyle14FpM1tJbeBH4FO8sdQVHpyti1fzWeh1kedxd3WGT0pVaUZSMEnTwEu8bjXFBMB74ETAV1JT1LfxVqkLTALnAr4MhF4DaZK+D8DR+KEppQ891iMB+KJ0swlKrPtN0hreLTVRXZPUxLr/UeOeKg+sAPw/bogB1A14xAya1Y0m1tUALJVuNkGJdTkAC6WbTVBiXQx4oBWaNQ4kPQ7AH/j8Oq3MmqAWvjJ7FMzsNTBPb8lWd3Vx1hfAqzQOPKA3z6670pT/oZkVzV9SSpows7fAPXpLtroqLXnvm9mKpFbTwioCNvCwyr+ApRBdMLMl4BbeG9XxX0jBrN/N7A3OXDQttLiAhxY75KHFGCSSmbXxcMUaXoXq0K2mXmcDmDWzDZxVkE2nY2S6ZWZ/AxfidwXj7VpFr+pcNLMXkXHzglWTNzgqTPyaJTiuLab+4CtMjHOT7+ddwVeYOKa93Wad16DbrBUm9mqj+6akqaHAZybyowYHNZqjBnckHa7Kc1gmRnXY47oGOOzR93xHmx+3OYPHWY+yh8dtPgAZWhM2yTz5FAAAAABJRU5ErkJggg==" alt="연세">
-    <img class="txt" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAW0AAAAgCAYAAADZsCkkAAAAj0lEQVR4nO3UQQ0AIBDAMMC/58MCP7KkVbDX9szMAiDh/A4A4J1pA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QMgFUisEPDdUbosAAAAASUVORK5CYII=" alt="연세대학교">
-    <span class="sub-title">출결 관리 시스템</span>
-  </div>
-  <div style="display:flex;align-items:center;justify-content:center;padding:28px 20px;">
+  <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;background:#003776;">
     <div class="card" style="max-width:420px;">
 
       <!-- Step 1: 전화번호 입력 -->
@@ -1476,7 +1305,7 @@ function renderAppPage() {
             window._checkoutData = { sid: appStudentId, aid: data.attendance_id };
           }
 
-          let html = '<div style="background:#e4e5e6;border-radius:10px;padding:14px;">';
+          let html = '<div style="background:#f5f5f7;border-radius:10px;padding:14px;">';
           html += '<div style="font-size:13px;font-weight:600;margin-bottom:8px;">오늘 출결 현황</div>';
           html += '<div class="status-row"><span class="status-label2">과정</span><span class="status-value2">' + (data.course_name || '-') + '</span></div>';
           html += '<div class="status-row"><span class="status-label2">입실</span><span class="status-value2">' + (data.check_in_at ? new Date(data.check_in_at).toLocaleTimeString('ko-KR', {timeZone:'Asia/Seoul', hour:'2-digit', minute:'2-digit'}) : '-') + '</span></div>';
@@ -1593,7 +1422,7 @@ function renderAppPage() {
 
         var msgEl = document.getElementById('todayStatus');
         function showMsg(text) {
-          msgEl.innerHTML = '<div style="text-align:center;padding:20px;background:#e4e5e6;border-radius:12px;margin-bottom:12px;">' + text + '</div>';
+          msgEl.innerHTML = '<div style="text-align:center;padding:20px;background:#f5f5f7;border-radius:12px;margin-bottom:12px;">' + text + '</div>';
         }
 
         // ── Step 1: 위치 설정 조회 ────────────────────────────
@@ -1699,8 +1528,7 @@ function renderAppPage() {
       document.getElementById('phoneInput').addEventListener('keypress', function(e) { if (e.key === 'Enter') appLogin(); });
       document.getElementById('phoneInput').focus();
     </script>
-  </div>
-</body></html>`;
+  </body></html>`;
 }
 
 
@@ -1726,22 +1554,20 @@ function renderAdminPage(data) {
     .status-ok { color:#34c759; }
     .card { max-width:100%; text-align:left; padding:20px; margin-bottom:20px; }
     table { width:100%; border-collapse:collapse; font-size:14px; }
-    th { text-align:left; padding:8px 12px; background:#e4e5e6; color:#86868b; font-weight:500; font-size:12px; }
+    th { text-align:left; padding:8px 12px; background:#f5f5f7; color:#86868b; font-weight:500; font-size:12px; }
     td { padding:8px 12px; border-top:1px solid #e5e5e7; }
     .badge { padding:2px 8px; border-radius:4px; font-size:12px; font-weight:500; }
     .blue { background:#e8f0fe; color:#1a73e8; } .green { background:#e6f4ea; color:#137333; }
     .orange { background:#fef3e0; color:#e37400; } .gray { background:#f1f3f4; color:#5f6368; }
     .stats-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:12px; }
-    .stat-box { background:#e4e5e6; border-radius:8px; padding:16px; text-align:center; }
+    .stat-box { background:#f5f5f7; border-radius:8px; padding:16px; text-align:center; }
     .stat-number { font-size:28px; font-weight:700; color:#1a73e8; }
     .stat-label { font-size:12px; color:#86868b; margin-top:4px; }
     .btn-link { color:#1a73e8; text-decoration:none; font-size:13px; }
     .btn-link:hover { text-decoration:underline; }
     .info-box { background:#e8f0fe; border-radius:8px; padding:14px 18px; margin-top:12px; font-size:13px; color:#1a73e8; line-height:1.6; }
   </style></head>
-  <body>
-  <div style="padding:14px 20px 10px 20px;"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAA0CAYAAADPCHf8AAAws0lEQVR4nO29d5wX1fX//zr3zsy7bm8sVTosnaVFJYtiwQZi8iZWsKKiIvbEkmVN1MRPiiU2LDFi5W2v2AKLDYGlLLB0ZKnb+7vNzL3n+8d7F1ExfpKPJI/8fvv8Z9mdO3fOnLnnlnPOvQCddNJJJ5100kknnXTSSSeddNJJJ5100kknnXTSSSf/34T+0wJ0wMwEQCxduvQ7Mk2aNInnz5/PJSUl+j8gWied/GdgZmJmieJi8b+8hZYsWWK0G1MnnRxx/mMNjZklEalDfs8B4sPLN+0dFInpvNZE1O+3fPGgR9SNHNR1C4xAuSlpn6sPf38nnRwJ/u0Gwsw0Y0ZYhMMzFDMbQOysVz7eeMEnq786ZvOe5ow2W6OmKQLHVRAkkZPhR8AABnRPbRs9sNuqs6eMei4lkPISEbUCIGYGEfE/KQYB+NY9HaPYd6ZxHTpiAITiYkIJAMxnYD4dUv5wuuRD6mWgmJI/Dz47eU9okUB4Ix9yjRAKCYQL+Fvy/KPv9UM6OPTe9rLFAqEKQjisvyPTYev7h+UPI8thy7ff8x1dAAjJ5M+w+kbZUEigpoCQW8HfqCsUkgh/p/yPyr/VQJhZEJFu//f0R17+pPi1pVtHLC+vhD8o0TM3TRuG0BW7qnHF9J9gw/YDWLZuFwp65Yp9dS0iYHmQnZGK0OTBOy+eNuz3OWnZCxIuY9GiRXLGjBk/rKRQSCK8SAPEABNCMwTCR065/z/nMJ0Q2r/BIToPLZJAGIfpDL6/DjAlv+GR599mIB3GwczBL9Zve/B3T3164cbKWngsqIry3ejWJ1ecd8ooWrNlP6rrW9A9Nw1Fo/rgLy8vxzknj0D4w3I+feJgvWrTHl63tdo4ZkQ/3HjehMUnTSi4lIj2/fCU6xClFhRYqKiwD14afmLA9A3uS7Fo3C5/YjsA3fH3/NoGlrKa9+7dG8PAqSlm9vCeMl7ZKuBzHOHPdCL7tqEibKf1Kkpvjta6qK1QSH5Uhe4hw+zRs6+IVEdM09+aEOl5TuTLSlSUtqFd975hZ5/hpPe/3GirejG+5vFnAXDasNMyEla3ISrR0uJseLH822/y7VbT/vv3NKZ2+oTS0LpUoTbNAbbbANga/osB2szJMXXdV7E1LxxAwQwT8UYf7DYbe5fHvl2FOfzsUWwG/K5btxHr3mhuV2r7kJdEt/+TADZHzBrJhhFwG1s2YGe4OTmalugCwNpZOLdLdvWK2r2HPMcYdt4EELFbnljVMSoQAFk491iSnt7abjug1j6yBIDq1avIuy+t5xgQ2W565WqUlrrf/+3/dYwjUem3OcQ4uj73/orXH3uzfGyiuVHVNTTQDTOPkw/Ut2Hfjhq8/HE5vKaBA7UtqGmM4Ivy3XCUxuLPN+GryjrKnhqQVdUtmFR4lM5KMfU5t4an3DF70mfMPI2I1n2/kRQLgLQcftHp7M+cD+b+GH/KZko0zNdr//re+PIP9cqxQz5gywcAPQBmgNiHrKHVPYe9RMqOZnq3T7B9Hk/Mja9UIuND1m49mb6LPI7qmwB2RjP63CPyx03no07wQph+4Sa2Zu5eP6FB9fhYeTK2KZV4V3v9d8lEj8kK+Lsx9poXtOEtTLgJnxbebtoITBQTbrhDuLE9qqn8bMfbfwn83t1FRcUDS0uhPSN3H+/6cl5gVgoMmWyQGgBpkNlKbO/S3tQpKC1xcaixFBcLlJTATE0rdvMvP1d0r3lPrdl+MQCwSJnAKV3+5kTldQDdlyZPC7RmDS4FBE/s6yksTTY6Sk4BZyiYmVdwIG+2p7bphATwcaDPibnxrEHLWXpTwC4Bol4aHjbt5jcLVz502zphXKcDvWZKtfMkBXwIlGhz5EWXbPZm/5aYs/Z3O6bNyBv5Z07EVksS2vUEn4KQXYIDtue0bUWdb9TZXW1Pt5eYzGO1ilfBl9pFjr+hzGjb+4so62o2U5+B4emdWluV1QI04Ic6iX+BI24gxcXFgoiYmbOefW/FR3P/9P7gWDziPPzLM82Hw5/h9aUbkOI30Wd0b5xSNATjh/VC766ZyAj60BqNY19dC5aXVyIvYxvueewDCNPALycdLx5+fpkwpOM++vqqXnFHfcjMPyWizYdO4wC0D+klyhh96QTt6/IWnEi5dCLzlBm4iX2574px87avAILa8GaQsrcT4LT3xujtlq/ZzF1zWXoiDdsXtwCAGH99E0NKwE1+CcskAGBPxjZ40vJEtPovLIzNQriR2trSNuo7rgauqzU4wiBIK6NRAZBOWymTNU2bfq+IHFjLZnAkKdsrVPTJyPZPa2nM6CaQTCxLNniAzt+l3ejD0IoBStoHswBpBSN4NUOOBpZ+9wO8fUACcFh4mmCl5LHdtCO5jpoP9l6/WWutJaQ/bdi5GS3rn2+k8dfHmUTBPp9PIhRi1NQQWj+RQDGzaNjJDM0ymJJRGEprjNVEhYo9weAgKbeNpXk1i2C+S8ZNa8bOvZbJUHBjmgATAIyRlxWplC5PINa0jDh6E6TvBuXPv5PMCFzSYEiGdpq04TMAIG5k3gpP+rGicesUXb7wfe/wC4610/p94gbybqld8cBsUXj1ToCOImkesenWETUQZqYwQDx/Pt5cuualmx/8ePC5Jw50Vq3faz75xirkZaTgq8o6/Om6aZhaNAyCvp7xRWJx5GWlol+PXBSN6odbZk1Gadk2/Pn5Utz39BKwEPjt1acaO/bWurc+8H5Odor1BjOPnT8fbcxMBxfuNQXJBix9VwHMZqxyemL9qzvNYaFVbkr/dcwclXAfYWXcBlD7InE+AcAOY3Q3GB4PnOi75oizh8DMGa2EDEA7Tvvs4hAUwC4LmVjgfPHg+q8tlFxImUdsTmB2waQlABCpjWz6SMbr7rit7NG77xp95S3alzVfuy2lDBAxCKBMY/x15xNHVydWPFYBoPhweqZx804kYQzg0tJvzeGLBcrmu0VYYHxiWueRE4ERq19tl/xFAyVgPS8INya0EHdFvDl3pfc5plcziVZondixeHHi63qS0xfWc/ysHeGm5L3W4rRtQ0V4oEbp3QBgFEwb6aYX/EokWquNSO1tji81k7Q6ga3ASR1TW2V6Z4CFMiN1l9qbXtiWMmjynEi6f7pwoh8bTetm2xnDXmfpHUFG0lcpGE2aBNjyDfcWXrDJRXAUhACxnWqMmHmdlrI3wAlWzhFbKvxv4w//cv0ziNT2nbtuefjtjZNb6uqcv6/caZ5+/BCs2rQHQZ8XqxfdjDMnDT9oHE2tUfzPwo8w4PTf4Mb7Xsf+uuaDlRUV9sfrf7wUpxcNRczV2FvTjBc/XG/0SDfdR9/ZMOCTVRvuLykhHQ4f5r0YAiCwo5OdgiYBMBFRLkOMAgkLHcNzEQQAVkZgKqSXpdPyGxipM7QVeIaFlQpiB0SH0R0RI5CJomIDU67xJJ+ro5DeAVp6fw5lAyQMAHCMwPFseDyIt75fAmhy6j6A4bFgek8AwCDEWRi5WloLNZunIDnVkd95ZFGxASbPdw0W7R424k/HXfccDM8AxBv/roLd3hHjr3/TM+r8fqRFHMJSpOyF2mk5N2CrWjB7IKRXFF5+ohx39fFy9NXHy/E3n2gNu3ggCREjEppiTXfBiVzXoS9j9OVzVHrBGgIHzHjtLNtK6QFP9hRIb09o5QKCAEAwN0IakixfbwCIm1m9WAhTG54pdtbYMEv/AACtFPdqAFCrHr5dtO27FzJ4oyOyPtNGYD5F9v/eG91dwr7sG1lYvQG2tc86Yu34iFWcnOpAM3PfR95a++vPl61TM0M/MbrkpOLuvyzG9edMxIt3z4RHSuyvbcJHKzbjxvvfwOCf/x433/YC9le34I/3vY0B0+/B5XeH8eaycuyuaoDrKtw770xcM+NoPPDCp+jTNRNzL55s7P5qr3vfK2svZOaiGTNILWJONqbcCgYAcqIPAyA3tffrRuGlV6hgt5eIXUDrcibqyYABcLIHLp2v8vKGB7Thu4EJUkGMdcoWFHePbMoQbrwOgBeMwzsElGaUQmN3ZtLFS5RGTtuXQrXeBcMHUtoGAMtte5vcGLQ/53E5+tLpytd9AVQCiMc+QFGRAaJc0k51MLI5w61pfQgAZ25+I9/4aclEjDq7qzXmioHG2Dk/RWmJC8K3Rw4CGIHh03Pl2LmrYFhnIFZzvl714GQ4TWfC9J2hRPrtJN0EPKmSpbVSr/3rC/v2Lo8JdhwWpqGN4AdM3o/ZtD5m0/sBW9ZcaCRgBoQZqX9frfvbO57h50+R46/fpgN5D8FNrPa07jk6Ub7wfQmnnt1YNdgxyAoY0FoAgBltXiASjVWON/Mdo/CaBSrQ/V1Sbg2rxCOk7B1g7YUw04FWAIA1Zs6tgDRFIrIcyj4gEk0fk0Y0ljL4GtladQ050cUgkSJtPmKeyCM2xQqHQQDpz9dtvum5Dzd7z5s22s1K85Pd0IbTThiOU44ZjKIL/oRmrbG7phmNDW1Acwy5fXLx0H2XYFxBD2ytrMNvn3gfC578CAvCnyElPYBeeelIJcYtc07BZdPHY/m6r/DcO2XI9Fu0dV8Dnn7r02LTEMdvnN8+GoTDCmBy19FncviFU9if+UtNKXcCtMuM1E5JlD/9PgGgsfM2gqSZlJ64rttVD0MY+SJS8xSndH/cKJyTX1n28G/E+Ot1cjT6Po1yDCjRqEC7l+xGMIQLpggAQCadCLE1C1cZQ8+ZpANd7wCl/g8Iu62mHZPiG15YAQAYPfBDkkZL87o3mpKjw98QB+dpYJmh/DcpT2AIQBdScr2kwYfMT1ECoIQj5ultBtxnzNqdr8S2hfcVoMDaDfGZE91/uXYSZaJN1Usz9TmhWvfaRUUGT5qkjTe3XWi5TrZDMZsUKZBgVlGZ4tY3RkXqcSpR/3fymDGEQhKb9Vaw+5KI1b7rrnrk8xgKLGv8tYMl69fUl3980DdgynDbH/wZifgWBSBesXC3Nfisn6q0XldoKScIpdaZTvMThmn/vXXVwnpr1AWvMKUXpkfrIm0AFBmnaWn2BMkWAqdpX+ZYciNngmSTNq0tJI1GZjCE8d+1BmlfAyhmzp73p1fPdlrb+MvN+6Vn2wFsqWrE209cjVeXbsCyZRVAdiogBAzTQHa/PHz21DXo0zUbG7fvw7knj8LUiYNx9CUPoGJrNVrb4tjQcgCoaUbp+IH447xpyDnxDhw7ohcGHTtYPvnsMn5veUaR7ahhRLT+6/gIAWDq3XXu0spWrkKkCc7av65LAEDBImswNmIzNeeAnSwNwBx56SXanznTaDsQstc+8bIsvKqNU7rd6R1x7t9tiBZAf9dAkmsebdh2f3n0NQ1sC4NYuw6zlwGGoG/qOhSSvElapBJ/lAJB0m6Lk9JVynHXnglBSjqJxxGtUwpMwAyBUAjRikgNOTENCK1Jxkm57k+Lio1lseakcRSEDFSEbXRMFcvejrrAAy4AOfqq32w2/VeAkA3ttpFBXuWnHUbTrl/aG559HSgWKJ3Pt4D23DXm6gXayh8AlUgHswGAmzw9DAi0kOu2sDa9CL+oEsBOALcHB5yeHR0372Ui+TPFGi5JiPE3Igb1hmfnijmxPR/t7wga2uHwNn//aQvtzD5DNWhswkqZmBDSJ8Zf5yro+9wv77+Z2gOsamXJMcH+JwyOC39AeNK6uIGct4TTdLv7xZ/v1QDE2Gs/gTQEtPvftQZZunSpBIDquuopm/a0pI0Z0V1PGNaTtlXW4fypY5Ee9MN2FJDiQ1q6H6mpXrjNUcyaOg59umbjzJuexNBTf4Mxs/4Mr8fETTOPh2pqw40zi3DDrCJIjwnDSM6g7r76VHxS9hV+99BiHNU3T1U126K0bEMIAHJyctoVV0wA8e5dNb0Ue9cqI/jgQWErZtgVFSW2ydGZhhubAQCk9KfUXFlkr33iZYRCUpU9dAO17Lgpr2lfGcCBg1OxQxWpXA/AwjaDzznau901rc2O6dkO098XzJGDow7rpEzhsIY//c9sBd9wyPOUIwNvsub3mYwXmellx5/7mvJ3eQAgRnEBIxxWqHmjEURMnGiFdl2AddLLRXEAbrtxfE1okURRsSELr/yLTsm/Xej4WyLRfLSMN/8UbsvpANe4mf1fE4WzzwVKNAoXGCWAVpB+AEeJeMvtcOJz4UZvgBuZA+V8qb3p/Rkc7Kg/OOD07GhG3zWQ3umk41cKu2mkjEWHCdVyMYR1UqLr8Ar/oOn5QAkjHFbmiFkj49mDyjTJoVDRq7Td/BNpN48R2ilhK/1GOXbupwBk+zoQieBRF+uckSshrNGwWz8jkpUdr0cqsZNUbKNhyyMSAwGO0AiydGny57LVlSft2t/AQ47K4K1765Gfn4ELpowBMyNhu+jRJwev/n4WLEPgZ7csRK8uGbBdF28s2QgE/Sj7chv2VDViUK9cwBAY2b8LenXJwB8f/gDc3klO++lQ3PnER7jqtNFID/ronS+2YWVF1fGWpF8fd9zS9oZcwgBg1+45QCld4wSkmQXnjoThJZBiAEgkolugHBdFRYZd+tQWAFuAYoFwiQIAd/VTf9gNgPLHAEQKIAazhhtXACAizc8LTnzhKsVSKwFIImKtvVlPg8gLZhfAoe5nkb+neuxeU0sgTmx6GU6cYHo5pXqLJ5IytIKF0UYAuKSEZeHl97DpL2CSUnnSryXWeWz4LDnmmuc1aKyWpk8WXvmYql4zrz3IlzTE0hKXx13dkwEIp+1de+1fv+gQwSy8/ETlz5soILtrAIjtT95DcODGXWqrXqqFtwlCmNDakWk5g6H1qWCdbJDhGYqHTxcgsztYVVnV29+I7n7/AACkdB17oK37sTfD9A9SPiOA9lFNkMh2rRRB0dqNo8oee7kMcBwA5pDpLoxgMZHsDRQRcockPV8ktrEwlSvogLdp58+1x/TIwgt6AgB0za857oj6YH68/ZV+9KnWETGQkpLjFDPTvc98OKy+sYX2eEl4mAEGRg/sDiICA8hM8cDVCnA0stP9KF2zA1eedTR+efHxePyZpThl6tHo3S0bry0rBaI2PivfjS27a4FIDGb7CJKbkYKfDOuFR5/9BAosevbKxZ7aloEJV6cQUWv7dC8pWJbpIWiXreBwZXjWMFF7CJpBwoR0Ipzd7M+rwtI6FM2X6IhBHMyNCivBOkVB+wWxF8bX3pN4xcLdAHYD+MbqXYy/Xgl20wnCZGkJ0dac1XFt7/Lwd6LVANACRIwxBSkA2R1fXEAOUmT1JLdtCaQVAPRWchMbtTCHgLBKsNJCmAMzUz2ytqOi8EYGQGasYZ5DZrYb6BoW4+Y1gXUrEeVpI2BR6+4XUhq3PdaIYoEhFQoVAMH1wJNjqNwhGw51vTMAsAM2knENFM42I2ULasyRl56rvJn3J7qN2C/yBu0HGFHp6UrgNhGtvjKxJrw9GbAEEmtLlsrRs+9iK/3WteOvt4V29wJkadOfC3a3G4mWyxRKXbQO9wBQgpCioSSstAVxK/0w2mIYbfvGusCqZC7Xj5s69KMbyCExiJTdVU35vXJTceKE/nj7o3IUDOoBKZNtKuA1sWnDfvz8V89Ba42W1gTKN+/HB6dvxj1zTsc9c04DQNiwcz/+8LclkJlBrN9RhaDfAhkGtP66M+7bPQv9u6fjwhnH0EfLt2NvdXMmgK4AtqBjEQsA+WiSUWcilC0dUslBiDUxCYZ2QXB1VVrPRoAYpd/yUoXDmgFIRM+wtNPsumbCcJufiUas6mSB9sQ8AKipIWASkFvB1h57FnHU1Y5TI+2GFabBqxNAe+5RR9Ie8HUy43wmzBAetk8lV7rx9pHAKXt4+g/pXgNoN46OOjUASqx/fieAY4zCS47WIrXQkDKgtdNAkb2fOuue2dgIAPiIEE7agIw3ztVaZ0G5GtAElgdHWjCTT0RW2ABQtkABIGftEy+k9Tx2cVuXkUVCyIFgEuwmtvrqN3wa+erv1QATSqgjMVGr1Qtu9w4+63E70HWiYRg9tVa2TDSV55S99cle7E2OfoszHQBkxJsXsTA3uNphiG8vCQyANblxubX9I/3o+4V+9MVNh4Ewc85ld724beOO6rS8rBReX7GHTj9hBO677kwAwBNvfonLrnsK8HsAVwGGTGZ4SMLPTh2N8UN6YdNX1XjmnZVQzXHAMgDFgCmA5hhuuu403HvNVADA/eFS/PlvSzGobxdU1zSj71F5ePmeWaOIaO13Iuv/NMn8of9FwX8hzeHQuv8vCXg/eobFP0FH/OV7ZC+cbaJsgfNvFOhH5YhG0i3LwhcrdgBeA2iKwjh51MFrXTKDGFjQDT2PykV6ig+pfg+8XhNSCEQTDlZs3I3UoBdzZhwDMBCLO2iJ2mhui2HPzir0zMs4WJfHMFC55QAqq1qAuI2+vfO/X6hes7y+fG9WbPlj+w7JLCUUF1Pw7a2ZbWUv1AEQwcJzMttibgsqSmzfqKu6xqKxVmx5qjVYeE52W9kLdSic7Q840WDE3NSIsjIHh7TQtF5F6c2VpU3tjZ4wYloq1r3ejMLLfRloNAGgcX/MwYGSaNqIaenQLjWvp0bf0Vd1jX2eXYWxdRnQDiGhJGQwgfhXCtLD8GV4EWvUsIISyutmxr5SDVaKRqTGTfFlBFozM20o8qOqLoHcbl5Eatsgo6bP1ycQU0Or0ecjjXBYYeDFKb40kRZb8cReFJ7uh5tleU1/SjxaV42KsJ027LSM5vXvtKJwNqFsgZvWa1pac3ZeBH0a9SGZuJQ27Nz05vXUiH5TPCkZFwRb/SKCNo9C2QKnY0qFshInOPKiHNYeipQ/WpM1cGpKfbCLx6dNK9Yq6tN89f7m9c83oahYorREo9+UIKTFSO1h+cFmtCbShNQ6H9a/04hh52bAiQqk92a/arCiTlT5zRwZXflw1Y/Xar/JkTQQ22PAIcuAN+hFIuGipjEZANKaUTioG44/djDqmqKob45i2556tEQTsB2FtkgCk8f1xdufboIpJCyvgaDXQmaKF9npAfxkbD8cN6YPNDMEEWoaIxAeE75UH6IJB5aEBnBIqkR75uyIy7sq4Vyk4vEWY8TM5W74mRWy8PL55LrvuiUlK+IjLrpYFl5+hip7bKKjvL/ycvMDetSFZ7uwK80AhgYGn/p4mw7eRoVzIrx32+1ufs9bsD//DgCuOfqy+1OM6O0NK55riWb1/ZWRXdDdLaPzZOEV9xI73V3QOd5YKLvNm/GkN1Y3x+za9QWdd8UdCaehRRsp4zwjLmrScce0Ru0MCgdVrvCdzB6zxkzsX+kEc48RrttkObGKhDfjVBKiytANX7akdJ9qSlrs1Q0f2pb/dm9T60ptpfbU2fnjyGl7XUgrqDxZ45WKvOZxlsYS4fD75qhLhpPWZ2gH9Z6Rl5BKRFZqj/+XmmMLPZYZSQAfxZB5qVE45xS37OHjjcIrr4iCpyG46QyES5VZePkfLIfujZTX10cMz+/lqCvM/Nq359QkJt+FSPRGVPwtbo6+4k+eN3bf04a/1pojZl5kaycFUhqeoeevbzO9g0wW3Zlb1/qtyiUR2f8xa/Tly+3SknuMwsvfJTf+mgB7XO300479RdBTvy7u6XG/HnPFS7K1ciU8WRcYkZoVjuEfZ5AvRzktKwLDp78SKX+tBkdgKP3R3byHbF5qyc0IVrNpIWG7rJmxaVctAIYQhLSgD4s+Lkf41S/x90+3YO36Pdi5uwF7K/bi55OH4oU7z8e1vzgG+7YfwFeVdVi/aS9Kv9iKV94qw5NvrIDf7zmYnlKxsxraVYhGE8yGgZw0XwuAjl6FO3TGbkJo6Z2uWG52+cDGtBGz0oXWJ7C0zkgWVCuJOS5HzS5RiL+pvFmTlfT1dtY8/qK/vv4PPr+oJdh/N7Q7wczveQ6z/hQH3o4Ghp07lEGntDn+SQCEcPUWME/0jJh1FLEzklnUA0A8jmYmGc/MHbZHa+dtEny99vpyWOtl2vKPdsnsJ1trF8XXLnxeS+92SM+K+IbwIpAZU9LYGylf+JKCqNfMK2PlL73K0oxrK6uhdfPH9ezN+TxeEX7R9hivKCLXWfvMMxzM+DsLryFtVSVNUQ4ALMzblDCXJ9Y88aiS1jTtS+sDBotoawM5kS0AoAjlxO4Qc/gVQ4UbOZoZbSgtVakFoX7QanrMFJOBsDZZfSDgDqnKPvlCGatfg4pwm2fIL/oy9Gm2kMdi4MUpbPpn2uXPPmCveeK+QHzrl44nNaYFSTiRymhFaTVLUaFITPUO+UUPsB6oLd9uttJ3CZIWOa272gzfTqnUW6T0heTr2UeYae/G1j/3siJexYKqEmuffSSSkdry9bf+cTkicZDQokWSiHhAj8yNps+LPt2y9LWXHI916yuxu7oRzAy/14OZpxZCWAY86X5YKT4gEsMVl03G47f+AqZp4NYLT8S9v/45kLBh+jyw0vyQpsTpxw1F7y7ZYAAJ28EHn2/BCScMR2jyEIYmDOiRvcNrGY0A2h0GxAAjzpFqoRLnw/TfaXgHDWszPKMMIZaT4PEoLhYwDNM09EUE9GURvBwwuCO6Hs3K+00Nso8RRI2mwFlayGuVNI4FAEf6TjOE+ZaSnrMAaOZYK7R+3DX9z5LGS2SktC/kGwGw3eqDBajV5NLNzN4nSBg9nb2Vt0DAZ6f2vAsAQZpx7ugBGDa0sJNTNmYmIQEQBMXhxk0AYG1nANCA1wBrBTDZSIsRESlpZbD0Jd1+REGQxQCgCa3Q5COCVoa3D+BNFhFGnEn/Vhu0kKA/ZdZNADjqSTtFGNarRJgOgBUZbLQdmM7CvFD5MooAgC3PVEl4T5M5DRzzcDKmArPwkgtaUkdcBFatgGEym6noNcsjiZcB9KVrpT4M1o+x1lkkRZxhGNqQKQAsFlwlVexSLelBV4rsZMs1BEgDYELuaUdsjXNEDGROTogAYPyg/CXD++Zh764avF5aASdi4/n31yTdvMyYPf0nkEEL2tWw61swe+ZP8cgtIbRE47i0eCG27q3BTecdj7tumAqnuQ2kAcUa14SOPbhJ553PK9BY1YiNlbVYtnKH7t67C0YMyF2WcBSKlyxpT+4rFgCxKQNDSTuTpY69QW5skKHiU2Nlj90C5ez2vL7zEsOOH6VisdFuc+NVBEGOp+5F0sprFV4ZIk3ZpBCB0kezXSsJ9hyQoYJDzxoETnSNr3roeuHGB3iHzDgGpq+f1K0rAF5Nrr2f3NYJAITP9AcEc3Z8X0V/qXGyU/7oGmZ9L0PmeHJSZwrX/kyAmwGwSDQNFYm27gBA2ukp2M0FiCU4x9SJLABsqMQ70m473zNi5tWkIlUAIONNeQY4DyDytu3rCWWnKt2mdSwyBQCk6/5ZUPxn1pjZZxkqvlaotm0Elemsf+5v8Y2D9gEQ5ESmimjDHkH4DJBbSVCmb8D0sVLb/RIrH75JqESud+gFRULZQ5XpTxPKvZwNf501+Jz+UNQvUbZgHrHu7vOIfsSJt4xRF94CTX3AiJt2LFfohBBC+nyp8ZNh22OkG/+QQetJu02knOGINQyCE7GYZdCS1vGk1E/shm17SKv5ZMf7A4BwEl2k1nlHes/fEam9uLhYlJSUaGbucc3/vLL1L0+XepDiASmm3KwANr98C1L8PkhBuOWht3Dv3a/iymtPxcM3h9AWi2P6jU/ho3fXYlDhUXj3wdnonZ+N3z3zIX51x4s48+xj8drvL4KrNKQgFM78M8or9kJ7THB9iw6FjhGLfnv+0UT0xWG24pI55uKRgt2WRPPnewO+UQMiClu8CTtPW66XSDCUcBNb3tjVvfsEX8duN7Nw9mgz1rg/WhGu8Q+ZPgycqI5WvFuFggLLZw/MVQb77WHmDqs80Y+YbTb9XunGmmNb3twf6H1GHrxWdmTTK5sy+00JOr6sfMdtjEttpkYi1nbsDcdQWGj6MSjbRqCnW7bgSwCwBp05QEiOxTe+sccafFZ/QXYiPsS3z7MRvYWDWGwkqhAOK++QC3to00mx1z5XAYSkvyCS4wpvuj1YbgtscbMc7c3UQqa5ptqBshfqAbBv1NldXSOY66x8Ym3KoMlZ2srPt9qq9jTu/KgZRUVG4EB2gSanLrblzf0pgyZnJWR2LtltCZamYbvxSo/H253YdDQrj9RuJLblzf3oPsEXSD8q1VF2qr1J7vQMQE9BMhHb8uJ+c+RFIwhw7LV/3eQtOL2HtnKC2nX9XrtxlzZ83X1q3476LZ+3egtCPbV2vORCacufwobwuHbbdkuYebbduhfbF7fkFBQFa4fkxrwVdletpdceKnf+V26bXrQomZr9/ufrn8869W4WY6935NE3sxhxLV945/PMzOy4iptaI/zH5z5iZuZYwubjr/gLY9Actib+kjFsLg8467e8u6aBmZkfXLSUd+6rZcdVzMx855PvM0bMZYy5gWnCTa51zG36ideWrWBmKv7fHyX0A3zPEUOh0HdTz/81/pNHGP3As38E0X48PeF7v8UR5Ig9sL331sw8dM69r6555PGP0HVAnrh5ZhHd/+KnuPyso3HLBcdDaQ0pBOqb23Dy1Y9id00rZp4+EuwyIATe+2wrWprbsPTJq9Gve+7B8i9+uBrzF3yAX5w4HG9+sgnrVu10p515tPHaPdOnEQXePNz22+7dQ76q7t1GU6wmEmyt+Sqa2mMsxxt325tf3waEBJA8OMA7YtYxZJjZMfvAMqx/p7HdHax79SryVGX0nsiO2mtvXLgpMPTs4cqfnuZv2LUuueMwGcn1Djtvojb8ubZo+ghl4RagmHIKlvpbZa/RjuWVUlIqKd6QKFuwoz0WwsaoCwoZZlp6dPOK+i2ft3b8PSl5MaUPXtmj1d99oIzWfZUfrd9TnTV4rFJNDc66gZsAAAVhwyOGF2mS9c7651Zbw84bqL1peb7W/RtbN49oBErYWxDq4Qa6HiUj+/cnKgp2AiU6reexGW25gwuFE6lz1j2/NlgQKnCklT/U2rysrKzMBQBz6NnD2JeZLpSdSiQiibIFSzv05S2o6O5Y6QOkYC8pZ0Ni3d92fd2uigko0ebgnw2R/ozhpHVpbM1TB5JZCYAxxDNeCvJn1lV8fuBAWQwA/KNnjXaF1U0LWSMSsSwQsS3Xf4ikLGyNvKhA+1PTfA0btsY9OV0EPDmJdbs+7djU9WNzxPaDzJgxQy1axIKI1l955qgHC8YNlpMK+7gtkTgevuUs3Pbg2/jtU4shRVIEV2lkBH1obo5iycpd+HLTfiwp24lde2uRmx6EUsl4mhQCz7yzArPueB4ZKT5UN0Rwz1VT3CEjBxgXnjDgXcsIvrko6ST45rAbCsm93lZNbvx8baTfZ7SuU1oaN5L0KICBUAhAiZaFs+/RRD9VbChp9njLM2RmX4QXaRTONioDtVqTPE0HsjYEC2dnu9rIdm13dgOQQEHIAsLKGH3pVUpYp2gg29DpZwNghGDURuC6VqAYwpwiYDaQdn4CACioMAAwyHcSDN/d9XHTSW6MKjnkqJwSnbACLgnvU1oGsisr4WrgPMGeHskkwwMSFTlaWYExOpBfhjFX9oGEFFpd5hWNifYIPzNggfCiYXi8QIlGUbHhTffZDONXbKTMAwDHkzpRS99JZWVlCoWzk7JJzzCG8aiUoordxNiMwlBqMmpdosERguF5FoKEMgNPylGzJwNA8t4SNsZdMYE8Gbdr7bZpxo0AGBsLJBDW7An8THlSb83IiLkoKpYA2HV1EZFMsDaf18LqLdgd6tMjctp1QZrID0d/7Ni+gIbvXEVyBFCqvz5e6cfliO4oDIWgFy1aJIcN6H3bdaFRGypro+a2XbXuLQ+8C82EO+57FyfNeQSrNu1BXmYqPnzkKjx628+x70ADPvu4HNu+qsavLzsJq1+6GQN7dcHGnVU4+1dPY9YtC6GEgeUrtgOs1IPhFcb04/rVTps8drajNIVCoe+6+8Jhje2LEw6vnAshjcYe0x8G27clNr60A0XzJcIzlDn84qEg6yx77dP32KsffRvSWOUGUu8AiBFMSFRU2JSIf0oq8URceF5AW/VXBCzF9sUJ5Pjbs3UpoD1pZ7iRA6+4iaa/AiDsPMCoLI0zsIvANZ7Gr/YZIr4YAJBTowFAM3YDYgcqS+Oo2fidM6xi617ep6RZ4fryvgJKXQathjdly9fFSl0J9aWwWx+VkM+aLdE6gv15bUVpWzL1BUhUJ6pZ6wPeYP7BjNjq8g8jAvglkzUyKb7KdKD+AEAjuCWZfgVjF6DrYzG1Bxx/vbEMbR22G9/0biULY4fNVAqGw4K6AWDEGpMxCWVIZQUnMWRlTt0HtwFMGDJEAWA2U9aw4VtfccgJM3b5wj8lVj76PkPtd33pH8bXPXtvbE2PGgBAUbF01zy1Csr9nZvT92mS2O+ufep+FBfjf5nt8E9zRA2EiDgUCjERRS8989gzz5o4oPqNZVuN8nW7XOmzIHwWapsjCN3yNM699Rm8+H4Zzpg4BMsXXouH7z4Py5+5DnNmHIu3lm3AZb99AZf/9kW0RBPI6Z4FsAYFvOqxF5bLIb2ynDtnn/QzItq3aFH4+1JLGEXFBsrKHNbum1p6+zqr/1aGomKjY9ehFtSThUy6DIuKDYZcyyyTmaP7UpNlDKOr0dZYwqzXuzl9wgAnEw5zow5QLNw1j99L2gkb6X03SE/GRABALJ8AEEgwWBbG/FnzlCfTAgC0DewwBpPBJr5v2lv0awNa+2EkU+0ZytSJuP/QIppFN0+i6QHSanEio+v7Sn1r7eqLmwAL24kmn11aolBcLNxVj6xk4ogx+tKbGFSPtX+tRXGxQGlu0gokCQZlWx55EZspE4GwQtGk5NoiFJIg2Woa/sVgHddljz2D0CKZTL0vFm7ZXz6DSszVVsqHVXmnXwYQsHFjx7rEACvrW5+J2tctAgk3rX1k0AflRbFw6yseYK1Gk5JLARBKKv679oMcSvtxP5KIdlx/7nEn3TP35Mr8nl0N90Cje+yo3nztucfg/pumYmn5Lpwz9wnkn1qCaTc8jffKduD8Xz+HvCklmHrZQ1j85TbccEERfjZ5KCYM6caqtsXxWx5ZMu+0lnvnFk0lsj5h5h84QG4pABDIqCPmfQf/HA5rgCmoYl+QctLl6EuPR2mJK3T8DMGJNwEA/b6uxU3PzVarHroewpvjWoECAEhOG0q0d8T557mrHrpTK/vPZJi/BMBIbZEAGNCpYC611z0zl9rqh6PXLC9Oz0/KKwWB4MXhgl3FxSIpjyPNeOtJ6DXLK1n3d1RbHQAgmN9+D7HjTevhrn7kTiZpsRk8GsDXRmhpBSAoPClfdyBLk21Asn4SZsq9MhF9D0D76ZFJ2BEWQM122YLfWYnGlcGh5wxCx5FA4TCDdRAqPoel7CtHX3o8wjMUiooNoERbw849xZvYu0yyOg5k3AqAkNPe4LXrbX/nbxIOK4D8EKy/OzKUaFTuisNNtIhYPJrUV8ERS0Q74gYCAO27CyURlc8569iJj9162tITTx5nLFu2mT5dt8uNxB3dWNsCb5dMuLZCQd88ZAY9OG/KSMRb4/DkZaCxIYLXP63QX27c7dY3tNGYcQXmI7dOW//ri08sIkpfvGTJEuMHz+qdNEkDgKEiXYkTnFNQFERpxx6N+dS8/vlGciO/IOYLjFGX3AadWOGuevQBoFhgcaaTn3+6nwT6c6zuaAAQ8ebp0m5tN7QKAIAyfR6z8JL7SEW6AM6vARB6/MTOKSgKknYSxO4oa8yVN7rCNxaVR9moGJI80MCxc4RK2HnDTwygdH4yP6yD9sZKtj0PJKaZmd57XCE+xIYXq5PGA11QELLAzjClosMBkEzUn2W4iS8BHDQgvzejt4CsTDTtGJSssZiSvTJgqPhislvviW98aU/SRr9umMJI5Ah2o9bIi6+1raw5rjai7Zc4ZeDU/oJdR7qNPkvzpQJirjXynP6Y1H5ol+GNOFaXuzgeP4ec2I34ek+MkHZTLxlv9SbfGbojXuUdMq2HAFVZiaae7bo9ZNEPWEMLjyLDs52sRM8fanv/VXS4fpmZ6pobr5v/yLsHzrjpGe47/XeMAXMYo+Y5GD7XOefWp527//qe89x7KxwUXO1g1DwHQ67SKLyR+531B573P682b929/25m9rfX98+6Eg8JIH6DrxtlYSjtu7cVCyAkUVho/sPaC2f7UVDwranDwWdJDD8/8E/IdBgO6zolFBUZQNH359cVzm7fx/EP5f/udKWovc6k3N+8XlScvDYh5PvOcw69f+DUlMM8q/1dv/XOHc8r+p536Xjm913/Efm3+5W5uFhQSfLQYmbO2bRj78WLv9j6i7LNe0dt3d+KAw1ROIkE+vbKRkaKD2UVB5CfE0S/vBSMG9Jt86kTB75W0LvHAiLaBXScnvJ/SWf/NoekoH/7HNnDlp3P30z1PjSF/R+myv+L6fEdz/uhNPwfSEM/rDzF9H9L7T/omj7k2iFp/D+oz3+Kf0uO/38sSHVonCI14EFzW3zEnso9Y7dVNQ8+0NjaNRJlS7kJ1bd7VlW/Lhlb+vTpsQrAaiJyAGDRIpahEPS/cLJ7J538d8DMtGTJkn9qmGz/D3T+LWunTjr5T6Y5fANmFkuXLhVLAVTU1jLCAEJAQU4OTQJQW1vLoVCoc8TopJNOOumkk0466aSTTjrppJNOOumkk0466aSTTjrppJMfgf8H9DzgIbYXXQwAAAAASUVORK5CYII=" alt="연세대학교 상남경영원" style="height:52px;display:block;"></div>
-  <div class="container">
+  <body><div class="container">
     <h1>📋 출결 관리 시스템</h1><p class="subtitle">관리자 대시보드</p>
     <div class="status-bar">
       <div class="status-item"><span class="status-label">서버</span><span class="status-value status-ok">● 정상</span></div>
@@ -1784,19 +1610,18 @@ function renderAdminPage(data) {
     </div>
     <div class="card"><h2>🔐 생체인증 등록 페이지</h2>
       <p style="font-size:14px;color:#86868b;margin-bottom:12px;">수업 첫날 수강생 단체 등록 시 아래 주소를 안내하세요:</p>
-      <div style="background:#e4e5e6;padding:12px;border-radius:8px;font-family:monospace;font-size:14px;word-break:break-all;">${data.baseUrl}/register</div>
+      <div style="background:#f5f5f7;padding:12px;border-radius:8px;font-family:monospace;font-size:14px;word-break:break-all;">${data.baseUrl}/register</div>
       <div class="info-box">💡 수강생이 이 주소에 접속 → 전화번호 입력 → 지문/Face ID 등록</div>
     </div>
     <div class="card"><h2>📱 수강생 앱 (PWA)</h2>
       <p style="font-size:14px;color:#86868b;margin-bottom:12px;">생체인증 등록 후, 아래 주소를 홈 화면에 추가하도록 안내하세요:</p>
-      <div style="background:#e4e5e6;padding:12px;border-radius:8px;font-family:monospace;font-size:14px;word-break:break-all;">${data.baseUrl}/app</div>
+      <div style="background:#f5f5f7;padding:12px;border-radius:8px;font-family:monospace;font-size:14px;word-break:break-all;">${data.baseUrl}/app</div>
       <div class="info-box">💡 수강생이 이 주소에 접속 → 전화번호 입력 → 홈 화면에 추가 → 알림 토글 켜기</div>
     </div>
     <div class="card"><h2>🏫 교육과정</h2>
       <table><tr><th>과정명</th><th>약칭</th><th>종류</th><th>기수</th><th>강의실</th></tr>${courseRows}</table>
     </div>
-  </div></div>
-</body></html>`;
+  </div></body></html>`;
 }
 
 
@@ -1841,8 +1666,7 @@ function renderQRPage(classroom, baseUrl) {
       refresh();setInterval(tick,1000);setInterval(refresh,55000);
       async function wl(){try{if('wakeLock' in navigator)await navigator.wakeLock.request('screen');}catch(e){}}wl();document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')wl();});
     </script>
-  </div>
-</body></html>`;
+  </body></html>`;
 }
 
 
