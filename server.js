@@ -1221,7 +1221,7 @@ function renderAppPage() {
         <!-- 홈 화면 추가 안내 -->
         <div id="installGuide"></div>
 
-        <button class="btn btn-outline" style="margin-top:20px;" onclick="appLogout()">다른 번호로 로그인</button>
+        <button class="btn btn-outline" style="margin-top:20px;" onclick="appLogout()" hidden>
       </div>
 
     </div>
