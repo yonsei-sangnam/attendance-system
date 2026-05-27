@@ -161,24 +161,23 @@ async function formatSummarySheet(sheets, spreadsheetId, sheetTitle, data) {
   const startCol = 1;  // B열
   const endCol = startCol + numSessions;
 
-  // 색상 정의
   const colors = {
-    '출석':   { red: 0.9, green: 0.96, blue: 0.92 },
-    '지각':   { red: 1.0, green: 0.95, blue: 0.88 },
-    '조퇴':   { red: 0.99, green: 0.91, blue: 0.9 },
-    '결석':   { red: 0.94, green: 0.94, blue: 0.94 },
-    '입실누락': { red: 0.93, green: 0.9, blue: 0.98 },
-    '퇴실누락': { red: 0.88, green: 0.94, blue: 1.0 },
-    '퇴실미확인': { red: 1.0, green: 0.92, blue: 0.93 },
+    '출석':     { red: 0.9,  green: 0.96, blue: 0.92 },  // 연초록
+    '지각':     { red: 1.0,  green: 0.95, blue: 0.88 },  // 연주황
+    '조퇴':     { red: 1.0,  green: 0.88, blue: 0.80 },  // 연살몬
+    '결석':     { red: 0.99, green: 0.87, blue: 0.87 },  // 연빨강
+    '입실누락': { red: 0.93, green: 0.9,  blue: 0.98 },  // 연보라
+    '퇴실누락': { red: 0.88, green: 0.94, blue: 1.0  },  // 연파랑
+    '퇴실미확인':{ red: 0.86, green: 0.96, blue: 0.95 }, // 연청록
   };
   const textColors = {
-    '출석':   { red: 0.07, green: 0.45, blue: 0.2 },
-    '지각':   { red: 0.89, green: 0.45, blue: 0.0 },
-    '조퇴':   { red: 0.77, green: 0.13, blue: 0.12 },
-    '결석':   { red: 0.37, green: 0.39, blue: 0.42 },
-    '입실누락': { red: 0.48, green: 0.28, blue: 0.73 },
-    '퇴실누락': { red: 0.1, green: 0.4, blue: 0.7 },
-    '퇴실미확인': { red: 0.8, green: 0.15, blue: 0.2 },
+    '출석':     { red: 0.07, green: 0.45, blue: 0.2  },  // 진초록
+    '지각':     { red: 0.89, green: 0.45, blue: 0.0  },  // 진주황
+    '조퇴':     { red: 0.80, green: 0.25, blue: 0.05 },  // 진살몬
+    '결석':     { red: 0.75, green: 0.05, blue: 0.05 },  // 진빨강
+    '입실누락': { red: 0.48, green: 0.28, blue: 0.73 },  // 진보라
+    '퇴실누락': { red: 0.1,  green: 0.4,  blue: 0.7  },  // 진파랑
+    '퇴실미확인':{ red: 0.05, green: 0.50, blue: 0.45 }, // 진청록
   };
 
   const requests = [];
