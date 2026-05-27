@@ -65,7 +65,8 @@ app.get('/admin', async (req, res) => {
       attendanceCount: attendanceCount.rows[0].cnt,
     }));
   } catch (err) {
-    res.status(500).send(`<html><body style="font-family:sans-serif;padding:40px;"><h1>DB 연결 실패</h1><p>${err.message}</p></body></html>`);
+    res.status(500).send(`<html><body style="font-family:sans-serif;padding:40px;"><h1>DB 연결 실패</h1><p>${err.message}</p></div>
+</body></html>`);
   }
 });
 
@@ -573,41 +574,177 @@ app.post('/api/admin/sync-all', async (req, res) => {
 
 // ─── 공통 CSS ────────────────────────────────────────────────
 const COMMON_CSS = `
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, 'Malgun Gothic', sans-serif; background: #f5f5f7; color: #1d1d1f; }
-  .container { max-width: 1000px; margin: 0 auto; padding: 20px; }
-  .card { background: #fff; border-radius: 16px; padding: 32px 24px; max-width: 400px; width: 100%; margin: 0 auto; text-align: center; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
-  .icon { font-size: 48px; margin-bottom: 16px; }
-  h1 { font-size: 22px; margin-bottom: 8px; }
-  h2 { font-size: 16px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #e5e5e7; }
-  .subtitle { color: #86868b; font-size: 14px; margin-bottom: 24px; }
-  .form-group { margin-bottom: 16px; text-align: left; }
-  .form-group label { display: block; font-size: 13px; color: #86868b; margin-bottom: 6px; }
-  .form-group input { width: 100%; padding: 12px 14px; border: 1.5px solid #d2d2d7; border-radius: 10px; font-size: 16px; outline: none; }
-  .form-group input:focus { border-color: #1a73e8; }
-  .btn { display: inline-block; width: 100%; padding: 14px; background: #1a73e8; color: #fff; border: none; border-radius: 10px; font-size: 16px; font-weight: 600; cursor: pointer; }
-  .btn:hover { background: #1557b0; }
-  .btn:disabled { background: #d2d2d7; cursor: not-allowed; }
-  .btn-outline { background: #fff; color: #1a73e8; border: 1.5px solid #1a73e8; }
-  .msg { padding: 12px; border-radius: 10px; font-size: 14px; margin: 16px 0; line-height: 1.5; }
-  .msg-success { background: #e6f4ea; color: #137333; }
-  .msg-error { background: #fce8e6; color: #c5221f; }
-  .msg-info { background: #e8f0fe; color: #1a73e8; }
-  .student-name { font-size: 20px; font-weight: 700; margin: 12px 0 4px; }
-  .student-phone { font-size: 14px; color: #86868b; margin-bottom: 20px; }
-  .step { display: none; }
-  .step.active { display: block; }
-  .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
+/* ─── 연세대학교 출결 시스템 UI ─── */
+:root {
+  --yonsei-blue:  #003876;
+  --yonsei-blue2: #1a5299;
+  --yonsei-dark:  #1d1d1f;
+  --yonsei-gray:  #656668;
+  --yonsei-light: #f0f2f5;
+  --yonsei-gold:  #b59a5c;
+  --radius: 14px;
+  --shadow: 0 4px 20px rgba(0,56,118,0.10);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Pretendard', -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+  background: var(--yonsei-light);
+  color: var(--yonsei-dark);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 헤더 */
+.yonsei-header {
+  background: var(--yonsei-blue);
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+.yonsei-header img.sym {
+  width: 32px; height: 32px; opacity: 0.95;
+}
+.yonsei-header img.txt {
+  height: 18px; opacity: 0.95;
+}
+.yonsei-header .sub-title {
+  margin-left: auto;
+  font-size: 13px;
+  color: rgba(255,255,255,0.75);
+  font-weight: 400;
+}
+
+/* 카드 */
+.card {
+  background: #fff;
+  border-radius: var(--radius);
+  padding: 28px 24px;
+  box-shadow: var(--shadow);
+  width: 100%;
+  max-width: 420px;
+  text-align: center;
+}
+h1 {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--yonsei-blue);
+  letter-spacing: -0.3px;
+}
+.subtitle {
+  font-size: 14px;
+  color: var(--yonsei-gray);
+  line-height: 1.6;
+  margin-top: 6px;
+}
+.student-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--yonsei-blue);
+}
+
+/* 버튼 */
+.btn {
+  display: block;
+  width: 100%;
+  padding: 15px 20px;
+  background: var(--yonsei-blue);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  margin-top: 14px;
+  letter-spacing: 0.2px;
+}
+.btn:hover { background: var(--yonsei-blue2); }
+.btn:active { transform: scale(0.98); }
+.btn:disabled { background: #b0bec5; cursor: not-allowed; }
+.btn-outline {
+  background: transparent;
+  border: 1.5px solid var(--yonsei-blue);
+  color: var(--yonsei-blue);
+}
+.btn-outline:hover { background: rgba(0,56,118,0.05); }
+
+/* 폼 */
+.form-group { text-align: left; margin-top: 16px; }
+.form-group label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--yonsei-gray);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.form-group input {
+  width: 100%;
+  padding: 13px 16px;
+  border: 1.5px solid #dde2e8;
+  border-radius: 10px;
+  font-size: 17px;
+  font-weight: 600;
+  text-align: center;
+  letter-spacing: 2px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.form-group input:focus { border-color: var(--yonsei-blue); }
+
+/* 메시지 */
+.msg { padding: 12px 16px; border-radius: 8px; font-size: 14px; margin-top: 10px; text-align: left; }
+.msg-error { background: #fff0f0; color: #c0392b; border-left: 3px solid #e74c3c; }
+.msg-success { background: #f0faf4; color: #1a7a42; border-left: 3px solid #27ae60; }
+.msg-info { background: #f0f5ff; color: var(--yonsei-blue); border-left: 3px solid var(--yonsei-blue); }
+
+/* 스텝 */
+.step { display: none; }
+.step.active { display: block; }
+
+/* 아이콘 */
+.icon { font-size: 44px; margin-bottom: 10px; }
+
+/* 스피너 */
+.spinner {
+  display: inline-block; width: 16px; height: 16px;
+  border: 2px solid rgba(255,255,255,0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  margin-right: 8px; vertical-align: middle;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 체크인 상태 배지 */
+.status-badge {
+  display: inline-block;
+  padding: 6px 16px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.status-in { background: #e8f5e9; color: #2e7d32; }
+.status-out { background: #e3f2fd; color: #1565c0; }
+.status-none { background: #f5f5f5; color: #757575; }
 `;
 
 // ─── 에러 페이지 ─────────────────────────────────────────────
 function renderErrorPage(message) {
   return `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>오류</title>
   <style>${COMMON_CSS}</style></head>
-  <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;">
+  <body style="min-height:100vh;background:var(--yonsei-light);">
+  <div class="yonsei-header">
+    <img class="sym" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADWElEQVR4nNWaTWtUVxjHf8+ZECLtortubBE0FqpFq11oQfFLxJY24MJ160JFycKFBVf9AOrOhRv9EtJCRYT4QlIXFiwkWbgKFEkTZ+b+XTznOIfLzctkZjL3/mG4M3funPP7nzmvzzlGn5IUADOzbnbvG+AscBo4AuwHPgMm4iNdYBVYBhaBx8CfZvYyS6MFyMyKfpl2Cm4xk/T5S0lXJf0laV39a13SE0nXJB3IjUiyYcOH7P0hSbcl/VcC6krqxGtRAVyUnsn1TtJdSV9V5Tko/ES8Tkq6UQJvbwG8nZKhdsnIb5L25XkPA/64pKcl8N1Ab2UmN/JM0smBTGTwP8SSGQX4VkbWJM3uykQGfylLvDNC8LLyvK70ZSKD/yVLbJSlvpkK9Yxc3pEJxW5S0kz84airzHbKq9RPOWOSZfDBzApJXwNPgan41XC6s91LQAF0gFNm9jyxQjQgHzhCfD0BvsVHz1ZlknuvxLIIfAe0gcLMPg4WIU4NruLwHeoDD87Swacpc5E1AJh8xBM+f3kF7MP/meEO54MrVaU2buQNYAEvfQHXgE/iQ3WDB2cS3jbnIrOlNvA58A9uID1cRyle14FpM1tJbeBH4FO8sdQVHpyti1fzWeh1kedxd3WGT0pVaUZSMEnTwEu8bjXFBMB74ETAV1JT1LfxVqkLTALnAr4MhF4DaZK+D8DR+KEppQ891iMB+KJ0swlKrPtN0hreLTVRXZPUxLr/UeOeKg+sAPw/bogB1A14xAya1Y0m1tUALJVuNkGJdTkAC6WbTVBiXQx4oBWaNQ4kPQ7AH/j8Oq3MmqAWvjJ7FMzsNTBPb8lWd3Vx1hfAqzQOPKA3z6670pT/oZkVzV9SSpows7fAPXpLtroqLXnvm9mKpFbTwioCNvCwyr+ApRBdMLMl4BbeG9XxX0jBrN/N7A3OXDQttLiAhxY75KHFGCSSmbXxcMUaXoXq0K2mXmcDmDWzDZxVkE2nY2S6ZWZ/AxfidwXj7VpFr+pcNLMXkXHzglWTNzgqTPyaJTiuLab+4CtMjHOT7+ddwVeYOKa93Wad16DbrBUm9mqj+6akqaHAZybyowYHNZqjBnckHa7Kc1gmRnXY47oGOOzR93xHmx+3OYPHWY+yh8dtPgAZWhM2yTz5FAAAAABJRU5ErkJggg==" alt="연세">
+    <img class="txt" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAW0AAAAgCAYAAADZsCkkAAAAj0lEQVR4nO3UQQ0AIBDAMMC/58MCP7KkVbDX9szMAiDh/A4A4J1pA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QMgFUisEPDdUbosAAAAASUVORK5CYII=" alt="연세대학교">
+    <span class="sub-title">출결 관리 시스템</span>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:center;padding:28px 20px;">
     <div class="card"><div class="icon">❌</div><h1>스캔 실패</h1><p style="color:#86868b;margin-top:12px;">${message}</p></div>
-  </body></html>`;
+  </div>
+</body></html>`;
 }
 
 
@@ -623,7 +760,13 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
   <style>${COMMON_CSS}</style>
   <script src="https://unpkg.com/@simplewebauthn/browser@11/dist/bundle/index.umd.min.js"></script>
   </head>
-  <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;">
+  <body style="min-height:100vh;background:var(--yonsei-light);">
+  <div class="yonsei-header">
+    <img class="sym" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADWElEQVR4nNWaTWtUVxjHf8+ZECLtortubBE0FqpFq11oQfFLxJY24MJ160JFycKFBVf9AOrOhRv9EtJCRYT4QlIXFiwkWbgKFEkTZ+b+XTznOIfLzctkZjL3/mG4M3funPP7nzmvzzlGn5IUADOzbnbvG+AscBo4AuwHPgMm4iNdYBVYBhaBx8CfZvYyS6MFyMyKfpl2Cm4xk/T5S0lXJf0laV39a13SE0nXJB3IjUiyYcOH7P0hSbcl/VcC6krqxGtRAVyUnsn1TtJdSV9V5Tko/ES8Tkq6UQJvbwG8nZKhdsnIb5L25XkPA/64pKcl8N1Ab2UmN/JM0smBTGTwP8SSGQX4VkbWJM3uykQGfylLvDNC8LLyvK70ZSKD/yVLbJSlvpkK9Yxc3pEJxW5S0kz84airzHbKq9RPOWOSZfDBzApJXwNPgan41XC6s91LQAF0gFNm9jyxQjQgHzhCfD0BvsVHz1ZlknuvxLIIfAe0gcLMPg4WIU4NruLwHeoDD87Swacpc5E1AJh8xBM+f3kF7MP/meEO54MrVaU2buQNYAEvfQHXgE/iQ3WDB2cS3jbnIrOlNvA58A9uID1cRyle14FpM1tJbeBH4FO8sdQVHpyti1fzWeh1kedxd3WGT0pVaUZSMEnTwEu8bjXFBMB74ETAV1JT1LfxVqkLTALnAr4MhF4DaZK+D8DR+KEppQ891iMB+KJ0swlKrPtN0hreLTVRXZPUxLr/UeOeKg+sAPw/bogB1A14xAya1Y0m1tUALJVuNkGJdTkAC6WbTVBiXQx4oBWaNQ4kPQ7AH/j8Oq3MmqAWvjJ7FMzsNTBPb8lWd3Vx1hfAqzQOPKA3z6670pT/oZkVzV9SSpows7fAPXpLtroqLXnvm9mKpFbTwioCNvCwyr+ApRBdMLMl4BbeG9XxX0jBrN/N7A3OXDQttLiAhxY75KHFGCSSmbXxcMUaXoXq0K2mXmcDmDWzDZxVkE2nY2S6ZWZ/AxfidwXj7VpFr+pcNLMXkXHzglWTNzgqTPyaJTiuLab+4CtMjHOT7+ddwVeYOKa93Wad16DbrBUm9mqj+6akqaHAZybyowYHNZqjBnckHa7Kc1gmRnXY47oGOOzR93xHmx+3OYPHWY+yh8dtPgAZWhM2yTz5FAAAAABJRU5ErkJggg==" alt="연세">
+    <img class="txt" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAW0AAAAgCAYAAADZsCkkAAAAj0lEQVR4nO3UQQ0AIBDAMMC/58MCP7KkVbDX9szMAiDh/A4A4J1pA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QMgFUisEPDdUbosAAAAASUVORK5CYII=" alt="연세대학교">
+    <span class="sub-title">출결 관리 시스템</span>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:center;padding:28px 20px;">
     <div class="card">
 
       <!-- Step 0: 패스키 직접 인증 (기본) -->
@@ -983,7 +1126,8 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
         } catch (e) { console.log('Push 등록 스킵:', e.message); }
       }
     </script>
-  </body></html>`;
+  </div>
+</body></html>`;
 }
 
 
@@ -994,7 +1138,13 @@ function renderRegisterPage(token, studentId, studentName) {
   <style>${COMMON_CSS}</style>
   <script src="https://unpkg.com/@simplewebauthn/browser@11/dist/bundle/index.umd.min.js"></script>
   </head>
-  <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;">
+  <body style="min-height:100vh;background:var(--yonsei-light);">
+  <div class="yonsei-header">
+    <img class="sym" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADWElEQVR4nNWaTWtUVxjHf8+ZECLtortubBE0FqpFq11oQfFLxJY24MJ160JFycKFBVf9AOrOhRv9EtJCRYT4QlIXFiwkWbgKFEkTZ+b+XTznOIfLzctkZjL3/mG4M3funPP7nzmvzzlGn5IUADOzbnbvG+AscBo4AuwHPgMm4iNdYBVYBhaBx8CfZvYyS6MFyMyKfpl2Cm4xk/T5S0lXJf0laV39a13SE0nXJB3IjUiyYcOH7P0hSbcl/VcC6krqxGtRAVyUnsn1TtJdSV9V5Tko/ES8Tkq6UQJvbwG8nZKhdsnIb5L25XkPA/64pKcl8N1Ab2UmN/JM0smBTGTwP8SSGQX4VkbWJM3uykQGfylLvDNC8LLyvK70ZSKD/yVLbJSlvpkK9Yxc3pEJxW5S0kz84airzHbKq9RPOWOSZfDBzApJXwNPgan41XC6s91LQAF0gFNm9jyxQjQgHzhCfD0BvsVHz1ZlknuvxLIIfAe0gcLMPg4WIU4NruLwHeoDD87Swacpc5E1AJh8xBM+f3kF7MP/meEO54MrVaU2buQNYAEvfQHXgE/iQ3WDB2cS3jbnIrOlNvA58A9uID1cRyle14FpM1tJbeBH4FO8sdQVHpyti1fzWeh1kedxd3WGT0pVaUZSMEnTwEu8bjXFBMB74ETAV1JT1LfxVqkLTALnAr4MhF4DaZK+D8DR+KEppQ891iMB+KJ0swlKrPtN0hreLTVRXZPUxLr/UeOeKg+sAPw/bogB1A14xAya1Y0m1tUALJVuNkGJdTkAC6WbTVBiXQx4oBWaNQ4kPQ7AH/j8Oq3MmqAWvjJ7FMzsNTBPb8lWd3Vx1hfAqzQOPKA3z6670pT/oZkVzV9SSpows7fAPXpLtroqLXnvm9mKpFbTwioCNvCwyr+ApRBdMLMl4BbeG9XxX0jBrN/N7A3OXDQttLiAhxY75KHFGCSSmbXxcMUaXoXq0K2mXmcDmDWzDZxVkE2nY2S6ZWZ/AxfidwXj7VpFr+pcNLMXkXHzglWTNzgqTPyaJTiuLab+4CtMjHOT7+ddwVeYOKa93Wad16DbrBUm9mqj+6akqaHAZybyowYHNZqjBnckHa7Kc1gmRnXY47oGOOzR93xHmx+3OYPHWY+yh8dtPgAZWhM2yTz5FAAAAABJRU5ErkJggg==" alt="연세">
+    <img class="txt" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAW0AAAAgCAYAAADZsCkkAAAAj0lEQVR4nO3UQQ0AIBDAMMC/58MCP7KkVbDX9szMAiDh/A4A4J1pA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QMgFUisEPDdUbosAAAAASUVORK5CYII=" alt="연세대학교">
+    <span class="sub-title">출결 관리 시스템</span>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:center;padding:28px 20px;">
     <div class="card">
 
       <div id="step1" class="step active">
@@ -1072,7 +1222,8 @@ function renderRegisterPage(token, studentId, studentName) {
         }
       }
     </script>
-  </body></html>`;
+  </div>
+</body></html>`;
 }
 
 // ─── 등록 페이지 (공용 입구 - 전화번호 입력) ────────────────
@@ -1081,7 +1232,13 @@ function renderRegisterPhonePage() {
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>생체인증 등록</title><style>${COMMON_CSS}</style>
   </head>
-  <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;">
+  <body style="min-height:100vh;background:var(--yonsei-light);">
+  <div class="yonsei-header">
+    <img class="sym" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADWElEQVR4nNWaTWtUVxjHf8+ZECLtortubBE0FqpFq11oQfFLxJY24MJ160JFycKFBVf9AOrOhRv9EtJCRYT4QlIXFiwkWbgKFEkTZ+b+XTznOIfLzctkZjL3/mG4M3funPP7nzmvzzlGn5IUADOzbnbvG+AscBo4AuwHPgMm4iNdYBVYBhaBx8CfZvYyS6MFyMyKfpl2Cm4xk/T5S0lXJf0laV39a13SE0nXJB3IjUiyYcOH7P0hSbcl/VcC6krqxGtRAVyUnsn1TtJdSV9V5Tko/ES8Tkq6UQJvbwG8nZKhdsnIb5L25XkPA/64pKcl8N1Ab2UmN/JM0smBTGTwP8SSGQX4VkbWJM3uykQGfylLvDNC8LLyvK70ZSKD/yVLbJSlvpkK9Yxc3pEJxW5S0kz84airzHbKq9RPOWOSZfDBzApJXwNPgan41XC6s91LQAF0gFNm9jyxQjQgHzhCfD0BvsVHz1ZlknuvxLIIfAe0gcLMPg4WIU4NruLwHeoDD87Swacpc5E1AJh8xBM+f3kF7MP/meEO54MrVaU2buQNYAEvfQHXgE/iQ3WDB2cS3jbnIrOlNvA58A9uID1cRyle14FpM1tJbeBH4FO8sdQVHpyti1fzWeh1kedxd3WGT0pVaUZSMEnTwEu8bjXFBMB74ETAV1JT1LfxVqkLTALnAr4MhF4DaZK+D8DR+KEppQ891iMB+KJ0swlKrPtN0hreLTVRXZPUxLr/UeOeKg+sAPw/bogB1A14xAya1Y0m1tUALJVuNkGJdTkAC6WbTVBiXQx4oBWaNQ4kPQ7AH/j8Oq3MmqAWvjJ7FMzsNTBPb8lWd3Vx1hfAqzQOPKA3z6670pT/oZkVzV9SSpows7fAPXpLtroqLXnvm9mKpFbTwioCNvCwyr+ApRBdMLMl4BbeG9XxX0jBrN/N7A3OXDQttLiAhxY75KHFGCSSmbXxcMUaXoXq0K2mXmcDmDWzDZxVkE2nY2S6ZWZ/AxfidwXj7VpFr+pcNLMXkXHzglWTNzgqTPyaJTiuLab+4CtMjHOT7+ddwVeYOKa93Wad16DbrBUm9mqj+6akqaHAZybyowYHNZqjBnckHa7Kc1gmRnXY47oGOOzR93xHmx+3OYPHWY+yh8dtPgAZWhM2yTz5FAAAAABJRU5ErkJggg==" alt="연세">
+    <img class="txt" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAW0AAAAgCAYAAADZsCkkAAAAj0lEQVR4nO3UQQ0AIBDAMMC/58MCP7KkVbDX9szMAiDh/A4A4J1pA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QMgFUisEPDdUbosAAAAASUVORK5CYII=" alt="연세대학교">
+    <span class="sub-title">출결 관리 시스템</span>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:center;padding:28px 20px;">
   <div class="card">
 
     <div id="step1" class="step active">
@@ -1135,20 +1292,28 @@ function renderRegisterPhonePage() {
     document.getElementById('phoneInput').addEventListener('keypress', e => { if (e.key === 'Enter') doLookup(); });
     document.getElementById('phoneInput').focus();
   </script>
-  </body></html>`;
+  </div>
+</body></html>`;
 }
 
 // ─── 등록 페이지 (토큰 만료 시) ─────────────────────────────
 function renderRegisterExpiredPage() {
   return `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>링크 만료</title><style>${COMMON_CSS}</style></head>
-  <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;">
+  <body style="min-height:100vh;background:var(--yonsei-light);">
+  <div class="yonsei-header">
+    <img class="sym" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADWElEQVR4nNWaTWtUVxjHf8+ZECLtortubBE0FqpFq11oQfFLxJY24MJ160JFycKFBVf9AOrOhRv9EtJCRYT4QlIXFiwkWbgKFEkTZ+b+XTznOIfLzctkZjL3/mG4M3funPP7nzmvzzlGn5IUADOzbnbvG+AscBo4AuwHPgMm4iNdYBVYBhaBx8CfZvYyS6MFyMyKfpl2Cm4xk/T5S0lXJf0laV39a13SE0nXJB3IjUiyYcOH7P0hSbcl/VcC6krqxGtRAVyUnsn1TtJdSV9V5Tko/ES8Tkq6UQJvbwG8nZKhdsnIb5L25XkPA/64pKcl8N1Ab2UmN/JM0smBTGTwP8SSGQX4VkbWJM3uykQGfylLvDNC8LLyvK70ZSKD/yVLbJSlvpkK9Yxc3pEJxW5S0kz84airzHbKq9RPOWOSZfDBzApJXwNPgan41XC6s91LQAF0gFNm9jyxQjQgHzhCfD0BvsVHz1ZlknuvxLIIfAe0gcLMPg4WIU4NruLwHeoDD87Swacpc5E1AJh8xBM+f3kF7MP/meEO54MrVaU2buQNYAEvfQHXgE/iQ3WDB2cS3jbnIrOlNvA58A9uID1cRyle14FpM1tJbeBH4FO8sdQVHpyti1fzWeh1kedxd3WGT0pVaUZSMEnTwEu8bjXFBMB74ETAV1JT1LfxVqkLTALnAr4MhF4DaZK+D8DR+KEppQ891iMB+KJ0swlKrPtN0hreLTVRXZPUxLr/UeOeKg+sAPw/bogB1A14xAya1Y0m1tUALJVuNkGJdTkAC6WbTVBiXQx4oBWaNQ4kPQ7AH/j8Oq3MmqAWvjJ7FMzsNTBPb8lWd3Vx1hfAqzQOPKA3z6670pT/oZkVzV9SSpows7fAPXpLtroqLXnvm9mKpFbTwioCNvCwyr+ApRBdMLMl4BbeG9XxX0jBrN/N7A3OXDQttLiAhxY75KHFGCSSmbXxcMUaXoXq0K2mXmcDmDWzDZxVkE2nY2S6ZWZ/AxfidwXj7VpFr+pcNLMXkXHzglWTNzgqTPyaJTiuLab+4CtMjHOT7+ddwVeYOKa93Wad16DbrBUm9mqj+6akqaHAZybyowYHNZqjBnckHa7Kc1gmRnXY47oGOOzR93xHmx+3OYPHWY+yh8dtPgAZWhM2yTz5FAAAAABJRU5ErkJggg==" alt="연세">
+    <img class="txt" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAW0AAAAgCAYAAADZsCkkAAAAj0lEQVR4nO3UQQ0AIBDAMMC/58MCP7KkVbDX9szMAiDh/A4A4J1pA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QMgFUisEPDdUbosAAAAASUVORK5CYII=" alt="연세대학교">
+    <span class="sub-title">출결 관리 시스템</span>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:center;padding:28px 20px;">
     <div class="card">
       <div class="icon">⏰</div>
       <h1>등록 링크가 만료되었습니다</h1>
       <p class="subtitle" style="margin-top:8px;">링크는 발급 후 24시간만 유효합니다.<br>담당자에게 새 링크를 요청하세요.</p>
     </div>
-  </body></html>`;
+  </div>
+</body></html>`;
 }
 
 
@@ -1178,7 +1343,13 @@ function renderAppPage() {
     .install-guide { background:#fff3e0; border-radius:10px; padding:14px 18px; margin-top:16px; font-size:13px; color:#e65100; line-height:1.8; }
   </style>
   </head>
-  <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;">
+  <body style="min-height:100vh;background:var(--yonsei-light);">
+  <div class="yonsei-header">
+    <img class="sym" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADWElEQVR4nNWaTWtUVxjHf8+ZECLtortubBE0FqpFq11oQfFLxJY24MJ160JFycKFBVf9AOrOhRv9EtJCRYT4QlIXFiwkWbgKFEkTZ+b+XTznOIfLzctkZjL3/mG4M3funPP7nzmvzzlGn5IUADOzbnbvG+AscBo4AuwHPgMm4iNdYBVYBhaBx8CfZvYyS6MFyMyKfpl2Cm4xk/T5S0lXJf0laV39a13SE0nXJB3IjUiyYcOH7P0hSbcl/VcC6krqxGtRAVyUnsn1TtJdSV9V5Tko/ES8Tkq6UQJvbwG8nZKhdsnIb5L25XkPA/64pKcl8N1Ab2UmN/JM0smBTGTwP8SSGQX4VkbWJM3uykQGfylLvDNC8LLyvK70ZSKD/yVLbJSlvpkK9Yxc3pEJxW5S0kz84airzHbKq9RPOWOSZfDBzApJXwNPgan41XC6s91LQAF0gFNm9jyxQjQgHzhCfD0BvsVHz1ZlknuvxLIIfAe0gcLMPg4WIU4NruLwHeoDD87Swacpc5E1AJh8xBM+f3kF7MP/meEO54MrVaU2buQNYAEvfQHXgE/iQ3WDB2cS3jbnIrOlNvA58A9uID1cRyle14FpM1tJbeBH4FO8sdQVHpyti1fzWeh1kedxd3WGT0pVaUZSMEnTwEu8bjXFBMB74ETAV1JT1LfxVqkLTALnAr4MhF4DaZK+D8DR+KEppQ891iMB+KJ0swlKrPtN0hreLTVRXZPUxLr/UeOeKg+sAPw/bogB1A14xAya1Y0m1tUALJVuNkGJdTkAC6WbTVBiXQx4oBWaNQ4kPQ7AH/j8Oq3MmqAWvjJ7FMzsNTBPb8lWd3Vx1hfAqzQOPKA3z6670pT/oZkVzV9SSpows7fAPXpLtroqLXnvm9mKpFbTwioCNvCwyr+ApRBdMLMl4BbeG9XxX0jBrN/N7A3OXDQttLiAhxY75KHFGCSSmbXxcMUaXoXq0K2mXmcDmDWzDZxVkE2nY2S6ZWZ/AxfidwXj7VpFr+pcNLMXkXHzglWTNzgqTPyaJTiuLab+4CtMjHOT7+ddwVeYOKa93Wad16DbrBUm9mqj+6akqaHAZybyowYHNZqjBnckHa7Kc1gmRnXY47oGOOzR93xHmx+3OYPHWY+yh8dtPgAZWhM2yTz5FAAAAABJRU5ErkJggg==" alt="연세">
+    <img class="txt" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAW0AAAAgCAYAAADZsCkkAAAAj0lEQVR4nO3UQQ0AIBDAMMC/58MCP7KkVbDX9szMAiDh/A4A4J1pA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QIhpA4SYNkCIaQOEmDZAiGkDhJg2QMgFUisEPDdUbosAAAAASUVORK5CYII=" alt="연세대학교">
+    <span class="sub-title">출결 관리 시스템</span>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:center;padding:28px 20px;">
     <div class="card" style="max-width:420px;">
 
       <!-- Step 1: 전화번호 입력 -->
@@ -1528,7 +1699,8 @@ function renderAppPage() {
       document.getElementById('phoneInput').addEventListener('keypress', function(e) { if (e.key === 'Enter') appLogin(); });
       document.getElementById('phoneInput').focus();
     </script>
-  </body></html>`;
+  </div>
+</body></html>`;
 }
 
 
@@ -1621,7 +1793,8 @@ function renderAdminPage(data) {
     <div class="card"><h2>🏫 교육과정</h2>
       <table><tr><th>과정명</th><th>약칭</th><th>종류</th><th>기수</th><th>강의실</th></tr>${courseRows}</table>
     </div>
-  </div></body></html>`;
+  </div></div>
+</body></html>`;
 }
 
 
@@ -1666,7 +1839,8 @@ function renderQRPage(classroom, baseUrl) {
       refresh();setInterval(tick,1000);setInterval(refresh,55000);
       async function wl(){try{if('wakeLock' in navigator)await navigator.wakeLock.request('screen');}catch(e){}}wl();document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')wl();});
     </script>
-  </body></html>`;
+  </div>
+</body></html>`;
 }
 
 
