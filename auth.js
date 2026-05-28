@@ -47,7 +47,7 @@ async function createRegistrationOptions(req, studentId, studentName) {
     attestationType: 'none',
     authenticatorSelection: {
       authenticatorAttachment: 'platform',      // 기기 내장 생체인증만 (USB키 등 제외)
-      userVerification: 'required',             // 반드시 생체인증 수행
+      userVerification: 'preferred',            // 생체인증 우선, 없으면 패스코드 허용
       residentKey: 'required',
     },
     // excludeCredentials 제거: 재등록 허용 (기존 크레덴셜은 검증 시 삭제됨)
@@ -170,7 +170,7 @@ async function createAuthenticationOptions(req, studentId) {
 
   const options = await generateAuthenticationOptions({
     rpID: rp.rpID,
-    userVerification: 'required',
+    userVerification: 'preferred',
     allowCredentials,
   });
 
@@ -281,7 +281,7 @@ async function createPasskeyAuthOptions(req, studentId, discoverable) {
 
   const options = await generateAuthenticationOptions({
     rpID: rp.rpID,
-    userVerification: 'required',
+    userVerification: 'preferred',
     ...(allowCredentials ? { allowCredentials } : {}),
   });
 
