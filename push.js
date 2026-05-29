@@ -198,11 +198,43 @@ async function sendMissedExitAlerts() {
 }
 
 
-// ─── 스케줄러 시작 (1분마다 체크) ────────────────────────────
+// ─── 스케줄러 운영 시간 설정 ─────────────────────────────────
+// 요일별 가동 시간 (KST 기준)
+// - 키: 0=일, 1=월, 2=화, 3=수, 4=목, 5=금, 6=토
+// - 값: { start, end } 또는 null (미가동)
+//
+// ── 현재 설정: 월화목 8~19시, 수금 8~22시, 주말 미가동 ──
+const SCHEDULE = {
+  0: null,                    // 일요일: 미가동
+  1: { start: 8, end: 19 },  // 월요일: 08:00 ~ 19:00
+  2: { start: 8, end: 19 },  // 화요일: 08:00 ~ 19:00
+  3: { start: 8, end: 22 },  // 수요일: 08:00 ~ 22:00
+  4: { start: 8, end: 19 },  // 목요일: 08:00 ~ 19:00
+  5: { start: 8, end: 22 },  // 금요일: 08:00 ~ 22:00
+  6: null,                    // 토요일: 미가동
+};
+
+function isWithinScheduleHours() {
+  const nowKST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+  const day = nowKST.getDay();    // 0~6
+  const hour = nowKST.getHours();
+  const slot = SCHEDULE[day];
+  if (!slot) return false;
+  return hour >= slot.start && hour < slot.end;
+}
+
+// ─── 스케줄러 시작 ───────────────────────────────────────────
 function startScheduler() {
-  console.log('[Scheduler] 퇴실 리마인더 스케줄러 시작 (2분 간격)');
+  const days = ['일','월','화','수','목','금','토'];
+  const desc = Object.entries(SCHEDULE)
+    .filter(([, v]) => v)
+    .map(([k, v]) => `${days[k]} ${v.start}~${v.end}시`)
+    .join(', ');
+  console.log(`[Scheduler] 퇴실 리마인더 스케줄러 시작 (2분 간격, ${desc})`);
 
   setInterval(async () => {
+    if (!isWithinScheduleHours()) return;
+
     try {
       const reminders = await sendExitReminders();
       if (reminders.sent > 0) {
