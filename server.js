@@ -665,6 +665,7 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
         <div class="icon">🔐</div>
         <h1>생체인증 등록 필요</h1>
         <p class="subtitle">처음 사용하시는 분은 생체인증을 등록해야 합니다.</p>
+        <div id="deviceWarning" style="display:none;"></div>
         <button class="btn" id="regBtn" onclick="registerBiometric()">지문 / Face ID 등록하기</button>
         <div id="regMsg"></div>
       </div>
@@ -846,8 +847,8 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
             // 이미 등록됨 → 인증 단계로
             showStep(2);
           } else {
-            // 미등록 → 등록 안내
-            showStep(3);
+            // 미등록 → 기기 호환성 체크 후 등록 안내
+            checkDeviceAndShowStep3();
           }
         } catch (err) {
           msgEl.innerHTML = '<div class="msg msg-error">서버 오류: ' + err.message + '</div>';
@@ -901,6 +902,36 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
         }
       }
 
+      // ─── 기기 호환성 체크 후 등록 안내 ─────────────────────
+      async function checkDeviceAndShowStep3() {
+        showStep(3);
+        const warnEl = document.getElementById('deviceWarning');
+        const regBtn = document.getElementById('regBtn');
+
+        try {
+          if (window.PublicKeyCredential && PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
+            const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+            if (!available) {
+              warnEl.style.display = 'block';
+              warnEl.innerHTML = '<div class="msg msg-error" style="text-align:left;line-height:1.6;">'
+                + '⚠️ 이 기기에서 생체인증을 사용할 수 없습니다.<br><br>'
+                + '<b>iPhone</b>: 설정 → Face ID 및 암호(또는 Touch ID 및 암호) → Face ID/Touch ID 등록 후 다시 시도해주세요.<br>'
+                + '<b>Android</b>: 설정 → 보안 → 지문/얼굴 등록 후 다시 시도해주세요.'
+                + '</div>';
+              regBtn.disabled = true;
+              regBtn.textContent = '생체인증 설정 필요';
+              regBtn.style.opacity = '0.5';
+              return;
+            }
+          }
+        } catch (e) { /* 체크 실패 시 등록 시도 허용 */ }
+
+        warnEl.style.display = 'none';
+        regBtn.disabled = false;
+        regBtn.textContent = '지문 / Face ID 등록하기';
+        regBtn.style.opacity = '1';
+      }
+
       // ─── 3. 생체인증 등록 ───────────────────────────────
       async function registerBiometric() {
         const btn = document.getElementById('regBtn');
@@ -945,9 +976,8 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
           const verifyData = await verifyRes.json();
 
           if (verifyData.verified) {
-            currentRegToken = null; // 토큰 소멸
+            currentRegToken = null;
             msgEl.innerHTML = '<div class="msg msg-success">✅ 등록 완료! 이제 출결 인증을 진행합니다.</div>';
-            // 1.5초 후 인증 단계로
             setTimeout(() => {
               document.getElementById('studentName').textContent = currentStudentName + '님';
               showStep(2);
@@ -956,10 +986,18 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
             throw new Error(verifyData.error || '등록 실패');
           }
         } catch (err) {
-          const msg = err.name === 'NotAllowedError' ? '생체인증 등록이 취소되었습니다. 다시 시도해주세요.'
-            : err.name === 'InvalidStateError' ? '이 기기에서 이미 등록되어 있습니다.'
-            : err.message || '등록 중 오류가 발생했습니다.';
-          msgEl.innerHTML = '<div class="msg msg-error">' + msg + '</div>';
+          let msg;
+          if (err.name === 'NotAllowedError') {
+            msg = '이 기기에서 생체인증을 등록할 수 없습니다.<br><br>'
+              + '<b>iPhone</b>: 설정 → Face ID 및 암호(또는 Touch ID 및 암호)에서 Face ID/Touch ID를 등록해주세요.<br>'
+              + '<b>Android</b>: 설정 → 보안에서 지문 또는 얼굴 인식을 등록해주세요.<br><br>'
+              + '설정 완료 후 다시 시도해주세요.';
+          } else if (err.name === 'InvalidStateError') {
+            msg = '이 기기에서 이미 등록되어 있습니다.';
+          } else {
+            msg = err.message || '등록 중 오류가 발생했습니다.';
+          }
+          msgEl.innerHTML = '<div class="msg msg-error" style="text-align:left;line-height:1.6;">' + msg + '</div>';
         } finally {
           btn.disabled = false;
           btn.textContent = '지문 / Face ID 등록하기';
