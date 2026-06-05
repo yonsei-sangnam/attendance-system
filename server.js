@@ -1704,6 +1704,16 @@ app.post('/api/push/subscribe', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// FCM 토큰 등록 (TWA 앱 전용)
+app.post('/api/push/fcm-token', async (req, res) => {
+  try {
+    const { studentId, fcmToken } = req.body;
+    if (!studentId || !fcmToken) return res.status(400).json({ error: '필수 정보 누락' });
+    await push.saveFcmToken(studentId, fcmToken);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // 푸시 구독 해제
 app.post('/api/push/unsubscribe', async (req, res) => {
   try {
