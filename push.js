@@ -1,5 +1,29 @@
 const webpush = require('web-push');
+const admin = require('firebase-admin');
 const db = require('./db');
+
+// ─── Firebase Admin 초기화 ───────────────────────────────────
+let fcmEnabled = false;
+
+function initFirebase() {
+  try {
+    const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+    if (!raw) {
+      console.warn('[FCM] FIREBASE_SERVICE_ACCOUNT 환경변수 없음. FCM 비활성.');
+      return;
+    }
+
+    const serviceAccount = JSON.parse(raw);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    });
+
+    fcmEnabled = true;
+    console.log('[FCM] Firebase Admin 초기화 완료. FCM 활성.');
+  } catch (err) {
+    console.error('[FCM] Firebase Admin 초기화 실패:', err.message);
+  }
+}
 
 // ─── VAPID 설정 ──────────────────────────────────────────────
 function initPush() {
@@ -18,14 +42,18 @@ function initPush() {
   );
 
   console.log('[Push] VAPID 설정 완료. 푸시 알림 활성.');
+
+  // Firebase도 함께 초기화
+  initFirebase();
+
   return true;
 }
 
-// ─── 구독 저장 ───────────────────────────────────────────────
+// ─── Web Push 구독 저장 (기존과 동일) ────────────────────────
 async function saveSubscription(studentId, subscription) {
   await db.query(`
-    INSERT INTO push_subscriptions (student_id, endpoint, keys_p256dh, keys_auth)
-    VALUES ($1, $2, $3, $4)
+    INSERT INTO push_subscriptions (student_id, endpoint, keys_p256dh, keys_auth, type)
+    VALUES ($1, $2, $3, $4, 'webpush')
     ON CONFLICT (student_id, endpoint) DO UPDATE SET
       keys_p256dh = EXCLUDED.keys_p256dh,
       keys_auth = EXCLUDED.keys_auth,
@@ -38,46 +66,115 @@ async function saveSubscription(studentId, subscription) {
   ]);
 }
 
+// ─── FCM 토큰 저장 (신규) ───────────────────────────────────
+async function saveFcmToken(studentId, fcmToken) {
+  await db.query(`
+    INSERT INTO push_subscriptions (student_id, fcm_token, type)
+    VALUES ($1, $2, 'fcm')
+    ON CONFLICT (student_id, endpoint)
+      DO NOTHING
+  `, [studentId, fcmToken]);
+
+  // 같은 학생의 기존 FCM 토큰 업데이트 (토큰이 바뀔 수 있음)
+  // 위 INSERT가 충돌 시 아래 UPSERT로 처리
+  const existing = await db.query(
+    `SELECT id FROM push_subscriptions WHERE student_id = $1 AND type = 'fcm'`,
+    [studentId]
+  );
+
+  if (existing.rows.length === 0) {
+    // endpoint를 fcm_토큰값으로 사용하여 unique 충돌 방지
+    await db.query(`
+      INSERT INTO push_subscriptions (student_id, endpoint, fcm_token, type)
+      VALUES ($1, $2, $2, 'fcm')
+    `, [studentId, fcmToken]);
+  } else {
+    await db.query(`
+      UPDATE push_subscriptions SET fcm_token = $1, updated_at = NOW()
+      WHERE student_id = $2 AND type = 'fcm'
+    `, [fcmToken, studentId]);
+  }
+}
+
 // ─── 구독 삭제 ───────────────────────────────────────────────
 async function removeSubscription(endpoint) {
   await db.query('DELETE FROM push_subscriptions WHERE endpoint = $1', [endpoint]);
 }
 
-// ─── 개별 푸시 발송 ──────────────────────────────────────────
+// ─── 개별 푸시 발송 (webpush + fcm 분기) ─────────────────────
 async function sendPush(studentId, payload) {
   const subs = await db.query(
-    'SELECT endpoint, keys_p256dh, keys_auth FROM push_subscriptions WHERE student_id = $1',
+    `SELECT id, endpoint, keys_p256dh, keys_auth, type, fcm_token
+     FROM push_subscriptions WHERE student_id = $1`,
     [studentId]
   );
 
   const results = [];
+
   for (const sub of subs.rows) {
+
+    // ── FCM 발송 ──
+    if (sub.type === 'fcm') {
+      if (!fcmEnabled || !sub.fcm_token) {
+        results.push({ type: 'fcm', status: 'skipped', detail: 'FCM 비활성 또는 토큰 없음' });
+        continue;
+      }
+
+      try {
+        await admin.messaging().send({
+          token: sub.fcm_token,
+          notification: {
+            title: payload.title,
+            body: payload.body,
+          },
+          data: {
+            url: payload.url || '/',
+            studentId: String(payload.studentId || ''),
+            attendanceId: String(payload.attendanceId || ''),
+          },
+          android: {
+            priority: 'high',
+          },
+        });
+        results.push({ type: 'fcm', status: 'sent' });
+      } catch (err) {
+        // 토큰 만료/무효 시 삭제
+        if (err.code === 'messaging/registration-token-not-registered' ||
+            err.code === 'messaging/invalid-registration-token') {
+          await db.query('DELETE FROM push_subscriptions WHERE id = $1', [sub.id]);
+          results.push({ type: 'fcm', status: 'expired', detail: 'token removed' });
+        } else {
+          console.error('[FCM] 발송 실패:', err.message);
+          results.push({ type: 'fcm', status: 'error', error: err.message });
+        }
+      }
+      continue;
+    }
+
+    // ── Web Push 발송 (기존 로직 그대로) ──
     const subscription = {
       endpoint: sub.endpoint,
       keys: { p256dh: sub.keys_p256dh, auth: sub.keys_auth },
     };
 
     try {
-      // 10초 타임아웃 (Apple Push 무응답 방지)
       const timeoutMs = 10000;
       const sendPromise = webpush.sendNotification(subscription, JSON.stringify(payload));
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Push timeout (10s)')), timeoutMs)
       );
       await Promise.race([sendPromise, timeoutPromise]);
-      results.push({ endpoint: sub.endpoint, status: 'sent' });
+      results.push({ type: 'webpush', endpoint: sub.endpoint, status: 'sent' });
     } catch (err) {
       if (err.statusCode === 410 || err.statusCode === 404) {
-        // 구독 만료 → 삭제
         await removeSubscription(sub.endpoint);
-        results.push({ endpoint: sub.endpoint, status: 'expired', detail: 'subscription removed' });
+        results.push({ type: 'webpush', endpoint: sub.endpoint, status: 'expired', detail: 'subscription removed' });
       } else if (err.message && err.message.includes('timeout')) {
-        // 타임아웃 → 만료된 구독일 가능성 높음 → 삭제
         await removeSubscription(sub.endpoint);
-        results.push({ endpoint: sub.endpoint, status: 'timeout', detail: 'subscription removed (no response)' });
+        results.push({ type: 'webpush', endpoint: sub.endpoint, status: 'timeout', detail: 'subscription removed (no response)' });
       } else {
         console.error('[Push] 발송 실패:', { endpoint: sub.endpoint.slice(0, 60), statusCode: err.statusCode, message: err.message, body: err.body });
-        results.push({ endpoint: sub.endpoint, status: 'error', statusCode: err.statusCode, error: err.message, body: err.body });
+        results.push({ type: 'webpush', endpoint: sub.endpoint, status: 'error', statusCode: err.statusCode, error: err.message, body: err.body });
       }
     }
   }
@@ -87,7 +184,6 @@ async function sendPush(studentId, payload) {
 
 // ─── 퇴실 리마인더 발송 (수업 종료 10분 전 ~ 종료 후 8분) ──
 async function sendExitReminders() {
-  // T-10 ~ T+8 범위에 종료되는 수업 중 퇴실 미처리 수강생 찾기
   const sessions = await db.query(`
     SELECT cs.session_id, cs.end_time, c.course_name,
            COALESCE(cr.classroom_name, dcr.classroom_name) AS classroom_name
@@ -106,7 +202,6 @@ async function sendExitReminders() {
   let totalSent = 0;
 
   for (const session of sessions.rows) {
-    // 퇴실 미처리 수강생 조회
     const students = await db.query(`
       SELECT a.attendance_id, a.student_id, s.name
       FROM attendance a
@@ -116,14 +211,12 @@ async function sendExitReminders() {
         AND a.check_out_at IS NULL
     `, [session.session_id]);
 
-    // 종료까지 남은 분 계산 (음수 = 종료 후)
     const nowKST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
     const [endH, endM] = session.end_time.slice(0, 5).split(':').map(Number);
     const endMinutes = endH * 60 + endM;
     const nowMinutes = nowKST.getHours() * 60 + nowKST.getMinutes();
     const minutesLeft = endMinutes - nowMinutes;
 
-    // 메시지 구분 (종료 전 / 종료 후)
     let body;
     if (minutesLeft > 0) {
       body = `${session.course_name} 종료 ${minutesLeft}분 전입니다. 퇴실 확인을 해주세요.`;
@@ -155,7 +248,6 @@ async function sendExitReminders() {
 
 // ─── 퇴실 미확인 알림 (수업 종료 후 10분) ───────────────────
 async function sendMissedExitAlerts() {
-  // 종료 후 10분 경과한 세션에서 퇴실 미확인자 찾기
   const students = await db.query(`
     SELECT a.attendance_id, a.student_id, s.name, 
            cs.session_id, cs.end_time, c.course_name
@@ -171,7 +263,6 @@ async function sendMissedExitAlerts() {
   `);
 
   for (const row of students.rows) {
-    // 퇴실미확인 자동 처리: 수업 종료 시각으로 기록
     await db.query(`
       UPDATE attendance 
       SET check_out_at = (session_date || ' ' || $2)::TIMESTAMP AT TIME ZONE 'Asia/Seoul',
@@ -182,7 +273,6 @@ async function sendMissedExitAlerts() {
       WHERE attendance_id = $1
     `, [row.attendance_id, row.end_time, row.session_id]);
 
-    // 알림 발송
     const payload = {
       title: '퇴실 확인이 되지 않았습니다',
       body: `${row.course_name} - 관리자에게 문의하세요.`,
@@ -199,24 +289,19 @@ async function sendMissedExitAlerts() {
 
 
 // ─── 스케줄러 운영 시간 설정 ─────────────────────────────────
-// 요일별 가동 시간 (KST 기준)
-// - 키: 0=일, 1=월, 2=화, 3=수, 4=목, 5=금, 6=토
-// - 값: { start, end } 또는 null (미가동)
-//
-// ── 현재 설정: 월화목 8~19시, 수금 8~22시, 주말 미가동 ──
 const SCHEDULE = {
-  0: null,                    // 일요일: 미가동
-  1: { start: 8, end: 19 },  // 월요일: 08:00 ~ 19:00
-  2: { start: 8, end: 19 },  // 화요일: 08:00 ~ 19:00
-  3: { start: 8, end: 22 },  // 수요일: 08:00 ~ 22:00
-  4: { start: 8, end: 19 },  // 목요일: 08:00 ~ 19:00
-  5: { start: 8, end: 22 },  // 금요일: 08:00 ~ 22:00
-  6: null,                    // 토요일: 미가동
+  0: null,
+  1: { start: 8, end: 19 },
+  2: { start: 8, end: 19 },
+  3: { start: 8, end: 22 },
+  4: { start: 8, end: 19 },
+  5: { start: 8, end: 22 },
+  6: null,
 };
 
 function isWithinScheduleHours() {
   const nowKST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
-  const day = nowKST.getDay();    // 0~6
+  const day = nowKST.getDay();
   const hour = nowKST.getHours();
   const slot = SCHEDULE[day];
   if (!slot) return false;
@@ -248,8 +333,8 @@ function startScheduler() {
     } catch (err) {
       console.error('[Scheduler] 오류:', err.message);
     }
-  }, 2 * 60 * 1000); // 2분마다
+  }, 2 * 60 * 1000);
 }
 
 
-module.exports = { initPush, saveSubscription, removeSubscription, sendPush, startScheduler };
+module.exports = { initPush, saveSubscription, saveFcmToken, removeSubscription, sendPush, startScheduler };
