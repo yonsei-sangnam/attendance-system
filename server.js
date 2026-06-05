@@ -1811,6 +1811,22 @@ app.get('/api/push/subscriptions', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── assetlinks 라우트 ───────────────────────────────────────────────
+app.get('/.well-known/assetlinks.json', (req, res) => {
+  res.json([
+    {
+      relation: ['delegate_permission/common.handle_all_urls'],
+      target: {
+        namespace: 'android_app',
+        package_name: 'com.sangnam.attendance',
+        sha256_cert_fingerprints: [
+          '3D:4B:BD:55:0D:CD:A3:78:97:D6:CD:BB:FD:16:0C:07:E3:D0:AA:8E:06:11:49:ED:6B:9A:E3:61:EB:6C:61:AF'
+        ]
+      }
+    }
+  ]);
+});
+
 
 // ─── 서버 시작 ───────────────────────────────────────────────
 app.listen(PORT, () => {
