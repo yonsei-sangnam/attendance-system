@@ -1821,6 +1821,45 @@ app.get('/api/push/subscriptions', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── 개인정보처리방침 ───────────────────────────────────────
+app.get('/privacy', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>개인정보처리방침 - 상남경영원 출결관리</title>
+<style>body{font-family:-apple-system,sans-serif;max-width:700px;margin:0 auto;padding:20px 16px;line-height:1.8;color:#333}
+h1{font-size:22px;border-bottom:2px solid #003876;padding-bottom:10px}
+h2{font-size:17px;margin-top:30px;color:#003876}p{margin:8px 0}</style></head>
+<body>
+<h1>개인정보처리방침</h1>
+<p>상남경영원(이하 "기관")은 「개인정보 보호법」에 따라 수강생의 개인정보를 보호하고 관련 고충을 처리하기 위하여 다음과 같은 개인정보처리방침을 수립·공개합니다.</p>
+
+<h2>1. 수집하는 개인정보 항목</h2>
+<p>기관은 출결관리 서비스 제공을 위해 다음 정보를 수집합니다.</p>
+<p>- 이름, 전화번호<br>- 생체인증 공개키 (지문·얼굴 등 생체정보 자체는 기기에만 저장되며 서버에 전송되지 않습니다)<br>- 출결 기록 (입실·퇴실 시각)<br>- 푸시 알림 구독 정보</p>
+
+<h2>2. 개인정보의 수집 및 이용 목적</h2>
+<p>- 수강생 본인 확인 및 출결 관리<br>- 퇴실 알림 등 서비스 안내</p>
+
+<h2>3. 개인정보의 보유 및 이용 기간</h2>
+<p>수강 기간 종료 후 3개월 이내 파기합니다. 단, 관계 법령에 따라 보존이 필요한 경우 해당 기간 동안 보관합니다.</p>
+
+<h2>4. 개인정보의 제3자 제공</h2>
+<p>기관은 수강생의 개인정보를 제3자에게 제공하지 않습니다.</p>
+
+<h2>5. 개인정보의 안전성 확보 조치</h2>
+<p>- 데이터 전송 시 SSL/TLS 암호화 적용<br>- 생체인증은 FIDO2/WebAuthn 표준 사용 (생체정보 서버 미저장)<br>- 데이터베이스 접근 권한 제한</p>
+
+<h2>6. 정보주체의 권리</h2>
+<p>수강생은 언제든지 본인의 개인정보에 대한 열람, 정정, 삭제를 요청할 수 있습니다.</p>
+
+<h2>7. 개인정보 보호책임자</h2>
+<p>상남경영원 관리자<br>문의: 기관 사무실로 연락</p>
+
+<p style="margin-top:40px;color:#888;font-size:13px">시행일: 2026년 6월 8일</p>
+</body></html>`);
+});
+
+
 // ─── assetlinks 라우트 ───────────────────────────────────────────────
 app.get('/.well-known/assetlinks.json', (req, res) => {
   res.json([
