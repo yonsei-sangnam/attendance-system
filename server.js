@@ -1859,6 +1859,29 @@ h2{font-size:17px;margin-top:30px;color:#003876}p{margin:8px 0}</style></head>
 </body></html>`);
 });
 
+// ─── 계정 삭제 요청 페이지 ──────────────────────────────────
+app.get('/delete-account', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>계정 삭제 요청 - 상남경영원 출결관리</title>
+<style>body{font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px 16px;line-height:1.8;color:#333}
+h1{font-size:22px;border-bottom:2px solid #003876;padding-bottom:10px}
+.box{background:#f5f5f5;border-radius:8px;padding:20px;margin-top:20px}
+p{margin:8px 0}</style></head>
+<body>
+<h1>계정 및 데이터 삭제 요청</h1>
+<p>상남경영원 출결관리 앱에 등록된 본인의 계정 및 데이터 삭제를 요청하실 수 있습니다.</p>
+<div class="box">
+  <p><strong>삭제 요청 방법</strong></p>
+  <p>아래 정보를 포함하여 기관 담당자에게 직접 요청해 주세요.</p>
+  <p>- 이름<br>- 등록된 전화번호<br>- 삭제 요청 사유 (선택)</p>
+  <p style="margin-top:16px"><strong>요청 후 처리 기간:</strong> 영업일 기준 3일 이내</p>
+  <p><strong>삭제되는 데이터:</strong> 이름, 전화번호, 생체인증 정보, 출결 기록, 푸시 알림 구독 정보</p>
+</div>
+<p style="margin-top:40px;color:#888;font-size:13px">문의: 상남경영원 사무실</p>
+</body></html>`);
+});
+
 
 // ─── assetlinks 라우트 ───────────────────────────────────────────────
 app.get('/.well-known/assetlinks.json', (req, res) => {
