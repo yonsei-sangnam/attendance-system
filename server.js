@@ -1533,7 +1533,7 @@ function renderAppPage() {
               '<div style="font-size:24px;margin-bottom:8px;">✋</div>' +
               '<div style="font-size:15px;font-weight:600;color:#ff9500;margin-bottom:6px;">인증이 취소되었습니다</div>' +
               '<div style="font-size:13px;color:#86868b;margin-bottom:14px;">아래 버튼을 눌러 다시 시도해주세요.</div>' +
-              '<button onclick="retryCheckout(\'' + studentId + '\',\'' + attendanceId + '\')" ' +
+              '<button onclick="retryCheckout(\\'' + studentId + '\\',\\'' + attendanceId + '\\')" ' +
               'style="width:100%;padding:12px;background:#1a73e8;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">🔐 다시 시도</button>' +
               '</div>';
           } else {
