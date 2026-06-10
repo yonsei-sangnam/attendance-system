@@ -1461,13 +1461,20 @@ function renderAppPage() {
         await new Promise(function(r) { setTimeout(r, 400); });
 
         try {
-          // discoverable: true → allowCredentials 미포함 (iOS PWA QR 프롬프트 방지)
+          // discoverable: false → allowCredentials 포함 (PIN 폴백 지원)
           var optRes = await fetch('/api/auth/passkey-start', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ studentId: studentId, discoverable: true })
+            body: JSON.stringify({ studentId: studentId, discoverable: false })
           });
           var options = await optRes.json();
           if (options.error) throw new Error(options.error);
+
+          // iOS QR 프롬프트 방지: transports를 internal로 제한
+          if (options.allowCredentials) {
+            options.allowCredentials = options.allowCredentials.map(function(c) {
+              return { id: c.id, type: c.type, transports: ['internal'] };
+            });
+          }
 
           var authResp = await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON: options });
 
@@ -1490,19 +1497,19 @@ function renderAppPage() {
           } else {
             showMsg('<div style="font-size:24px;margin-bottom:8px;">⚠️</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">퇴실 처리 실패</div><div style="font-size:13px;color:#86868b;margin-top:6px;">' + (verifyData.error || '') + '</div>');
           }
-          } catch (authErr) {
-            if (authErr.name === 'NotAllowedError') {
-              msgEl.innerHTML = '<div style="text-align:center;padding:20px;background:#f5f5f7;border-radius:12px;margin-bottom:12px;">' +
-                '<div style="font-size:24px;margin-bottom:8px;">✋</div>' +
-                '<div style="font-size:15px;font-weight:600;color:#ff9500;margin-bottom:6px;">인증이 취소되었습니다</div>' +
-                '<div style="font-size:13px;color:#86868b;margin-bottom:14px;">PIN 번호(숫자 비밀번호)로 인증해주세요.<br>아래 버튼을 눌러 다시 시도하세요.</div>' +
-                '<button onclick="retryCheckout(\'' + studentId + '\',\'' + attendanceId + '\')" ' +
-                'style="width:100%;padding:12px;background:#1a73e8;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">🔐 다시 시도</button>' +
-                '</div>';
-            } else {
-              showMsg('<div style="font-size:24px;margin-bottom:8px;">⚠️</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">인증 오류</div><div style="font-size:13px;color:#86868b;margin-top:6px;">' + (authErr.message || '오류 발생') + '</div>');
-            }
+        } catch (authErr) {
+          if (authErr.name === 'NotAllowedError') {
+            msgEl.innerHTML = '<div style="text-align:center;padding:20px;background:#f5f5f7;border-radius:12px;margin-bottom:12px;">' +
+              '<div style="font-size:24px;margin-bottom:8px;">✋</div>' +
+              '<div style="font-size:15px;font-weight:600;color:#ff9500;margin-bottom:6px;">인증이 취소되었습니다</div>' +
+              '<div style="font-size:13px;color:#86868b;margin-bottom:14px;">아래 버튼을 눌러 다시 시도해주세요.</div>' +
+              '<button onclick="retryCheckout(\'' + studentId + '\',\'' + attendanceId + '\')" ' +
+              'style="width:100%;padding:12px;background:#1a73e8;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">🔐 다시 시도</button>' +
+              '</div>';
+          } else {
+            showMsg('<div style="font-size:24px;margin-bottom:8px;">⚠️</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">인증 오류</div><div style="font-size:13px;color:#86868b;margin-top:6px;">' + (authErr.message || '오류 발생') + '</div>');
           }
+        }
       }
 
       // ─── Haversine 거리 계산 (미터) ──────────────────────
