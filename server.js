@@ -1235,7 +1235,7 @@ function renderAppPage() {
           _debugEl.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#000;color:#0f0;font-size:11px;padding:8px;max-height:40vh;overflow:auto;z-index:99999;font-family:monospace;white-space:pre-wrap;';
           document.body.appendChild(_debugEl);
         }
-        _debugEl.textContent += new Date().toLocaleTimeString() + ' ' + msg + '\n';
+        _debugEl.textContent += new Date().toLocaleTimeString() + ' ' + msg + '\\n';
         _debugEl.scrollTop = _debugEl.scrollHeight;
       }
       window.onerror = function(msg, url, line, col, err) {
