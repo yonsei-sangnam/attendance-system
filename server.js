@@ -1359,10 +1359,8 @@ function renderAppPage() {
           alert('퇴실할 출결 기록이 없습니다.');
           return;
         }
-        // handleCheckoutFromPush와 동일한 플로우 실행
-        const url = '/app?checkout=true&sid=' + encodeURIComponent(window._checkoutData.sid) + '&aid=' + encodeURIComponent(window._checkoutData.aid);
-        window.history.replaceState({}, '', url);
-        await handleCheckoutFromPush();
+        window._pendingCheckout = { sid: window._checkoutData.sid, aid: window._checkoutData.aid };
+        await handleCheckoutFromPush(true);
       }
 
       // ─── 푸시 알림 ────────────────────────────────────────
@@ -1437,22 +1435,25 @@ function renderAppPage() {
 
       // ─── 퇴실 인증 재시도 ─────────────────────────────────────
       async function retryCheckout(studentId, attendanceId) {
-        var url = '/app?checkout=true&sid=' + encodeURIComponent(studentId) + '&aid=' + encodeURIComponent(attendanceId);
-        window.history.replaceState({}, '', url);
-        await handleCheckoutFromPush();
+        window._pendingCheckout = { sid: studentId, aid: attendanceId };
+        await handleCheckoutFromPush(true);
       }
 
       // ─── 푸시 알림에서 퇴실 처리 (위치확인 → 생체인증 → 퇴실) ──
-      async function handleCheckoutFromPush() {
+      async function handleCheckoutFromPush(hasGesture) {
+        // URL 파라미터에서 checkout 정보 추출 → _pendingCheckout에 저장
         var params = new URLSearchParams(window.location.search);
-        _dbg('handleCheckout: checkout=' + params.get('checkout') + ' sid=' + (params.get('sid') || 'null') + ' aid=' + (params.get('aid') || 'null'));
-        if (params.get('checkout') !== 'true') return;
+        if (params.get('checkout') === 'true') {
+          window._pendingCheckout = { sid: params.get('sid'), aid: params.get('aid') };
+          window.history.replaceState({}, '', '/app');
+        }
 
-        var studentId = params.get('sid');
-        var attendanceId = params.get('aid');
+        if (!window._pendingCheckout) return;
+        var studentId = window._pendingCheckout.sid;
+        var attendanceId = window._pendingCheckout.aid;
         if (!studentId || !attendanceId) return;
 
-        window.history.replaceState({}, '', '/app');
+        _dbg('handleCheckout: hasGesture=' + !!hasGesture + ' sid=' + studentId.slice(0,8) + '... aid=' + attendanceId.slice(0,8) + '...');
 
         var msgEl = document.getElementById('todayStatus');
         function showMsg(text) {
@@ -1484,6 +1485,18 @@ function renderAppPage() {
         }
 
         // ── Step 3: 생체인증 + 퇴실 처리 (통합) ─────────────
+        if (!hasGesture) {
+          // 푸시 알림 → 자동 로그인 경로: 사용자 제스처가 없으므로 버튼 표시
+          msgEl.innerHTML = '<div style="text-align:center;padding:24px;background:#f5f5f7;border-radius:12px;margin-bottom:12px;">' +
+            '<div style="font-size:28px;margin-bottom:10px;">🔐</div>' +
+            '<div style="font-size:15px;font-weight:600;color:#1d1d1f;margin-bottom:6px;">퇴실 인증</div>' +
+            '<div style="font-size:13px;color:#86868b;margin-bottom:16px;">아래 버튼을 눌러 본인 인증 후 퇴실 처리하세요.</div>' +
+            '<button onclick="handleCheckoutFromPush(true)" ' +
+            'style="width:100%;padding:14px;background:#1a73e8;color:#fff;border:none;border-radius:10px;font-size:16px;font-weight:600;cursor:pointer;">퇴실 인증하기</button>' +
+            '</div>';
+          return;
+        }
+
         showMsg('<div style="font-size:16px;margin-bottom:8px;">🔐</div><div style="font-size:14px;color:#1a73e8;">생체인증을 진행해주세요</div>');
         await new Promise(function(r) { setTimeout(r, 400); });
 
