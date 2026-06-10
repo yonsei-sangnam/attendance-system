@@ -1409,6 +1409,13 @@ function renderAppPage() {
         }
       }
 
+      // ─── 퇴실 인증 재시도 ─────────────────────────────────────
+      async function retryCheckout(studentId, attendanceId) {
+        var url = '/app?checkout=true&sid=' + encodeURIComponent(studentId) + '&aid=' + encodeURIComponent(attendanceId);
+        window.history.replaceState({}, '', url);
+        await handleCheckoutFromPush();
+      }
+
       // ─── 푸시 알림에서 퇴실 처리 (위치확인 → 생체인증 → 퇴실) ──
       async function handleCheckoutFromPush() {
         var params = new URLSearchParams(window.location.search);
@@ -1462,11 +1469,6 @@ function renderAppPage() {
           var options = await optRes.json();
           if (options.error) throw new Error(options.error);
 
-          // 안전장치: allowCredentials가 포함되어 있으면 제거 (iOS PWA 호환)
-          if (options.allowCredentials) {
-            delete options.allowCredentials;
-          }
-
           var authResp = await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON: options });
 
           // 패스키 검증 + 퇴실 처리를 한 번에 (attendanceId 전달)
@@ -1488,13 +1490,19 @@ function renderAppPage() {
           } else {
             showMsg('<div style="font-size:24px;margin-bottom:8px;">⚠️</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">퇴실 처리 실패</div><div style="font-size:13px;color:#86868b;margin-top:6px;">' + (verifyData.error || '') + '</div>');
           }
-        } catch (authErr) {
-          if (authErr.name === 'NotAllowedError') {
-            showMsg('<div style="font-size:24px;margin-bottom:8px;">✋</div><div style="font-size:15px;font-weight:600;color:#ff9500;">인증 취소됨</div><div style="font-size:13px;color:#86868b;margin-top:6px;">앱의 "퇴실하기" 버튼으로 재시도하세요.</div>');
-          } else {
-            showMsg('<div style="font-size:24px;margin-bottom:8px;">⚠️</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">인증 오류</div><div style="font-size:13px;color:#86868b;margin-top:6px;">' + (authErr.message || '오류 발생') + '</div>');
+          } catch (authErr) {
+            if (authErr.name === 'NotAllowedError') {
+              msgEl.innerHTML = '<div style="text-align:center;padding:20px;background:#f5f5f7;border-radius:12px;margin-bottom:12px;">' +
+                '<div style="font-size:24px;margin-bottom:8px;">✋</div>' +
+                '<div style="font-size:15px;font-weight:600;color:#ff9500;margin-bottom:6px;">인증이 취소되었습니다</div>' +
+                '<div style="font-size:13px;color:#86868b;margin-bottom:14px;">PIN 번호(숫자 비밀번호)로 인증해주세요.<br>아래 버튼을 눌러 다시 시도하세요.</div>' +
+                '<button onclick="retryCheckout(\'' + studentId + '\',\'' + attendanceId + '\')" ' +
+                'style="width:100%;padding:12px;background:#1a73e8;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">🔐 다시 시도</button>' +
+                '</div>';
+            } else {
+              showMsg('<div style="font-size:24px;margin-bottom:8px;">⚠️</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">인증 오류</div><div style="font-size:13px;color:#86868b;margin-top:6px;">' + (authErr.message || '오류 발생') + '</div>');
+            }
           }
-        }
       }
 
       // ─── Haversine 거리 계산 (미터) ──────────────────────
