@@ -1227,12 +1227,33 @@ function renderAppPage() {
     </div>
 
     <script>
+      // ─── 진단용 에러 표시 (문제 해결 후 제거) ──────────────
+      var _debugEl = null;
+      function _dbg(msg) {
+        if (!_debugEl) {
+          _debugEl = document.createElement('div');
+          _debugEl.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#000;color:#0f0;font-size:11px;padding:8px;max-height:40vh;overflow:auto;z-index:99999;font-family:monospace;white-space:pre-wrap;';
+          document.body.appendChild(_debugEl);
+        }
+        _debugEl.textContent += new Date().toLocaleTimeString() + ' ' + msg + '\n';
+        _debugEl.scrollTop = _debugEl.scrollHeight;
+      }
+      window.onerror = function(msg, url, line, col, err) {
+        _dbg('ERROR: ' + msg + ' (line ' + line + ')');
+      };
+      window.addEventListener('unhandledrejection', function(e) {
+        _dbg('PROMISE ERROR: ' + (e.reason ? e.reason.message || e.reason : 'unknown'));
+      });
+      _dbg('JS loaded OK');
+
       let appStudentId = null;
       let appStudentName = null;
 
       // ─── 자동 로그인 (localStorage) ──────────────────────
       window.addEventListener('load', function() {
+        _dbg('load event fired');
         const saved = localStorage.getItem('app_phone');
+        _dbg('saved phone: ' + (saved ? saved.slice(0,4) + '****' : 'none'));
         if (saved) {
           document.getElementById('phoneInput').value = saved;
           appLogin();
@@ -1247,20 +1268,25 @@ function renderAppPage() {
 
       // ─── 로그인 ────────────────────────────────────────────
       async function appLogin() {
+        _dbg('appLogin called');
         const input = document.getElementById('phoneInput').value.trim();
         const msgEl = document.getElementById('msg1');
+        _dbg('input length: ' + input.length);
         if (input.length < 7) { msgEl.innerHTML = '<div class="msg msg-error">전화번호 뒷자리 8자리를 입력해주세요.</div>'; return; }
 
         const phone = '010-' + input.slice(0, 4) + '-' + input.slice(4);
         const btn = document.getElementById('lookupBtn');
         btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+        _dbg('fetching /api/student/lookup...');
 
         try {
           const res = await fetch('/api/student/lookup', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ phone: phone })
           });
+          _dbg('lookup response status: ' + res.status);
           const data = await res.json();
+          _dbg('lookup result: found=' + data.found);
           if (!data.found) { msgEl.innerHTML = '<div class="msg msg-error">등록되지 않은 전화번호입니다.</div>'; return; }
 
           appStudentId = data.studentId;
@@ -1419,6 +1445,7 @@ function renderAppPage() {
       // ─── 푸시 알림에서 퇴실 처리 (위치확인 → 생체인증 → 퇴실) ──
       async function handleCheckoutFromPush() {
         var params = new URLSearchParams(window.location.search);
+        _dbg('handleCheckout: checkout=' + params.get('checkout') + ' sid=' + (params.get('sid') || 'null') + ' aid=' + (params.get('aid') || 'null'));
         if (params.get('checkout') !== 'true') return;
 
         var studentId = params.get('sid');
@@ -1469,6 +1496,8 @@ function renderAppPage() {
           var options = await optRes.json();
           if (options.error) throw new Error(options.error);
 
+          _dbg('passkey options received, allowCreds: ' + (options.allowCredentials ? options.allowCredentials.length : 'none'));
+
           // iOS QR 프롬프트 방지: transports를 internal로 제한
           if (options.allowCredentials) {
             options.allowCredentials = options.allowCredentials.map(function(c) {
@@ -1498,6 +1527,7 @@ function renderAppPage() {
             showMsg('<div style="font-size:24px;margin-bottom:8px;">⚠️</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">퇴실 처리 실패</div><div style="font-size:13px;color:#86868b;margin-top:6px;">' + (verifyData.error || '') + '</div>');
           }
         } catch (authErr) {
+          _dbg('auth error: ' + authErr.name + ' - ' + authErr.message);
           if (authErr.name === 'NotAllowedError') {
             msgEl.innerHTML = '<div style="text-align:center;padding:20px;background:#f5f5f7;border-radius:12px;margin-bottom:12px;">' +
               '<div style="font-size:24px;margin-bottom:8px;">✋</div>' +
