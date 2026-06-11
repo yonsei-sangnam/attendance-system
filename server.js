@@ -1177,6 +1177,8 @@ function renderAppPage() {
     .status-value2 { font-weight:600; }
     .install-guide { background:#fff3e0; border-radius:10px; padding:14px 18px; margin-top:16px; font-size:13px; color:#e65100; line-height:1.8; }
   </style>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js"></script>
   </head>
   <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;background:#003776;">
     <div class="card" style="max-width:420px;">
@@ -1245,6 +1247,47 @@ function renderAppPage() {
         document.getElementById('step' + n).classList.add('active');
       }
 
+      // ─── FCM 토큰 등록 (TWA/설치형 앱 전용) ─────────────────
+      async function registerFcmToken() {
+        try {
+          if (!appStudentId) return;
+          var isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+          if (!isStandalone) return;
+
+          var firebaseConfig = {
+            apiKey: "AIzaSyD3sYGrLF0wmbjyJLziHVqBF-o4UuVE5Po",
+            authDomain: "sangnam-attendance.firebaseapp.com",
+            projectId: "sangnam-attendance",
+            storageBucket: "sangnam-attendance.firebasestorage.app",
+            messagingSenderId: "390976491268",
+            appId: "1:390976491268:web:f92814cd53f5662885ca51"
+          };
+
+          if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+          var messaging = firebase.messaging();
+
+          var permission = await Notification.requestPermission();
+          if (permission !== 'granted') return;
+
+          var swReg = await navigator.serviceWorker.getRegistration();
+          var token = await messaging.getToken({
+            vapidKey: 'BPUVObyUjiiSBFWkNG1U2E625alOLUgZ4B9LESnk2hMuMkuNpyVtm1JqTiScZ60wAF11ovs3NE3Y2GfulIK5waY',
+            serviceWorkerRegistration: swReg
+          });
+
+          if (!token) return;
+
+          await fetch('/api/push/fcm-token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ studentId: appStudentId, fcmToken: token })
+          });
+          console.log('[FCM] Token registered');
+        } catch (err) {
+          console.error('[FCM] Registration failed:', err);
+        }
+      }
+
       // ─── 로그인 ────────────────────────────────────────────
       async function appLogin() {
         const input = document.getElementById('phoneInput').value.trim();
@@ -1274,6 +1317,7 @@ function renderAppPage() {
           loadTodayStatus();
           checkPushStatus();
           handleCheckoutFromPush();
+          registerFcmToken();
         } catch (err) {
           msgEl.innerHTML = '<div class="msg msg-error">' + err.message + '</div>';
         } finally { btn.disabled = false; btn.textContent = '시작'; }
