@@ -1227,33 +1227,12 @@ function renderAppPage() {
     </div>
 
     <script>
-      // ─── 진단용 에러 표시 (문제 해결 후 제거) ──────────────
-      var _debugEl = null;
-      function _dbg(msg) {
-        if (!_debugEl) {
-          _debugEl = document.createElement('div');
-          _debugEl.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#000;color:#0f0;font-size:11px;padding:8px;max-height:40vh;overflow:auto;z-index:99999;font-family:monospace;white-space:pre-wrap;';
-          document.body.appendChild(_debugEl);
-        }
-        _debugEl.textContent += new Date().toLocaleTimeString() + ' ' + msg + '\\n';
-        _debugEl.scrollTop = _debugEl.scrollHeight;
-      }
-      window.onerror = function(msg, url, line, col, err) {
-        _dbg('ERROR: ' + msg + ' (line ' + line + ')');
-      };
-      window.addEventListener('unhandledrejection', function(e) {
-        _dbg('PROMISE ERROR: ' + (e.reason ? e.reason.message || e.reason : 'unknown'));
-      });
-      _dbg('JS loaded OK');
-
       let appStudentId = null;
       let appStudentName = null;
 
       // ─── 자동 로그인 (localStorage) ──────────────────────
       window.addEventListener('load', function() {
-        _dbg('load event fired');
         const saved = localStorage.getItem('app_phone');
-        _dbg('saved phone: ' + (saved ? saved.slice(0,4) + '****' : 'none'));
         if (saved) {
           document.getElementById('phoneInput').value = saved;
           appLogin();
@@ -1268,25 +1247,20 @@ function renderAppPage() {
 
       // ─── 로그인 ────────────────────────────────────────────
       async function appLogin() {
-        _dbg('appLogin called');
         const input = document.getElementById('phoneInput').value.trim();
         const msgEl = document.getElementById('msg1');
-        _dbg('input length: ' + input.length);
         if (input.length < 7) { msgEl.innerHTML = '<div class="msg msg-error">전화번호 뒷자리 8자리를 입력해주세요.</div>'; return; }
 
         const phone = '010-' + input.slice(0, 4) + '-' + input.slice(4);
         const btn = document.getElementById('lookupBtn');
         btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
-        _dbg('fetching /api/student/lookup...');
 
         try {
           const res = await fetch('/api/student/lookup', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ phone: phone })
           });
-          _dbg('lookup response status: ' + res.status);
           const data = await res.json();
-          _dbg('lookup result: found=' + data.found);
           if (!data.found) { msgEl.innerHTML = '<div class="msg msg-error">등록되지 않은 전화번호입니다.</div>'; return; }
 
           appStudentId = data.studentId;
@@ -1453,7 +1427,6 @@ function renderAppPage() {
         var attendanceId = window._pendingCheckout.aid;
         if (!studentId || !attendanceId) return;
 
-        _dbg('handleCheckout: hasGesture=' + !!hasGesture + ' sid=' + studentId.slice(0,8) + '... aid=' + attendanceId.slice(0,8) + '...');
 
         var msgEl = document.getElementById('todayStatus');
         function showMsg(text) {
@@ -1484,19 +1457,7 @@ function renderAppPage() {
           }
         }
 
-        // ── Step 3: 생체인증 + 퇴실 처리 (통합) ─────────────
-        if (!hasGesture) {
-          // 푸시 알림 → 자동 로그인 경로: 사용자 제스처가 없으므로 버튼 표시
-          msgEl.innerHTML = '<div style="text-align:center;padding:24px;background:#f5f5f7;border-radius:12px;margin-bottom:12px;">' +
-            '<div style="font-size:28px;margin-bottom:10px;">🔐</div>' +
-            '<div style="font-size:15px;font-weight:600;color:#1d1d1f;margin-bottom:6px;">퇴실 인증</div>' +
-            '<div style="font-size:13px;color:#86868b;margin-bottom:16px;">아래 버튼을 눌러 본인 인증 후 퇴실 처리하세요.</div>' +
-            '<button onclick="handleCheckoutFromPush(true)" ' +
-            'style="width:100%;padding:14px;background:#1a73e8;color:#fff;border:none;border-radius:10px;font-size:16px;font-weight:600;cursor:pointer;">퇴실 인증하기</button>' +
-            '</div>';
-          return;
-        }
-
+        // ── Step 3: 생체인증 + 퇴실 처리 ─────────────────────
         showMsg('<div style="font-size:16px;margin-bottom:8px;">🔐</div><div style="font-size:14px;color:#1a73e8;">생체인증을 진행해주세요</div>');
         await new Promise(function(r) { setTimeout(r, 400); });
 
@@ -1508,8 +1469,6 @@ function renderAppPage() {
           });
           var options = await optRes.json();
           if (options.error) throw new Error(options.error);
-
-          _dbg('passkey options received, allowCreds: ' + (options.allowCredentials ? options.allowCredentials.length : 'none'));
 
           // iOS QR 프롬프트 방지: transports를 internal로 제한
           if (options.allowCredentials) {
@@ -1540,14 +1499,14 @@ function renderAppPage() {
             showMsg('<div style="font-size:24px;margin-bottom:8px;">⚠️</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">퇴실 처리 실패</div><div style="font-size:13px;color:#86868b;margin-top:6px;">' + (verifyData.error || '') + '</div>');
           }
         } catch (authErr) {
-          _dbg('auth error: ' + authErr.name + ' - ' + authErr.message);
           if (authErr.name === 'NotAllowedError') {
-            msgEl.innerHTML = '<div style="text-align:center;padding:20px;background:#f5f5f7;border-radius:12px;margin-bottom:12px;">' +
-              '<div style="font-size:24px;margin-bottom:8px;">✋</div>' +
-              '<div style="font-size:15px;font-weight:600;color:#ff9500;margin-bottom:6px;">인증이 취소되었습니다</div>' +
-              '<div style="font-size:13px;color:#86868b;margin-bottom:14px;">아래 버튼을 눌러 다시 시도해주세요.</div>' +
-              '<button onclick="retryCheckout(\\'' + studentId + '\\',\\'' + attendanceId + '\\')" ' +
-              'style="width:100%;padding:12px;background:#1a73e8;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">🔐 다시 시도</button>' +
+            // iOS PIN 등 제스처 필요 → 에러 없이 인증 버튼 표시
+            msgEl.innerHTML = '<div style="text-align:center;padding:24px;background:#f5f5f7;border-radius:12px;margin-bottom:12px;">' +
+              '<div style="font-size:28px;margin-bottom:10px;">🔐</div>' +
+              '<div style="font-size:15px;font-weight:600;color:#1d1d1f;margin-bottom:6px;">퇴실 인증</div>' +
+              '<div style="font-size:13px;color:#86868b;margin-bottom:16px;">아래 버튼을 눌러 본인 인증 후 퇴실 처리하세요.</div>' +
+              '<button onclick="handleCheckoutFromPush(true)" ' +
+              'style="width:100%;padding:14px;background:#1a73e8;color:#fff;border:none;border-radius:10px;font-size:16px;font-weight:600;cursor:pointer;">퇴실 인증하기</button>' +
               '</div>';
           } else {
             showMsg('<div style="font-size:24px;margin-bottom:8px;">⚠️</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">인증 오류</div><div style="font-size:13px;color:#86868b;margin-top:6px;">' + (authErr.message || '오류 발생') + '</div>');
