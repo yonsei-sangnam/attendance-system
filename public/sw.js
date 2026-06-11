@@ -1,3 +1,40 @@
+// ─── Firebase Cloud Messaging (백그라운드 알림) ──────────────
+importScripts('https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js');
+importScripts('https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js');
+
+firebase.initializeApp({
+  apiKey: "AIzaSyD3sYGrLF0wmbjyJLziHVqBF-o4UuVE5Po",
+  authDomain: "sangnam-attendance.firebaseapp.com",
+  projectId: "sangnam-attendance",
+  storageBucket: "sangnam-attendance.firebasestorage.app",
+  messagingSenderId: "390976491268",
+  appId: "1:390976491268:web:f92814cd53f5662885ca51"
+});
+
+const fcmMessaging = firebase.messaging();
+
+fcmMessaging.onBackgroundMessage((payload) => {
+  const data = payload.data || {};
+  const title = payload.notification?.title || data.title || '출결 알림';
+  const body = payload.notification?.body || data.body || '';
+
+  return self.registration.showNotification(title, {
+    body: body,
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    vibrate: [200, 100, 200],
+    tag: 'checkout-reminder',
+    renotify: true,
+    requireInteraction: true,
+    data: {
+      url: data.url || '/app',
+      studentId: data.studentId || null,
+      attendanceId: data.attendanceId || null,
+    },
+    actions: [{ action: 'checkout', title: '퇴실 확인' }],
+  });
+});
+
 // Service Worker: PWA 오프라인 + 푸시 알림 처리
 
 const CACHE_NAME = 'attendance-v4';
