@@ -104,9 +104,10 @@ self.addEventListener('notificationclick', (event) => {
   var data = event.notification.data || {};
 
   // 퇴실 처리용 URL (앱 페이지에서 위치확인 + 생체인증 수행)
-  var targetUrl = '/app';
+  var baseUrl = 'https://attendance-system-naaw.onrender.com';
+  var targetUrl = baseUrl + '/app';
   if (data.studentId && data.attendanceId) {
-    targetUrl = '/app?checkout=true&sid=' + encodeURIComponent(data.studentId) + '&aid=' + encodeURIComponent(data.attendanceId);
+    targetUrl = baseUrl + '/app?checkout=true&sid=' + encodeURIComponent(data.studentId) + '&aid=' + encodeURIComponent(data.attendanceId);
   }
 
   // 앱 페이지 열기 (이미 열려있으면 이동 + 포커스)
