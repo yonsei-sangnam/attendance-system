@@ -1255,7 +1255,8 @@ function renderAppPage() {
         try {
           if (!appStudentId) return;
           var isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
-          if (!isStandalone) return;
+          var isAndroid = /Android/i.test(navigator.userAgent);
+          if (!isStandalone || !isAndroid) return;
 
           var firebaseConfig = {
             apiKey: "AIzaSyD3sYGrLF0wmbjyJLziHVqBF-o4UuVE5Po",
