@@ -1488,68 +1488,42 @@ function renderAppPage() {
         showMsg('<div style="font-size:16px;margin-bottom:8px;">📍</div><div style="font-size:14px;color:#1a73e8;">위치 확인 중...</div>');
 
         var locationPassed = false;
-        var locRetryCount = 0;
-        var maxRetries = 2;
-
-        while (!locationPassed && locRetryCount <= maxRetries) {
+        try {
+          var pos;
           try {
-            var pos;
-            try {
-              pos = await new Promise(function(resolve, reject) {
-                navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
-              });
-            } catch (firstErr) {
-              pos = await new Promise(function(resolve, reject) {
-                navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: false, timeout: 20000, maximumAge: 60000 });
-              });
-            }
-            var dist = getDistanceMeters(pos.coords.latitude, pos.coords.longitude, buildingSettings.lat, buildingSettings.lng);
-            if (dist > (buildingSettings.radius || 200)) {
-              showMsg('<div style="font-size:24px;margin-bottom:8px;">🚫</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">건물 외부 감지</div><div style="font-size:13px;color:#86868b;margin-top:6px;">건물에서 너무 멀리 있습니다.</div>');
-              return;
-            }
-            locationPassed = true;
-          } catch (locErr) {
-            locRetryCount++;
-            if (locRetryCount <= maxRetries) {
-              var retry = await new Promise(function(resolve) {
-                showMsg('<div style="font-size:24px;margin-bottom:8px;">📍</div>'
-                  + '<div style="font-size:15px;font-weight:600;color:#ff3b30;">위치 확인 실패</div>'
-                  + '<div style="font-size:13px;color:#86868b;margin:8px 0;">위치 정보를 가져올 수 없습니다. (' + locRetryCount + '/' + maxRetries + ')</div>'
-                  + '<button onclick="document.getElementById(\'locRetryBtn\').value=\'retry\';document.getElementById(\'locRetryBtn\').click()" style="margin-top:12px;padding:10px 24px;background:#1a73e8;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;">다시 시도</button>'
-                  + '<input type="hidden" id="locRetryBtn" onclick="this.resolve()" />');
-                var hiddenBtn = document.getElementById('locRetryBtn');
-                hiddenBtn.resolve = resolve;
-              });
-            }
+            pos = await new Promise(function(resolve, reject) {
+              navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
+            });
+          } catch (firstErr) {
+            pos = await new Promise(function(resolve, reject) {
+              navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: false, timeout: 20000, maximumAge: 60000 });
+            });
           }
+          var dist = getDistanceMeters(pos.coords.latitude, pos.coords.longitude, buildingSettings.lat, buildingSettings.lng);
+          if (dist > (buildingSettings.radius || 200)) {
+            showMsg('<div style="font-size:24px;margin-bottom:8px;">🚫</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">건물 외부 감지</div><div style="font-size:13px;color:#86868b;margin-top:6px;">건물에서 너무 멀리 있습니다.</div>');
+            return;
+          }
+          locationPassed = true;
+        } catch (locErr) {
+          // 위치 실패 → 건너뛰기 옵션 제공
+          locationPassed = await new Promise(function(resolve) {
+            showMsg('<div style="font-size:24px;margin-bottom:8px;">📍</div>'
+              + '<div style="font-size:15px;font-weight:600;color:#ff3b30;">위치 확인을 할 수 없습니다</div>'
+              + '<div style="font-size:13px;color:#86868b;margin:8px 0;">기기에서 위치 정보를 가져올 수 없습니다.</div>'
+              + '<button id="locSkipBtn" style="margin-top:12px;padding:10px 20px;background:#ff9500;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;">위치 확인 없이 진행</button>'
+              + ' <button id="locCancelBtn" style="margin-top:12px;padding:10px 20px;background:#86868b;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;">취소</button>');
+            document.getElementById('locSkipBtn').onclick = function() { resolve(true); };
+            document.getElementById('locCancelBtn').onclick = function() { resolve(false); };
+          });
         }
 
         if (!locationPassed) {
-          // 재시도 모두 실패 → 위치 확인 없이 진행 옵션 제공
-          var skipChoice = await new Promise(function(resolve) {
-            showMsg('<div style="font-size:24px;margin-bottom:8px;">📍</div>'
-              + '<div style="font-size:15px;font-weight:600;color:#ff3b30;">위치 확인을 할 수 없습니다</div>'
-              + '<div style="font-size:13px;color:#86868b;margin:8px 0;">기기에서 위치 정보를 가져올 수 없습니다.<br>위치 확인 없이 퇴실 처리를 진행할 수 있습니다.</div>'
-              + '<div style="display:flex;gap:10px;justify-content:center;margin-top:16px;">'
-              + '<button onclick="this.parentElement.dataset.choice=\'skip\';document.getElementById(\'locSkipBtn\').click()" style="padding:10px 20px;background:#ff9500;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;">위치 확인 없이 진행</button>'
-              + '<button onclick="this.parentElement.dataset.choice=\'cancel\';document.getElementById(\'locSkipBtn\').click()" style="padding:10px 20px;background:#86868b;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;">취소</button>'
-              + '</div>'
-              + '<input type="hidden" id="locSkipBtn" onclick="this.resolve()" />');
-            var skipBtn = document.getElementById('locSkipBtn');
-            skipBtn.resolve = function() {
-              resolve(skipBtn.parentElement.querySelector('[data-choice]')?.dataset.choice || 'cancel');
-            };
-          });
-
-          if (skipChoice !== 'skip') {
-            showMsg('<div style="font-size:15px;color:#86868b;">퇴실 처리가 취소되었습니다.</div>');
-            return;
-          }
-          // 위치 확인 건너뛰기 로그
-          console.log('[Location] 위치 확인 건너뛰기 - 기기 위치 사용 불가');
+          showMsg('<div style="font-size:15px;color:#86868b;">퇴실 처리가 취소되었습니다.</div>');
+          return;
         }
       }
+
 
         // ── Step 3: 생체인증 + 퇴실 처리 ─────────────────────
         showMsg('<div style="font-size:16px;margin-bottom:8px;">🔐</div><div style="font-size:14px;color:#1a73e8;">생체인증을 진행해주세요</div>');
