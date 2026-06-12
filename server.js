@@ -1953,7 +1953,8 @@ app.get('/.well-known/assetlinks.json', (req, res) => {
         namespace: 'android_app',
         package_name: 'com.sangnam.attendance',
         sha256_cert_fingerprints: [
-          '3D:4B:BD:55:0D:CD:A3:78:97:D6:CD:BB:FD:16:0C:07:E3:D0:AA:8E:06:11:49:ED:6B:9A:E3:61:EB:6C:61:AF'
+          '3D:4B:BD:55:0D:CD:A3:78:97:D6:CD:BB:FD:16:0C:07:E3:D0:AA:8E:06:11:49:ED:6B:9A:E3:61:EB:6C:61:AF',
+          '90:96:50:FB:8E:7F:E3:C0:22:71:01:7C:BA:EB:BF:48:F0:51:A8:E6:46:C5:4F:96:40:35:6D:43:95:7C:82:85'
         ]
       }
     }
