@@ -1486,17 +1486,29 @@ function renderAppPage() {
         // ── Step 2: 위치 검증 ──────────────────────────────────
         if (buildingSettings.enabled && buildingSettings.lat && buildingSettings.lng) {
           showMsg('<div style="font-size:16px;margin-bottom:8px;">📍</div><div style="font-size:14px;color:#1a73e8;">위치 확인 중...</div>');
-          try {
-            var pos = await new Promise(function(resolve, reject) {
-              navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
-            });
+        try {
+          var pos;
+            try {
+              pos = await new Promise(function(resolve, reject) {
+                navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
+              });
+            } catch (firstErr) {
+              // 고정밀 실패 시 저정밀로 재시도 (TWA 환경 대응)
+              pos = await new Promise(function(resolve, reject) {
+                navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: false, timeout: 20000, maximumAge: 60000 });
+              });
+            }
             var dist = getDistanceMeters(pos.coords.latitude, pos.coords.longitude, buildingSettings.lat, buildingSettings.lng);
             if (dist > (buildingSettings.radius || 200)) {
-              showMsg('<div style="font-size:24px;margin-bottom:8px;">🚫</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">건물 외부 감지</div><div style="font-size:13px;color:#86868b;margin-top:6px;">건물에서 ' + Math.round(dist) + 'm 떨어져 있어 퇴실 처리가 되지 않았습니다.</div>');
+              showMsg('<div style="font-size:24px;margin-bottom:8px;">🚫</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">건물 외부 감지</div><div style="font-size:13px;color:#86868b;margin-top:6px;">건물에서 너무 멀리 있습니다.</div>');
               return;
             }
           } catch (locErr) {
-            showMsg('<div style="font-size:24px;margin-bottom:8px;">📵</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">' + (locErr.code === 1 ? '위치 권한이 거부되었습니다' : '위치 확인 실패') + '</div><div style="font-size:13px;color:#86868b;margin-top:6px;">퇴실 처리가 되지 않았습니다.</div>');
+            var errMsg = '위치 확인 실패';
+            if (locErr.code === 1) errMsg = '위치 권한이 거부되었습니다. 브라우저 설정에서 위치 권한을 허용해주세요.';
+            if (locErr.code === 2) errMsg = '위치 정보를 사용할 수 없습니다. GPS를 켜주세요.';
+            if (locErr.code === 3) errMsg = '위치 확인 시간 초과. 다시 시도해주세요.';
+            showMsg('<div style="font-size:24px;margin-bottom:8px;">🚫</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">' + errMsg + '</div><div style="font-size:13px;color:#86868b;margin-top:6px;">퇴실 처리가 되지 않았습니다.</div>');
             return;
           }
         }
