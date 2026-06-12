@@ -68,33 +68,17 @@ async function saveSubscription(studentId, subscription) {
 
 // ─── FCM 토큰 저장 (신규) ───────────────────────────────────
 async function saveFcmToken(studentId, fcmToken) {
-  await db.query(`
-    INSERT INTO push_subscriptions (student_id, fcm_token, type)
-    VALUES ($1, $2, 'fcm')
-    ON CONFLICT (student_id, endpoint)
-      DO NOTHING
-  `, [studentId, fcmToken]);
-
-  // 같은 학생의 기존 FCM 토큰 업데이트 (토큰이 바뀔 수 있음)
-  // 위 INSERT가 충돌 시 아래 UPSERT로 처리
-  const existing = await db.query(
-    `SELECT id FROM push_subscriptions WHERE student_id = $1 AND type = 'fcm'`,
+  // 기존 FCM 구독 모두 삭제 후 1건만 새로 등록
+  await db.query(
+    `DELETE FROM push_subscriptions WHERE student_id = $1 AND type = 'fcm'`,
     [studentId]
   );
-
-  if (existing.rows.length === 0) {
-    // endpoint를 fcm_토큰값으로 사용하여 unique 충돌 방지
-    await db.query(`
-      INSERT INTO push_subscriptions (student_id, endpoint, fcm_token, type)
-      VALUES ($1, $2, $2, 'fcm')
-    `, [studentId, fcmToken]);
-  } else {
-    await db.query(`
-      UPDATE push_subscriptions SET fcm_token = $1, updated_at = NOW()
-      WHERE student_id = $2 AND type = 'fcm'
-    `, [fcmToken, studentId]);
-  }
+  await db.query(`
+    INSERT INTO push_subscriptions (student_id, endpoint, fcm_token, type)
+    VALUES ($1, $2, $2, 'fcm')
+  `, [studentId, fcmToken]);
 }
+
 
 // ─── 구독 삭제 ───────────────────────────────────────────────
 async function removeSubscription(endpoint) {
@@ -119,15 +103,11 @@ async function sendPush(studentId, payload) {
         results.push({ type: 'fcm', status: 'skipped', detail: 'FCM 비활성 또는 토큰 없음' });
         continue;
       }
-
-      try {
         await admin.messaging().send({
           token: sub.fcm_token,
-          notification: {
-            title: payload.title,
-            body: payload.body,
-          },
           data: {
+            title: payload.title || '출결 알림',
+            body: payload.body || '',
             url: payload.url || '/',
             studentId: String(payload.studentId || ''),
             attendanceId: String(payload.attendanceId || ''),
@@ -135,7 +115,12 @@ async function sendPush(studentId, payload) {
           android: {
             priority: 'high',
           },
+          webpush: {
+            headers: { Urgency: 'high' },
+          },
         });
+      try {
+
         results.push({ type: 'fcm', status: 'sent' });
       } catch (err) {
         // 토큰 만료/무효 시 삭제
