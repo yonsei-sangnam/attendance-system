@@ -1319,9 +1319,14 @@ function renderAppPage() {
 
           showStep(2);
           loadTodayStatus();
-          checkPushStatus();
-          handleCheckoutFromPush();
+        var isAndroidStandalone = /Android/i.test(navigator.userAgent) && window.matchMedia('(display-mode: standalone)').matches;
+        if (isAndroidStandalone) {
           registerFcmToken();
+        } else {
+          checkPushStatus();
+        }
+        handleCheckoutFromPush();
+
         } catch (err) {
           msgEl.innerHTML = '<div class="msg msg-error">' + err.message + '</div>';
         } finally { btn.disabled = false; btn.textContent = '시작'; }
