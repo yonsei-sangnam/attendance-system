@@ -47,7 +47,7 @@ self.addEventListener('push', (event) => {
     icon: '/icon-192.png',
     badge: '/icon-192.png',
     vibrate: [200, 100, 200],
-    tag: 'checkout-reminder',
+    tag: 'checkout-' + Date.now(),
     renotify: true,
     requireInteraction: true,
     data: {
