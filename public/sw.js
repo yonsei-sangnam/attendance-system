@@ -30,7 +30,13 @@ self.addEventListener('push', (event) => {
 
   if (event.data) {
     try {
-      data = event.data.json();
+      var json = event.data.json();
+      // FCM data-only 메시지 형식 처리
+      if (json.data && json.data.title) {
+        data = json.data;
+      } else {
+        data = json;
+      }
     } catch (e) {
       data.body = event.data.text();
     }
