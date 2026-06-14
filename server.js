@@ -840,7 +840,7 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
           if (data.hasCredential) {
             // 이미 등록됨 → 인증 단계로
             showStep(2);
-            if (/Android/i.test(navigator.userAgent) && window.matchMedia('(display-mode: standalone)').matches) { registerFcmToken(); } else { checkPushStatus(); }
+            registerFcmToken();
           } else {
             // 미등록 → 등록 안내
             showStep(3);
@@ -932,7 +932,7 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
             setTimeout(() => {
               document.getElementById('studentName').textContent = currentStudentName + '님';
               showStep(2);
-              if (/Android/i.test(navigator.userAgent) && window.matchMedia('(display-mode: standalone)').matches) { registerFcmToken(); } else { checkPushStatus(); }
+              registerFcmToken();
             }, 1500);
           } else {
             throw new Error(verifyData.error || '등록 실패');
@@ -1060,7 +1060,7 @@ function renderRegisterPage(token, studentId, studentName) {
               showStep(3); // 재등록 → 관리자 승인 대기
             } else {
               showStep(2); // 신규 등록 완료
-              if (/Android/i.test(navigator.userAgent) && window.matchMedia('(display-mode: standalone)').matches) { registerFcmToken(); } else { checkPushStatus(); }
+              registerFcmToken();
             }
           } else {
             throw new Error(verifyData.error || '등록 실패');
@@ -1258,6 +1258,10 @@ function renderAppPage() {
           var isAndroid = /Android/i.test(navigator.userAgent);
           if (!isStandalone || !isAndroid) return;
 
+          // 서비스 워커 등록 대기
+          await navigator.serviceWorker.register('/sw.js');
+          var swReg = await navigator.serviceWorker.ready;
+
           var firebaseConfig = {
             apiKey: "AIzaSyD3sYGrLF0wmbjyJLziHVqBF-o4UuVE5Po",
             authDomain: "sangnam-attendance.firebaseapp.com",
@@ -1273,7 +1277,6 @@ function renderAppPage() {
           var permission = await Notification.requestPermission();
           if (permission !== 'granted') return;
 
-          var swReg = await navigator.serviceWorker.getRegistration();
           var token = await messaging.getToken({
             vapidKey: 'BPUVObyUjiiSBFWkNG1U2E625alOLUgZ4B9LESnk2hMuMkuNpyVtm1JqTiScZ60wAF11ovs3NE3Y2GfulIK5waY',
             serviceWorkerRegistration: swReg
@@ -1286,6 +1289,11 @@ function renderAppPage() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ studentId: appStudentId, fcmToken: token })
           });
+
+          // 알림 토글 활성화
+          var toggle = document.getElementById('pushToggle');
+          if (toggle) toggle.checked = true;
+
           console.log('[FCM] Token registered');
         } catch (err) {
           console.error('[FCM] Registration failed:', err);
@@ -1319,13 +1327,9 @@ function renderAppPage() {
 
           showStep(2);
           loadTodayStatus();
-        var isAndroidStandalone = /Android/i.test(navigator.userAgent) && window.matchMedia('(display-mode: standalone)').matches;
-        if (isAndroidStandalone) {
-          registerFcmToken();
-        } else {
           checkPushStatus();
-        }
-        handleCheckoutFromPush();
+          handleCheckoutFromPush();
+          registerFcmToken();
 
         } catch (err) {
           msgEl.innerHTML = '<div class="msg msg-error">' + err.message + '</div>';
