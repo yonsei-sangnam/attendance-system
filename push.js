@@ -103,22 +103,31 @@ async function sendPush(studentId, payload) {
         results.push({ type: 'fcm', status: 'skipped', detail: 'FCM 비활성 또는 토큰 없음' });
         continue;
       }
+        var clickUrl = 'https://attendance-system-naaw.onrender.com/app';
+        if (payload.studentId && payload.attendanceId) {
+          clickUrl += '?checkout=true&sid=' + encodeURIComponent(String(payload.studentId)) + '&aid=' + encodeURIComponent(String(payload.attendanceId));
+        }
+
         await admin.messaging().send({
           token: sub.fcm_token,
-          data: {
-            title: payload.title || '출결 알림',
-            body: payload.body || '',
-            url: payload.url || '/',
-            studentId: String(payload.studentId || ''),
-            attendanceId: String(payload.attendanceId || ''),
-          },
-          android: {
-            priority: 'high',
-          },
           webpush: {
             headers: { Urgency: 'high' },
+            notification: {
+              title: payload.title || '출결 알림',
+              body: payload.body || '',
+              icon: '/icon-192.png',
+              badge: '/icon-192.png',
+              vibrate: [200, 100, 200],
+              tag: 'checkout-' + Date.now(),
+              renotify: 'true',
+              require_interaction: 'true',
+            },
+            fcm_options: {
+              link: clickUrl,
+            },
           },
         });
+      
       try {
 
         results.push({ type: 'fcm', status: 'sent' });
