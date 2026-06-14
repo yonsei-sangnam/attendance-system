@@ -1252,16 +1252,18 @@ function renderAppPage() {
 
       // ─── FCM 토큰 등록 (TWA/설치형 앱 전용) ─────────────────
       async function registerFcmToken() {
+        var msgEl = document.getElementById('pushMsg');
         try {
           if (!appStudentId) return;
           var isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
           var isAndroid = /Android/i.test(navigator.userAgent);
           if (!isStandalone || !isAndroid) return;
 
-          // 서비스 워커 등록 대기
+          if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#1a73e8;">[1] 서비스워커 등록 중...</div>';
           await navigator.serviceWorker.register('/sw.js');
           var swReg = await navigator.serviceWorker.ready;
 
+          if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#1a73e8;">[2] Firebase 초기화 중...</div>';
           var firebaseConfig = {
             apiKey: "AIzaSyD3sYGrLF0wmbjyJLziHVqBF-o4UuVE5Po",
             authDomain: "sangnam-attendance.firebaseapp.com",
@@ -1270,33 +1272,39 @@ function renderAppPage() {
             messagingSenderId: "390976491268",
             appId: "1:390976491268:web:f92814cd53f5662885ca51"
           };
-
           if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
           var messaging = firebase.messaging();
 
+          if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#1a73e8;">[3] 알림 권한 요청 중...</div>';
           var permission = await Notification.requestPermission();
-          if (permission !== 'granted') return;
+          if (permission !== 'granted') {
+            if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#ff3b30;">알림 권한 거부됨: ' + permission + '</div>';
+            return;
+          }
 
+          if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#1a73e8;">[4] FCM 토큰 발급 중...</div>';
           var token = await messaging.getToken({
             vapidKey: 'BPUVObyUjiiSBFWkNG1U2E625alOLUgZ4B9LESnk2hMuMkuNpyVtm1JqTiScZ60wAF11ovs3NE3Y2GfulIK5waY',
             serviceWorkerRegistration: swReg
           });
 
-          if (!token) return;
+          if (!token) {
+            if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#ff3b30;">FCM 토큰 발급 실패 (null)</div>';
+            return;
+          }
 
+          if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#1a73e8;">[5] 서버 등록 중...</div>';
           await fetch('/api/push/fcm-token', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ studentId: appStudentId, fcmToken: token })
           });
 
-          // 알림 토글 활성화
           var toggle = document.getElementById('pushToggle');
           if (toggle) toggle.checked = true;
-
-          console.log('[FCM] Token registered');
+          if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#34c759;">FCM 알림 등록 완료</div>';
         } catch (err) {
-          console.error('[FCM] Registration failed:', err);
+          if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#ff3b30;">FCM 오류: ' + err.message + '</div>';
         }
       }
 
