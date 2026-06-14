@@ -1,6 +1,6 @@
 // Service Worker: PWA 오프라인 + 푸시 알림 처리
 
-const CACHE_NAME = 'attendance-v4';
+const CACHE_NAME = 'attendance-v5';
 
 // ─── 설치 ────────────────────────────────────────────────────
 self.addEventListener('install', (event) => {
