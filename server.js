@@ -1490,7 +1490,11 @@ function renderAppPage() {
       }
 
       // ─── 푸시 알림에서 퇴실 처리 (위치확인 → 생체인증 → 퇴실) ──
+      var checkoutFromPushHandled = false;
       async function handleCheckoutFromPush(hasGesture) {
+        if (checkoutFromPushHandled) return;
+        var params = new URLSearchParams(window.location.search);
+        if (params.get('checkout')) checkoutFromPushHandled = true;
         // URL 파라미터에서 checkout 정보 추출 → _pendingCheckout에 저장
         var params = new URLSearchParams(window.location.search);
         if (params.get('checkout') === 'true') {
