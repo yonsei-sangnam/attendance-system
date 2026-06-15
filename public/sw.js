@@ -43,12 +43,21 @@ self.addEventListener('activate', (event) => {
 
 // ─── 푸시 알림 수신 ──────────────────────────────────────────
 self.addEventListener('push', (event) => {
+  // FCM 메시지는 Firebase가 처리하므로 스킵
+  if (event.data) {
+    try {
+      var check = event.data.json();
+      if (check.notification || check.fcmMessageId || (check.data && check.data.source === 'fcm')) {
+        return;
+      }
+    } catch (e) {}
+  }
+
   var data = { title: '출결 알림', body: '퇴실 확인을 해주세요.', url: '/app' };
 
   if (event.data) {
     try {
       var json = event.data.json();
-      // FCM data-only 메시지 형식 처리
       if (json.data && json.data.title) {
         data = json.data;
       } else {
