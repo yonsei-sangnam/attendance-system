@@ -1180,8 +1180,7 @@ function renderAppPage() {
     .status-value2 { font-weight:600; }
     .install-guide { background:#fff3e0; border-radius:10px; padding:14px 18px; margin-top:16px; font-size:13px; color:#e65100; line-height:1.8; }
   </style>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js"></script>
+
   </head>
   <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;background:#003776;">
     <div class="card" style="max-width:420px;">
@@ -1251,6 +1250,16 @@ function renderAppPage() {
       }
 
       // ─── FCM 토큰 등록 (TWA/설치형 앱 전용) ─────────────────
+      function loadScript(src) {
+        return new Promise(function(resolve, reject) {
+          var s = document.createElement('script');
+          s.src = src;
+          s.onload = resolve;
+          s.onerror = reject;
+          document.head.appendChild(s);
+        });
+      }
+
       async function registerFcmToken() {
         var msgEl = document.getElementById('pushMsg');
         try {
@@ -1260,20 +1269,20 @@ function renderAppPage() {
           if (!isStandalone || !isAndroid) return;
 
           // 삼성 브라우저 감지 → Chrome 안내
-          var isSamsungBrowser = /SamsungBrowser/i.test(navigator.userAgent);
-          if (isSamsungBrowser) {
-            var msgEl2 = document.getElementById('pushMsg');
-            if (msgEl2) msgEl2.innerHTML = '<div style="font-size:12px;color:#ff9500;line-height:1.6;">'
-              + '⚠️ 알림을 받으려면 Chrome을 기본 브라우저로 설정해주세요.<br>'
-              + '<span style="color:#86868b;">설정 → 앱 → 기본 앱 → 브라우저 → Chrome</span></div>';
+          if (/SamsungBrowser/i.test(navigator.userAgent)) {
+            if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#ff9500;line-height:1.6;">⚠️ 알림을 받으려면 Chrome을 기본 브라우저로 설정해주세요.<br><span style="color:#86868b;">설정 → 앱 → 기본 앱 → 브라우저 → Chrome</span></div>';
             return;
           }
 
-          if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#1a73e8;">[1] 서비스워커 등록 중...</div>';
+          // Firebase SDK 동적 로드
+          if (typeof firebase === 'undefined') {
+            await loadScript('https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js');
+            await loadScript('https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js');
+          }
+
           await navigator.serviceWorker.register('/sw.js');
           var swReg = await navigator.serviceWorker.ready;
 
-          if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#1a73e8;">[2] Firebase 초기화 중...</div>';
           var firebaseConfig = {
             apiKey: "AIzaSyD3sYGrLF0wmbjyJLziHVqBF-o4UuVE5Po",
             authDomain: "sangnam-attendance.firebaseapp.com",
@@ -1285,25 +1294,15 @@ function renderAppPage() {
           if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
           var messaging = firebase.messaging();
 
-          if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#1a73e8;">[3] 알림 권한 요청 중...</div>';
           var permission = await Notification.requestPermission();
-          if (permission !== 'granted') {
-            if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#ff3b30;">알림 권한 거부됨: ' + permission + '</div>';
-            return;
-          }
+          if (permission !== 'granted') return;
 
-          if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#1a73e8;">[4] FCM 토큰 발급 중...</div>';
           var token = await messaging.getToken({
             vapidKey: 'BPUVObyUjiiSBFWkNG1U2E625alOLUgZ4B9LESnk2hMuMkuNpyVtm1JqTiScZ60wAF11ovs3NE3Y2GfulIK5waY',
             serviceWorkerRegistration: swReg
           });
+          if (!token) return;
 
-          if (!token) {
-            if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#ff3b30;">FCM 토큰 발급 실패 (null)</div>';
-            return;
-          }
-
-          if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#1a73e8;">[5] 서버 등록 중...</div>';
           await fetch('/api/push/fcm-token', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1312,9 +1311,9 @@ function renderAppPage() {
 
           var toggle = document.getElementById('pushToggle');
           if (toggle) toggle.checked = true;
-          if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#34c759;">FCM 알림 등록 완료</div>';
+          if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#34c759;">알림이 활성화되었습니다.</div>';
         } catch (err) {
-          if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#ff3b30;">FCM 오류: ' + err.message + '</div>';
+          if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#ff3b30;">알림 등록 실패: ' + err.message + '</div>';
         }
       }
 
