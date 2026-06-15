@@ -68,11 +68,17 @@ async function saveSubscription(studentId, subscription) {
 
 // ─── FCM 토큰 저장 (신규) ───────────────────────────────────
 async function saveFcmToken(studentId, fcmToken) {
-  // 기존 FCM 구독 모두 삭제 후 1건만 새로 등록
+  // 기존 FCM 삭제
   await db.query(
     `DELETE FROM push_subscriptions WHERE student_id = $1 AND type = 'fcm'`,
     [studentId]
   );
+  // Firebase getToken이 만든 webpush 구독도 삭제 (FCM 엔드포인트와 충돌 방지)
+  await db.query(
+    `DELETE FROM push_subscriptions WHERE student_id = $1 AND type = 'webpush' AND endpoint LIKE '%fcm.googleapis.com%'`,
+    [studentId]
+  );
+  // FCM 1건 등록
   await db.query(`
     INSERT INTO push_subscriptions (student_id, endpoint, fcm_token, type)
     VALUES ($1, $2, $2, 'fcm')
