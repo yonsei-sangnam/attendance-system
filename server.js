@@ -1346,6 +1346,8 @@ function renderAppPage() {
           loadTodayStatus();
           checkPushStatus();
           handleCheckoutFromPush();
+          // iOS cold start 대응: 페이지 로드 후 재시도
+          setTimeout(function() { handleCheckoutFromPush(); }, 1500);
           registerFcmToken();
 
         } catch (err) {
