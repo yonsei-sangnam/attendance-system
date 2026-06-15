@@ -1259,6 +1259,16 @@ function renderAppPage() {
           var isAndroid = /Android/i.test(navigator.userAgent);
           if (!isStandalone || !isAndroid) return;
 
+          // 삼성 브라우저 감지 → Chrome 안내
+          var isSamsungBrowser = /SamsungBrowser/i.test(navigator.userAgent);
+          if (isSamsungBrowser) {
+            var msgEl2 = document.getElementById('pushMsg');
+            if (msgEl2) msgEl2.innerHTML = '<div style="font-size:12px;color:#ff9500;line-height:1.6;">'
+              + '⚠️ 알림을 받으려면 Chrome을 기본 브라우저로 설정해주세요.<br>'
+              + '<span style="color:#86868b;">설정 → 앱 → 기본 앱 → 브라우저 → Chrome</span></div>';
+            return;
+          }
+
           if (msgEl) msgEl.innerHTML = '<div style="font-size:12px;color:#1a73e8;">[1] 서비스워커 등록 중...</div>';
           await navigator.serviceWorker.register('/sw.js');
           var swReg = await navigator.serviceWorker.ready;
