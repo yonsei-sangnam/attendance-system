@@ -687,6 +687,7 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
       const TOKEN = '${token}';
       let currentStudentId = null;
       let currentStudentName = null;
+      let currentRegToken = null;
 
       // ─── 단계 전환 ──────────────────────────────────────
       function showStep(n) {
@@ -744,12 +745,10 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
             throw new Error(verifyData.error || verifyData.message || '인증 실패');
           }
         } catch (err) {
-          if (err.name === 'NotAllowedError') {
-            msgEl.innerHTML = '<div class="msg msg-info">인증이 취소되었습니다.</div>';
-          } else if (err.name === 'AbortError' || err.message.includes('No credentials')) {
-            // 패스키 없음 → 전화번호 입력으로
-            msgEl.innerHTML = '<div class="msg msg-info">등록된 패스키가 없습니다. 전화번호로 진행해주세요.</div>';
-            setTimeout(function() { showStep(1); }, 1500);
+          if (err.name === 'NotAllowedError' || err.name === 'AbortError' || (err.message && err.message.includes('No credentials'))) {
+            // 패스키 없음 또는 인증 취소 → 전화번호 입력으로
+            msgEl.innerHTML = '<div class="msg msg-info">전화번호로 본인확인 후 진행합니다.</div>';
+            setTimeout(function() { showStep(1); }, 1200);
           } else {
             msgEl.innerHTML = '<div class="msg msg-error">' + (err.message || '인증 오류') + '</div>';
           }
@@ -842,7 +841,17 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
             showStep(2);
             registerFcmToken();
           } else {
-            // 미등록 → 등록 안내
+            // 미등록 → 등록 토큰 발급 후 등록 안내
+            try {
+              var tokenRes = await fetch('/api/register/phone-lookup', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone: phone })
+              });
+              var tokenData = await tokenRes.json();
+              if (tokenData.found && tokenData.hasToken) {
+                currentRegToken = tokenData.token;
+              }
+            } catch (e) { console.log('토큰 발급 실패:', e); }
             showStep(3);
           }
         } catch (err) {
@@ -905,12 +914,19 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
         btn.innerHTML = '<span class="spinner"></span> 등록 중...';
         msgEl.innerHTML = '';
 
+        if (!currentRegToken) {
+          msgEl.innerHTML = '<div class="msg msg-error">등록 토큰이 없습니다. QR을 다시 스캔해주세요.</div>';
+          btn.disabled = false;
+          btn.textContent = '지문 / Face ID 등록하기';
+          return;
+        }
+
         try {
           // 등록 옵션 요청
           const optRes = await fetch('/api/register/options', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ studentId: currentStudentId })
+            body: JSON.stringify({ studentId: currentStudentId, token: currentRegToken })
           });
           const options = await optRes.json();
           if (options.error) throw new Error(options.error);
@@ -922,7 +938,7 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
           const verifyRes = await fetch('/api/register/verify', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ studentId: currentStudentId, response: regResp })
+            body: JSON.stringify({ studentId: currentStudentId, token: currentRegToken, response: regResp })
           });
           const verifyData = await verifyRes.json();
 
@@ -1027,11 +1043,27 @@ function renderRegisterPage(token, studentId, studentName) {
     <script>
       const REG_TOKEN = '${token}';
       const STUDENT_ID = '${studentId}';
+      let prefetchedOptions = null;
 
       function showStep(n) {
         document.querySelectorAll('.step').forEach(el => el.classList.remove('active'));
         document.getElementById('step' + n).classList.add('active');
       }
+
+      // 페이지 로드 시 등록 옵션 미리 요청
+      async function prefetchOptions() {
+        try {
+          const optRes = await fetch('/api/register/options', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ studentId: STUDENT_ID, token: REG_TOKEN })
+          });
+          const options = await optRes.json();
+          if (!options.error) {
+            prefetchedOptions = options;
+          }
+        } catch (e) { console.log('옵션 미리받기 실패:', e); }
+      }
+      prefetchOptions();
 
       async function doRegister() {
         const btn = document.getElementById('regBtn');
@@ -1040,14 +1072,20 @@ function renderRegisterPage(token, studentId, studentName) {
         msgEl.innerHTML = '';
 
         try {
-          const optRes = await fetch('/api/register/options', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ studentId: STUDENT_ID, token: REG_TOKEN })
-          });
-          const options = await optRes.json();
-          if (options.error) throw new Error(options.error);
+          var options = prefetchedOptions;
+          if (!options) {
+            // 미리 받기 실패 시 다시 시도
+            var optRes = await fetch('/api/register/options', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ studentId: STUDENT_ID, token: REG_TOKEN })
+            });
+            options = await optRes.json();
+            if (options.error) throw new Error(options.error);
+          }
 
           const regResp = await SimpleWebAuthnBrowser.startRegistration({ optionsJSON: options });
+          // 사용한 옵션은 1회성이므로 초기화
+          prefetchedOptions = null;
 
           const verifyRes = await fetch('/api/register/verify', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1066,10 +1104,12 @@ function renderRegisterPage(token, studentId, studentName) {
             throw new Error(verifyData.error || '등록 실패');
           }
         } catch (err) {
-          const msg = err.name === 'NotAllowedError' ? '등록이 취소되었습니다. 다시 시도해주세요.'
+          const msg = err.name === 'NotAllowedError' ? '인증 팝업이 닫혔습니다. 아래 버튼을 다시 눌러주세요.'
             : err.name === 'InvalidStateError' ? '이미 이 기기에 등록되어 있습니다. 관리자에게 초기화를 요청하세요.'
             : err.message;
           msgEl.innerHTML = '<div class="msg msg-error">' + msg + '</div>';
+          // 재시도를 위해 옵션 다시 미리 받기
+          prefetchOptions();
         } finally {
           btn.disabled = false; btn.textContent = '지문 / Face ID 등록하기';
         }
