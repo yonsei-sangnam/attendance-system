@@ -704,13 +704,65 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
         document.getElementById('lookupMsg').innerHTML = '';
       }
 
+      // ─── 거리 계산 (Haversine) ────────────────────────────
+      function getDistanceMeters(lat1, lon1, lat2, lon2) {
+        var R = 6371000;
+        var p1 = lat1 * Math.PI / 180;
+        var p2 = lat2 * Math.PI / 180;
+        var dp = (lat2 - lat1) * Math.PI / 180;
+        var dl = (lon2 - lon1) * Math.PI / 180;
+        var a = Math.sin(dp/2)*Math.sin(dp/2) + Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)*Math.sin(dl/2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      }
+
+      // ─── 위치 확인 (입실용) ───────────────────────────────
+      async function checkLocationForCheckin(msgEl) {
+        var buildingSettings = { enabled: false };
+        try { var sRes = await fetch('/api/settings/building'); buildingSettings = await sRes.json(); } catch (e) {}
+
+        if (!buildingSettings.enabled || !buildingSettings.lat || !buildingSettings.lng) {
+          return true;
+        }
+
+        msgEl.innerHTML = '<div class="msg msg-info" style="display:flex;align-items:center;justify-content:center;gap:8px;"><span class="spinner"></span> 위치 확인 중...</div>';
+
+        try {
+          var pos;
+          try {
+            pos = await new Promise(function(resolve, reject) {
+              navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
+            });
+          } catch (firstErr) {
+            pos = await new Promise(function(resolve, reject) {
+              navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: false, timeout: 20000, maximumAge: 60000 });
+            });
+          }
+          var dist = getDistanceMeters(pos.coords.latitude, pos.coords.longitude, buildingSettings.lat, buildingSettings.lng);
+          if (dist > (buildingSettings.radius || 200)) {
+            msgEl.innerHTML = '<div class="msg msg-error" style="text-align:center;"><div style="font-size:24px;margin-bottom:6px;">\ud83d\udeab</div><div style="font-weight:600;">건물 외부 감지</div><div style="font-size:13px;color:#86868b;margin-top:4px;">강의실 근처에서 다시 시도해주세요.</div></div>';
+            return false;
+          }
+          msgEl.innerHTML = '';
+          return true;
+        } catch (locErr) {
+          msgEl.innerHTML = '<div class="msg msg-error" style="text-align:center;"><div style="font-size:24px;margin-bottom:6px;">\ud83d\udccd</div><div style="font-weight:600;">위치 확인 실패</div><div style="font-size:13px;color:#86868b;margin-top:4px;">위치 정보를 가져올 수 없습니다.<br>담당자에게 문의하세요.</div></div>';
+          return false;
+        }
+      }
+
       // ─── 0. 패스키 직접 인증 (전화번호 불필요) ───────────
       async function passkeyAuth() {
         const btn = document.getElementById('passkeyBtn');
         const msgEl = document.getElementById('passkeyMsg');
         btn.disabled = true;
-        btn.innerHTML = '<span class="spinner"></span> 인증 중...';
+        btn.innerHTML = '<span class="spinner"></span> 위치 확인 중...';
         msgEl.innerHTML = '';
+
+        // ── 위치 확인 ──
+        var locOk = await checkLocationForCheckin(msgEl);
+        if (!locOk) { btn.disabled = false; btn.innerHTML = '인증하기'; btn.style.fontSize = '18px'; return; }
+
+        btn.innerHTML = '<span class="spinner"></span> 인증 중...';
 
         try {
           // 패스키 옵션 요청 (입실: 수강생 미특정 → 기기의 모든 패스키 표시)
@@ -746,7 +798,6 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
           }
         } catch (err) {
           if (err.name === 'NotAllowedError' || err.name === 'AbortError' || (err.message && err.message.includes('No credentials'))) {
-            // 패스키 없음 또는 인증 취소 → 전화번호 입력으로
             msgEl.innerHTML = '<div class="msg msg-info">전화번호로 본인확인 후 진행합니다.</div>';
             setTimeout(function() { showStep(1); }, 1200);
           } else {
@@ -867,8 +918,14 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
         const btn = document.getElementById('authBtn');
         const msgEl = document.getElementById('authMsg');
         btn.disabled = true;
-        btn.innerHTML = '<span class="spinner"></span> 인증 중...';
+        btn.innerHTML = '<span class="spinner"></span> 위치 확인 중...';
         msgEl.innerHTML = '';
+
+        // ── 위치 확인 ──
+        var locOk = await checkLocationForCheckin(msgEl);
+        if (!locOk) { btn.disabled = false; btn.textContent = '지문 / Face ID 인증'; return; }
+
+        btn.innerHTML = '<span class="spinner"></span> 인증 중...';
 
         try {
           // 인증 옵션 요청
@@ -1050,7 +1107,6 @@ function renderRegisterPage(token, studentId, studentName) {
         document.getElementById('step' + n).classList.add('active');
       }
 
-      // 페이지 로드 시 등록 옵션 미리 요청 (버튼 클릭 시 즉시 생체인증 실행을 위해)
       async function prefetchOptions() {
         try {
           const optRes = await fetch('/api/register/options', {
@@ -1058,9 +1114,7 @@ function renderRegisterPage(token, studentId, studentName) {
             body: JSON.stringify({ studentId: STUDENT_ID, token: REG_TOKEN })
           });
           const options = await optRes.json();
-          if (!options.error) {
-            prefetchedOptions = options;
-          }
+          if (!options.error) { prefetchedOptions = options; }
         } catch (e) { console.log('옵션 미리받기 실패:', e); }
       }
       prefetchOptions();
@@ -1106,7 +1160,6 @@ function renderRegisterPage(token, studentId, studentName) {
             : err.name === 'InvalidStateError' ? '이미 이 기기에 등록되어 있습니다. 관리자에게 초기화를 요청하세요.'
             : err.message;
           msgEl.innerHTML = '<div class="msg msg-error">' + msg + '</div>';
-          // 재시도를 위해 옵션 다시 미리 받기
           prefetchOptions();
         } finally {
           btn.disabled = false; btn.textContent = '지문 / Face ID 등록하기';
@@ -1580,7 +1633,7 @@ function renderAppPage() {
           }
           locationPassed = true;
         } catch (locErr) {
-          // [비활성화] 위치 실패 시 건너뛰기 버튼 제공 기능 - 부정출석 방지를 위해 비활성화
+          // [비활성화] 위치 실패 시 건너뛰기 버튼 - 부정출석 방지를 위해 비활성화
           // 복원하려면 아래 주석을 해제하고, locationPassed = false; 줄과 showMsg 줄을 삭제하세요.
           // locationPassed = await new Promise(function(resolve) {
           //   showMsg('<div style="font-size:24px;margin-bottom:8px;">📍</div>'
