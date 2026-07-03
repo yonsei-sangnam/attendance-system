@@ -80,14 +80,21 @@ app.post('/admin/login', (req, res) => {
   if (!pw) return res.status(500).send('ADMIN_PASSWORD 환경변수가 설정되지 않았습니다.');
   if (req.body.password === pw) {
     const token = makeAdminToken();
-    res.setHeader('Set-Cookie', 'admin_token=' + token + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400' + (req.secure ? '; Secure' : ''));
+    const secure = req.secure ? '; Secure' : '';
+    res.setHeader('Set-Cookie', [
+      'admin_token=' + token + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400' + secure,
+      'admin_token=deleted; Path=/admin; HttpOnly; SameSite=Strict; Max-Age=0'
+    ]);
     return res.redirect('/admin');
   }
   res.redirect('/admin/login?error=1');
 });
 
 app.get('/admin/logout', (req, res) => {
-  res.setHeader('Set-Cookie', 'admin_token=deleted; Path=/; HttpOnly; SameSite=Strict; Max-Age=0');
+  res.setHeader('Set-Cookie', [
+    'admin_token=deleted; Path=/; HttpOnly; SameSite=Strict; Max-Age=0',
+    'admin_token=deleted; Path=/admin; HttpOnly; SameSite=Strict; Max-Age=0'
+  ]);
   res.redirect('/admin/login');
 });
 
@@ -808,7 +815,6 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
         var buildingSettings = { enabled: false };
         try { var sRes = await fetch('/api/settings/building'); buildingSettings = await sRes.json(); } catch (e) {}
         if (!buildingSettings.enabled || !buildingSettings.lat || !buildingSettings.lng) return true;
-
         msgEl.innerHTML = '<div class="msg msg-info" style="display:flex;align-items:center;justify-content:center;gap:8px;"><span class="spinner"></span> 위치 확인 중...</div>';
         try {
           var pos;
@@ -1716,13 +1722,8 @@ function renderAppPage() {
           locationPassed = true;
         } catch (locErr) {
           // [비활성화] 위치 실패 시 건너뛰기 버튼 - 부정출석 방지를 위해 비활성화
-          // 복원하려면 아래 주석을 해제하고, locationPassed = false; 줄과 showMsg 줄을 삭제하세요.
           // locationPassed = await new Promise(function(resolve) {
-          //   showMsg('<div style="font-size:24px;margin-bottom:8px;">📍</div>'
-          //     + '<div style="font-size:15px;font-weight:600;color:#ff3b30;">위치 확인을 할 수 없습니다</div>'
-          //     + '<div style="font-size:13px;color:#86868b;margin:8px 0;">기기에서 위치 정보를 가져올 수 없습니다.</div>'
-          //     + '<button id="locSkipBtn" style="margin-top:12px;padding:10px 20px;background:#ff9500;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;">위치 확인 없이 진행</button>'
-          //     + ' <button id="locCancelBtn" style="margin-top:12px;padding:10px 20px;background:#86868b;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;">취소</button>');
+          //   showMsg(... 생략 ...);
           //   document.getElementById('locSkipBtn').onclick = function() { resolve(true); };
           //   document.getElementById('locCancelBtn').onclick = function() { resolve(false); };
           // });
