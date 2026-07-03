@@ -22,7 +22,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 const ADMIN_SECRET = process.env.ADMIN_SECRET || 'sangnam-attendance-secret-key-2026';
 
 function makeAdminToken() {
-  const expires = Date.now() + 24 * 60 * 60 * 1000; // 24시간
+  const expires = Date.now() + 24 * 60 * 60 * 1000;
   const sig = crypto.createHmac('sha256', ADMIN_SECRET).update(String(expires)).digest('hex');
   return expires + '.' + sig;
 }
@@ -48,7 +48,6 @@ function parseCookies(req) {
   return obj;
 }
 
-// 로그인 페이지 (인증 불필요)
 app.get('/admin/login', (req, res) => {
   const error = req.query.error === '1' ? '<div style="color:#ff3b30;margin-bottom:16px;font-size:14px;">비밀번호가 올바르지 않습니다.</div>' : '';
   const expired = req.query.expired === '1' ? '<div style="color:#ff9500;margin-bottom:16px;font-size:14px;">세션이 만료되었습니다. 다시 로그인해주세요.</div>' : '';
@@ -81,21 +80,19 @@ app.post('/admin/login', (req, res) => {
   if (!pw) return res.status(500).send('ADMIN_PASSWORD 환경변수가 설정되지 않았습니다.');
   if (req.body.password === pw) {
     const token = makeAdminToken();
-    res.setHeader('Set-Cookie', 'admin_token=' + token + '; Path=/admin; HttpOnly; SameSite=Strict; Max-Age=86400' + (req.secure ? '; Secure' : ''));
+    res.setHeader('Set-Cookie', 'admin_token=' + token + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400' + (req.secure ? '; Secure' : ''));
     return res.redirect('/admin');
   }
   res.redirect('/admin/login?error=1');
 });
 
 app.get('/admin/logout', (req, res) => {
-  res.setHeader('Set-Cookie', 'admin_token=deleted; Path=/admin; HttpOnly; SameSite=Strict; Max-Age=0');
+  res.setHeader('Set-Cookie', 'admin_token=deleted; Path=/; HttpOnly; SameSite=Strict; Max-Age=0');
   res.redirect('/admin/login');
 });
 
-// 관리자 인증 미들웨어 (login/logout 이후에 등록 → 이 위의 라우트는 인증 없이 접근)
+// 관리자 인증 미들웨어
 app.use('/admin', (req, res, next) => {
-  // /api/admin 경로는 별도 처리 가능하도록 통과 (필요 시 주석 해제하여 보호)
-  // if (req.originalUrl.startsWith('/api/admin')) return next();
   const cookies = parseCookies(req);
   if (verifyAdminToken(cookies.admin_token)) return next();
   res.redirect('/admin/login' + (cookies.admin_token ? '?expired=1' : ''));
@@ -778,6 +775,7 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
       const TOKEN = '${token}';
       let currentStudentId = null;
       let currentStudentName = null;
+      let currentRegToken = null;
 
       // ─── 단계 전환 ──────────────────────────────────────
       function showStep(n) {
@@ -794,13 +792,60 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
         document.getElementById('lookupMsg').innerHTML = '';
       }
 
+      // ─── 거리 계산 (Haversine) ────────────────────────────
+      function getDistanceMeters(lat1, lon1, lat2, lon2) {
+        var R = 6371000;
+        var p1 = lat1 * Math.PI / 180;
+        var p2 = lat2 * Math.PI / 180;
+        var dp = (lat2 - lat1) * Math.PI / 180;
+        var dl = (lon2 - lon1) * Math.PI / 180;
+        var a = Math.sin(dp/2)*Math.sin(dp/2) + Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)*Math.sin(dl/2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      }
+
+      // ─── 위치 확인 (입실용) ───────────────────────────────
+      async function checkLocationForCheckin(msgEl) {
+        var buildingSettings = { enabled: false };
+        try { var sRes = await fetch('/api/settings/building'); buildingSettings = await sRes.json(); } catch (e) {}
+        if (!buildingSettings.enabled || !buildingSettings.lat || !buildingSettings.lng) return true;
+
+        msgEl.innerHTML = '<div class="msg msg-info" style="display:flex;align-items:center;justify-content:center;gap:8px;"><span class="spinner"></span> 위치 확인 중...</div>';
+        try {
+          var pos;
+          try {
+            pos = await new Promise(function(resolve, reject) {
+              navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
+            });
+          } catch (firstErr) {
+            pos = await new Promise(function(resolve, reject) {
+              navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: false, timeout: 20000, maximumAge: 60000 });
+            });
+          }
+          var dist = getDistanceMeters(pos.coords.latitude, pos.coords.longitude, buildingSettings.lat, buildingSettings.lng);
+          if (dist > (buildingSettings.radius || 200)) {
+            msgEl.innerHTML = '<div class="msg msg-error" style="text-align:center;"><div style="font-size:24px;margin-bottom:6px;">\ud83d\udeab</div><div style="font-weight:600;">건물 외부 감지</div><div style="font-size:13px;color:#86868b;margin-top:4px;">강의실 근처에서 다시 시도해주세요.</div></div>';
+            return false;
+          }
+          msgEl.innerHTML = '';
+          return true;
+        } catch (locErr) {
+          msgEl.innerHTML = '<div class="msg msg-error" style="text-align:center;"><div style="font-size:24px;margin-bottom:6px;">\ud83d\udccd</div><div style="font-weight:600;">위치 확인 실패</div><div style="font-size:13px;color:#86868b;margin-top:4px;">위치 정보를 가져올 수 없습니다.<br>담당자에게 문의하세요.</div></div>';
+          return false;
+        }
+      }
+
       // ─── 0. 패스키 직접 인증 (전화번호 불필요) ───────────
       async function passkeyAuth() {
         const btn = document.getElementById('passkeyBtn');
         const msgEl = document.getElementById('passkeyMsg');
         btn.disabled = true;
-        btn.innerHTML = '<span class="spinner"></span> 인증 중...';
+        btn.innerHTML = '<span class="spinner"></span> 위치 확인 중...';
         msgEl.innerHTML = '';
+
+        var locOk = await checkLocationForCheckin(msgEl);
+        if (!locOk) { btn.disabled = false; btn.innerHTML = '인증하기'; btn.style.fontSize = '18px'; return; }
+
+        btn.innerHTML = '<span class="spinner"></span> 인증 중...';
 
         try {
           // 패스키 옵션 요청 (입실: 수강생 미특정 → 기기의 모든 패스키 표시)
@@ -835,12 +880,9 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
             throw new Error(verifyData.error || verifyData.message || '인증 실패');
           }
         } catch (err) {
-          if (err.name === 'NotAllowedError') {
-            msgEl.innerHTML = '<div class="msg msg-info">인증이 취소되었습니다.</div>';
-          } else if (err.name === 'AbortError' || err.message.includes('No credentials')) {
-            // 패스키 없음 → 전화번호 입력으로
-            msgEl.innerHTML = '<div class="msg msg-info">등록된 패스키가 없습니다. 전화번호로 진행해주세요.</div>';
-            setTimeout(function() { showStep(1); }, 1500);
+          if (err.name === 'NotAllowedError' || err.name === 'AbortError' || (err.message && err.message.includes('No credentials'))) {
+            msgEl.innerHTML = '<div class="msg msg-info">전화번호로 본인확인 후 진행합니다.</div>';
+            setTimeout(function() { showStep(1); }, 1200);
           } else {
             msgEl.innerHTML = '<div class="msg msg-error">' + (err.message || '인증 오류') + '</div>';
           }
@@ -933,7 +975,17 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
             showStep(2);
             registerFcmToken();
           } else {
-            // 미등록 → 등록 안내
+            // 미등록 → 등록 토큰 발급 후 등록 안내
+            try {
+              var tokenRes = await fetch('/api/register/phone-lookup', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone: phone })
+              });
+              var tokenData = await tokenRes.json();
+              if (tokenData.found && tokenData.hasToken) {
+                currentRegToken = tokenData.token;
+              }
+            } catch (e) { console.log('토큰 발급 실패:', e); }
             showStep(3);
           }
         } catch (err) {
@@ -949,8 +1001,13 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
         const btn = document.getElementById('authBtn');
         const msgEl = document.getElementById('authMsg');
         btn.disabled = true;
-        btn.innerHTML = '<span class="spinner"></span> 인증 중...';
+        btn.innerHTML = '<span class="spinner"></span> 위치 확인 중...';
         msgEl.innerHTML = '';
+
+        var locOk = await checkLocationForCheckin(msgEl);
+        if (!locOk) { btn.disabled = false; btn.textContent = '지문 / Face ID 인증'; return; }
+
+        btn.innerHTML = '<span class="spinner"></span> 인증 중...';
 
         try {
           // 인증 옵션 요청
@@ -996,12 +1053,19 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
         btn.innerHTML = '<span class="spinner"></span> 등록 중...';
         msgEl.innerHTML = '';
 
+        if (!currentRegToken) {
+          msgEl.innerHTML = '<div class="msg msg-error">등록 토큰이 없습니다. QR을 다시 스캔해주세요.</div>';
+          btn.disabled = false;
+          btn.textContent = '지문 / Face ID 등록하기';
+          return;
+        }
+
         try {
-          // 등록 옵션 요청
+          // 등록 옵션 요청 (토큰 포함)
           const optRes = await fetch('/api/register/options', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ studentId: currentStudentId })
+            body: JSON.stringify({ studentId: currentStudentId, token: currentRegToken })
           });
           const options = await optRes.json();
           if (options.error) throw new Error(options.error);
@@ -1009,11 +1073,11 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
           // 브라우저 생체인증 등록
           const regResp = await SimpleWebAuthnBrowser.startRegistration({ optionsJSON: options });
 
-          // 서버 검증
+          // 서버 검증 (토큰 포함)
           const verifyRes = await fetch('/api/register/verify', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ studentId: currentStudentId, response: regResp })
+            body: JSON.stringify({ studentId: currentStudentId, token: currentRegToken, response: regResp })
           });
           const verifyData = await verifyRes.json();
 
@@ -1118,11 +1182,24 @@ function renderRegisterPage(token, studentId, studentName) {
     <script>
       const REG_TOKEN = '${token}';
       const STUDENT_ID = '${studentId}';
+      let prefetchedOptions = null;
 
       function showStep(n) {
         document.querySelectorAll('.step').forEach(el => el.classList.remove('active'));
         document.getElementById('step' + n).classList.add('active');
       }
+
+      async function prefetchOptions() {
+        try {
+          const optRes = await fetch('/api/register/options', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ studentId: STUDENT_ID, token: REG_TOKEN })
+          });
+          const options = await optRes.json();
+          if (!options.error) { prefetchedOptions = options; }
+        } catch (e) { console.log('옵션 미리받기 실패:', e); }
+      }
+      prefetchOptions();
 
       async function doRegister() {
         const btn = document.getElementById('regBtn');
@@ -1131,14 +1208,18 @@ function renderRegisterPage(token, studentId, studentName) {
         msgEl.innerHTML = '';
 
         try {
-          const optRes = await fetch('/api/register/options', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ studentId: STUDENT_ID, token: REG_TOKEN })
-          });
-          const options = await optRes.json();
-          if (options.error) throw new Error(options.error);
+          var options = prefetchedOptions;
+          if (!options) {
+            var optRes = await fetch('/api/register/options', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ studentId: STUDENT_ID, token: REG_TOKEN })
+            });
+            options = await optRes.json();
+            if (options.error) throw new Error(options.error);
+          }
 
           const regResp = await SimpleWebAuthnBrowser.startRegistration({ optionsJSON: options });
+          prefetchedOptions = null;
 
           const verifyRes = await fetch('/api/register/verify', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1157,10 +1238,11 @@ function renderRegisterPage(token, studentId, studentName) {
             throw new Error(verifyData.error || '등록 실패');
           }
         } catch (err) {
-          const msg = err.name === 'NotAllowedError' ? '등록이 취소되었습니다. 다시 시도해주세요.'
+          const msg = err.name === 'NotAllowedError' ? '인증 팝업이 닫혔습니다. 아래 버튼을 다시 눌러주세요.'
             : err.name === 'InvalidStateError' ? '이미 이 기기에 등록되어 있습니다. 관리자에게 초기화를 요청하세요.'
             : err.message;
           msgEl.innerHTML = '<div class="msg msg-error">' + msg + '</div>';
+          prefetchOptions();
         } finally {
           btn.disabled = false; btn.textContent = '지문 / Face ID 등록하기';
         }
@@ -1633,16 +1715,21 @@ function renderAppPage() {
           }
           locationPassed = true;
         } catch (locErr) {
-          // 위치 실패 → 건너뛰기 옵션 제공
-          locationPassed = await new Promise(function(resolve) {
-            showMsg('<div style="font-size:24px;margin-bottom:8px;">📍</div>'
-              + '<div style="font-size:15px;font-weight:600;color:#ff3b30;">위치 확인을 할 수 없습니다</div>'
-              + '<div style="font-size:13px;color:#86868b;margin:8px 0;">기기에서 위치 정보를 가져올 수 없습니다.</div>'
-              + '<button id="locSkipBtn" style="margin-top:12px;padding:10px 20px;background:#ff9500;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;">위치 확인 없이 진행</button>'
-              + ' <button id="locCancelBtn" style="margin-top:12px;padding:10px 20px;background:#86868b;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;">취소</button>');
-            document.getElementById('locSkipBtn').onclick = function() { resolve(true); };
-            document.getElementById('locCancelBtn').onclick = function() { resolve(false); };
-          });
+          // [비활성화] 위치 실패 시 건너뛰기 버튼 - 부정출석 방지를 위해 비활성화
+          // 복원하려면 아래 주석을 해제하고, locationPassed = false; 줄과 showMsg 줄을 삭제하세요.
+          // locationPassed = await new Promise(function(resolve) {
+          //   showMsg('<div style="font-size:24px;margin-bottom:8px;">📍</div>'
+          //     + '<div style="font-size:15px;font-weight:600;color:#ff3b30;">위치 확인을 할 수 없습니다</div>'
+          //     + '<div style="font-size:13px;color:#86868b;margin:8px 0;">기기에서 위치 정보를 가져올 수 없습니다.</div>'
+          //     + '<button id="locSkipBtn" style="margin-top:12px;padding:10px 20px;background:#ff9500;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;">위치 확인 없이 진행</button>'
+          //     + ' <button id="locCancelBtn" style="margin-top:12px;padding:10px 20px;background:#86868b;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;">취소</button>');
+          //   document.getElementById('locSkipBtn').onclick = function() { resolve(true); };
+          //   document.getElementById('locCancelBtn').onclick = function() { resolve(false); };
+          // });
+          showMsg('<div style="font-size:24px;margin-bottom:8px;">📍</div>'
+            + '<div style="font-size:15px;font-weight:600;color:#ff3b30;">위치 확인 실패</div>'
+            + '<div style="font-size:13px;color:#86868b;margin:8px 0;">위치 정보를 가져올 수 없습니다.<br>담당자에게 문의하세요.</div>');
+          locationPassed = false;
         }
 
         if (!locationPassed) {
