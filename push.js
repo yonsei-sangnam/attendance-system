@@ -274,8 +274,8 @@ async function sendMissedExitAlerts() {
     `, [row.attendance_id, row.end_time, row.session_id]);
 
     const payload = {
-      title: '퇴실 확인이 되지 않았습니다',
-      body: `${row.course_name} - 관리자에게 문의하세요.`,
+      title: '퇴실미확인 처리',
+      body: `${row.course_name} - '퇴실미확인'으로 처리되었습니다. 관리자에게 문의하세요.`,
       url: '/',
     };
 
@@ -308,6 +308,20 @@ function isWithinScheduleHours() {
   return hour >= slot.start && hour < slot.end;
 }
 
+// ─── DB에서 푸시 발송 간격 읽기 ─────────────────────────────
+async function getPushIntervalMinutes() {
+  try {
+    const r = await db.query(
+      "SELECT value FROM system_settings WHERE key = 'push_interval_minutes'"
+    );
+    if (r.rows.length > 0) {
+      const val = parseInt(r.rows[0].value, 10);
+      if (val >= 1 && val <= 30) return val;
+    }
+  } catch (e) { /* 기본값 사용 */ }
+  return 2; // 기본값: 2분
+}
+
 // ─── 스케줄러 시작 ───────────────────────────────────────────
 function startScheduler() {
   const days = ['일','월','화','수','목','금','토'];
@@ -315,25 +329,32 @@ function startScheduler() {
     .filter(([, v]) => v)
     .map(([k, v]) => `${days[k]} ${v.start}~${v.end}시`)
     .join(', ');
-  console.log(`[Scheduler] 퇴실 리마인더 스케줄러 시작 (2분 간격, ${desc})`);
+  console.log(`[Scheduler] 퇴실 리마인더 스케줄러 시작 (${desc})`);
 
-  setInterval(async () => {
-    if (!isWithinScheduleHours()) return;
+  async function runCycle() {
+    var intervalMin = await getPushIntervalMinutes();
 
-    try {
-      const reminders = await sendExitReminders();
-      if (reminders.sent > 0) {
-        console.log(`[Scheduler] 퇴실 리마인더 ${reminders.sent}건 발송`);
+    if (isWithinScheduleHours()) {
+      try {
+        const reminders = await sendExitReminders();
+        if (reminders.sent > 0) {
+          console.log(`[Scheduler] 퇴실 리마인더 ${reminders.sent}건 발송 (간격: ${intervalMin}분)`);
+        }
+
+        const missed = await sendMissedExitAlerts();
+        if (missed.processed > 0) {
+          console.log(`[Scheduler] 퇴실미확인 ${missed.processed}건 자동 처리`);
+        }
+      } catch (err) {
+        console.error('[Scheduler] 오류:', err.message);
       }
-
-      const missed = await sendMissedExitAlerts();
-      if (missed.processed > 0) {
-        console.log(`[Scheduler] 퇴실미확인 ${missed.processed}건 자동 처리`);
-      }
-    } catch (err) {
-      console.error('[Scheduler] 오류:', err.message);
     }
-  }, 2 * 60 * 1000);
+
+    setTimeout(runCycle, intervalMin * 60 * 1000);
+  }
+
+  // 첫 실행은 1분 후
+  setTimeout(runCycle, 60 * 1000);
 }
 
 
