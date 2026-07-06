@@ -664,7 +664,7 @@ function registerAdminRoutes(app) {
   app.get('/api/settings/building', async (req, res) => {
     try {
       const r = await db.query(
-        "SELECT key, value FROM system_settings WHERE key IN ('building_lat','building_lng','building_radius','location_check_enabled')"
+        "SELECT key, value FROM system_settings WHERE key IN ('building_lat','building_lng','building_radius','location_check_enabled','push_interval_minutes')"
       );
       const s = {};
       for (const row of r.rows) s[row.key] = row.value;
@@ -673,6 +673,7 @@ function registerAdminRoutes(app) {
         lat:      s.building_lat  ? parseFloat(s.building_lat)  : null,
         lng:      s.building_lng  ? parseFloat(s.building_lng)  : null,
         radius:   s.building_radius ? parseInt(s.building_radius) : 200,
+        pushIntervalMinutes: s.push_interval_minutes ? parseInt(s.push_interval_minutes) : 2,
       });
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
@@ -680,7 +681,7 @@ function registerAdminRoutes(app) {
   // ═══ API: 설정 저장 ═════════════════════════════════════════
   app.put('/api/admin/settings', async (req, res) => {
     try {
-      const { lat, lng, radius, enabled } = req.body;
+      const { lat, lng, radius, enabled, pushIntervalMinutes } = req.body;
       const upsert = async (key, value) => db.query(`
         INSERT INTO system_settings (key, value, updated_at)
         VALUES ($1, $2, NOW())
@@ -691,6 +692,11 @@ function registerAdminRoutes(app) {
       await upsert('building_lng',           lng);
       await upsert('building_radius',        radius || 200);
       await upsert('location_check_enabled', enabled ? 'true' : 'false');
+      if (pushIntervalMinutes != null) {
+        var pv = parseInt(pushIntervalMinutes) || 2;
+        if (pv < 1) pv = 1; if (pv > 30) pv = 30;
+        await upsert('push_interval_minutes', pv);
+      }
       res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
@@ -786,6 +792,28 @@ function renderSettingsPage() {
   </div>
 </div>
 
+<div class="card">
+  <h2>🔔 퇴실 알림 설정</h2>
+  <div class="info-box">
+    수업 종료 전후로 퇴실 미처리 수강생에게 푸시 알림을 보냅니다.<br>
+    설정한 간격마다 퇴실 확인 알림이 반복 발송됩니다.
+  </div>
+  <div class="form-row" style="align-items:center;">
+    <div class="form-group">
+      <label>발송 간격 (분)</label>
+      <input type="number" id="pushInterval" placeholder="2" style="width:100px;" min="1" max="30" value="2">
+    </div>
+    <span style="font-size:12px;color:#86868b;margin-top:14px;">1~30분 (기본: 2분)</span>
+  </div>
+  <div id="pushMsg" style="font-size:13px;margin-top:4px;min-height:20px;"></div>
+  <div class="warn-box">
+    <b>💡 참고</b><br>
+    - 간격 변경 후 저장하면, 다음 알림 주기부터 적용됩니다<br>
+    - 너무 짧으면 수강생에게 알림이 과도하게 갈 수 있습니다<br>
+    - 너무 길면 퇴실미확인 자동 처리가 늦어질 수 있습니다
+  </div>
+</div>
+
 <script>
   window.addEventListener('load', loadSettings);
 
@@ -797,6 +825,7 @@ function renderSettingsPage() {
       if (data.lat) document.getElementById('lat').value = data.lat;
       if (data.lng) document.getElementById('lng').value = data.lng;
       document.getElementById('radius').value = data.radius || 200;
+      document.getElementById('pushInterval').value = data.pushIntervalMinutes || 2;
     } catch (e) { console.error(e); }
   }
 
@@ -822,6 +851,7 @@ function renderSettingsPage() {
       lng:     parseFloat(document.getElementById('lng').value) || null,
       radius:  parseInt(document.getElementById('radius').value) || 200,
       enabled: document.getElementById('locationEnabled').checked,
+      pushIntervalMinutes: parseInt(document.getElementById('pushInterval').value) || 2,
     };
     try {
       const res = await fetch('/api/admin/settings', {
