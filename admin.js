@@ -664,7 +664,7 @@ function registerAdminRoutes(app) {
   app.get('/api/settings/building', async (req, res) => {
     try {
       const r = await db.query(
-        "SELECT key, value FROM system_settings WHERE key IN ('building_lat','building_lng','building_radius','location_check_enabled','push_interval_minutes')"
+        "SELECT key, value FROM system_settings WHERE key IN ('building_lat','building_lng','building_radius','location_check_enabled','push_interval_minutes','push_remind_before_minutes','push_auto_close_minutes')"
       );
       const s = {};
       for (const row of r.rows) s[row.key] = row.value;
@@ -674,6 +674,8 @@ function registerAdminRoutes(app) {
         lng:      s.building_lng  ? parseFloat(s.building_lng)  : null,
         radius:   s.building_radius ? parseInt(s.building_radius) : 200,
         pushIntervalMinutes: s.push_interval_minutes ? parseInt(s.push_interval_minutes) : 2,
+        pushRemindBeforeMinutes: s.push_remind_before_minutes ? parseInt(s.push_remind_before_minutes) : 10,
+        pushAutoCloseMinutes: s.push_auto_close_minutes ? parseInt(s.push_auto_close_minutes) : 10,
       });
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
@@ -681,7 +683,7 @@ function registerAdminRoutes(app) {
   // ═══ API: 설정 저장 ═════════════════════════════════════════
   app.put('/api/admin/settings', async (req, res) => {
     try {
-      const { lat, lng, radius, enabled, pushIntervalMinutes } = req.body;
+      const { lat, lng, radius, enabled, pushIntervalMinutes, pushRemindBeforeMinutes, pushAutoCloseMinutes } = req.body;
       const upsert = async (key, value) => db.query(`
         INSERT INTO system_settings (key, value, updated_at)
         VALUES ($1, $2, NOW())
@@ -693,9 +695,19 @@ function registerAdminRoutes(app) {
       await upsert('building_radius',        radius || 200);
       await upsert('location_check_enabled', enabled ? 'true' : 'false');
       if (pushIntervalMinutes != null) {
-        var pv = parseInt(pushIntervalMinutes) || 2;
-        if (pv < 1) pv = 1; if (pv > 30) pv = 30;
-        await upsert('push_interval_minutes', pv);
+        var piv = parseInt(pushIntervalMinutes) || 2;
+        if (piv < 1) piv = 1; if (piv > 30) piv = 30;
+        await upsert('push_interval_minutes', piv);
+      }
+      if (pushRemindBeforeMinutes != null) {
+        var prb = parseInt(pushRemindBeforeMinutes) || 10;
+        if (prb < 1) prb = 1; if (prb > 30) prb = 30;
+        await upsert('push_remind_before_minutes', prb);
+      }
+      if (pushAutoCloseMinutes != null) {
+        var pac = parseInt(pushAutoCloseMinutes) || 10;
+        if (pac < 1) pac = 1; if (pac > 60) pac = 60;
+        await upsert('push_auto_close_minutes', pac);
       }
       res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -790,27 +802,35 @@ function renderSettingsPage() {
       - 테스트 후 반경을 조정하세요
     </div>
   </div>
-</div>
 
-<div class="card">
-  <h2>🔔 퇴실 알림 설정</h2>
-  <div class="info-box">
-    수업 종료 전후로 퇴실 미처리 수강생에게 푸시 알림을 보냅니다.<br>
-    설정한 간격마다 퇴실 확인 알림이 반복 발송됩니다.
-  </div>
-  <div class="form-row" style="align-items:center;">
-    <div class="form-group">
-      <label>발송 간격 (분)</label>
-      <input type="number" id="pushInterval" placeholder="2" style="width:100px;" min="1" max="30" value="2">
+  <div class="card">
+    <h2>🔔 퇴실 알림 설정</h2>
+    <div class="info-box">
+      수업 종료 전후로 퇴실 미처리 수강생에게 푸시 알림을 보냅니다.<br>
+      종료 후 자동 처리 시간이 지나면 '퇴실미확인'으로 자동 처리됩니다.
     </div>
-    <span style="font-size:12px;color:#86868b;margin-top:14px;">1~30분 (기본: 2분)</span>
-  </div>
-  <div id="pushMsg" style="font-size:13px;margin-top:4px;min-height:20px;"></div>
-  <div class="warn-box">
-    <b>💡 참고</b><br>
-    - 간격 변경 후 저장하면, 다음 알림 주기부터 적용됩니다<br>
-    - 너무 짧으면 수강생에게 알림이 과도하게 갈 수 있습니다<br>
-    - 너무 길면 퇴실미확인 자동 처리가 늦어질 수 있습니다
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>종료 전 알림 시작 (분)</label>
+        <input type="number" id="remindBefore" placeholder="10" style="width:100px;" min="1" max="30" value="10">
+      </div>
+      <div class="form-group">
+        <label>종료 후 자동 처리 (분)</label>
+        <input type="number" id="autoClose" placeholder="10" style="width:100px;" min="1" max="60" value="10">
+      </div>
+      <div class="form-group">
+        <label>발송 간격 (분)</label>
+        <input type="number" id="pushInterval" placeholder="2" style="width:100px;" min="1" max="30" value="2">
+      </div>
+    </div>
+
+    <div class="warn-box">
+      <b>💡 참고</b><br>
+      - 종료 전 알림 시작: 수업 종료 N분 전부터 퇴실 알림 발송 시작 (기본: 10분)<br>
+      - 종료 후 자동 처리: 수업 종료 후 N분까지 퇴실 안하면 '퇴실미확인' 자동 처리 (기본: 10분)<br>
+      - 발송 간격: 알림 반복 발송 주기 (기본: 2분)
+    </div>
   </div>
 </div>
 
@@ -826,6 +846,8 @@ function renderSettingsPage() {
       if (data.lng) document.getElementById('lng').value = data.lng;
       document.getElementById('radius').value = data.radius || 200;
       document.getElementById('pushInterval').value = data.pushIntervalMinutes || 2;
+      document.getElementById('remindBefore').value = data.pushRemindBeforeMinutes || 10;
+      document.getElementById('autoClose').value = data.pushAutoCloseMinutes || 10;
     } catch (e) { console.error(e); }
   }
 
@@ -852,6 +874,8 @@ function renderSettingsPage() {
       radius:  parseInt(document.getElementById('radius').value) || 200,
       enabled: document.getElementById('locationEnabled').checked,
       pushIntervalMinutes: parseInt(document.getElementById('pushInterval').value) || 2,
+      pushRemindBeforeMinutes: parseInt(document.getElementById('remindBefore').value) || 10,
+      pushAutoCloseMinutes: parseInt(document.getElementById('autoClose').value) || 10,
     };
     try {
       const res = await fetch('/api/admin/settings', {
