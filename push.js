@@ -182,8 +182,25 @@ async function sendPush(studentId, payload) {
 }
 
 
-// ─── 퇴실 리마인더 발송 (수업 종료 10분 전 ~ 종료 후 8분) ──
-async function sendExitReminders() {
+// ─── DB에서 푸시 설정 읽기 ─────────────────────────────────
+async function getPushSettings() {
+  var settings = { intervalMin: 2, remindBeforeMin: 10, autoCloseMin: 10 };
+  try {
+    const r = await db.query(
+      "SELECT key, value FROM system_settings WHERE key IN ('push_interval_minutes','push_remind_before_minutes','push_auto_close_minutes')"
+    );
+    for (const row of r.rows) {
+      var v = parseInt(row.value, 10);
+      if (row.key === 'push_interval_minutes' && v >= 1 && v <= 30) settings.intervalMin = v;
+      if (row.key === 'push_remind_before_minutes' && v >= 1 && v <= 30) settings.remindBeforeMin = v;
+      if (row.key === 'push_auto_close_minutes' && v >= 1 && v <= 60) settings.autoCloseMin = v;
+    }
+  } catch (e) { /* 기본값 사용 */ }
+  return settings;
+}
+
+// ─── 퇴실 리마인더 발송 ─────────────────────────────────────
+async function sendExitReminders(remindBeforeMin, autoCloseMin) {
   const sessions = await db.query(`
     SELECT cs.session_id, cs.end_time, c.course_name,
            COALESCE(cr.classroom_name, dcr.classroom_name) AS classroom_name
@@ -193,8 +210,8 @@ async function sendExitReminders() {
     LEFT JOIN classrooms dcr ON dcr.classroom_id = c.default_classroom_id
     WHERE cs.session_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::DATE
       AND cs.end_time BETWEEN
-        (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::TIME - INTERVAL '8 minutes'
-        AND (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::TIME + INTERVAL '11 minutes'
+        (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::TIME - INTERVAL '${autoCloseMin} minutes'
+        AND (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::TIME + INTERVAL '${remindBeforeMin + 1} minutes'
   `);
 
   if (sessions.rows.length === 0) return { sent: 0 };
@@ -246,8 +263,8 @@ async function sendExitReminders() {
 }
 
 
-// ─── 퇴실 미확인 알림 (수업 종료 후 10분) ───────────────────
-async function sendMissedExitAlerts() {
+// ─── 퇴실 미확인 자동 처리 ────────────────────────────────
+async function sendMissedExitAlerts(autoCloseMin) {
   const students = await db.query(`
     SELECT a.attendance_id, a.student_id, s.name, 
            cs.session_id, cs.end_time, c.course_name
@@ -259,7 +276,7 @@ async function sendMissedExitAlerts() {
       AND a.check_in_at IS NOT NULL
       AND a.check_out_at IS NULL
       AND a.exit_type IS NULL
-      AND cs.end_time < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::TIME - INTERVAL '10 minutes'
+      AND cs.end_time < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::TIME - INTERVAL '${autoCloseMin} minutes'
   `);
 
   for (const row of students.rows) {
@@ -308,20 +325,6 @@ function isWithinScheduleHours() {
   return hour >= slot.start && hour < slot.end;
 }
 
-// ─── DB에서 푸시 발송 간격 읽기 ─────────────────────────────
-async function getPushIntervalMinutes() {
-  try {
-    const r = await db.query(
-      "SELECT value FROM system_settings WHERE key = 'push_interval_minutes'"
-    );
-    if (r.rows.length > 0) {
-      const val = parseInt(r.rows[0].value, 10);
-      if (val >= 1 && val <= 30) return val;
-    }
-  } catch (e) { /* 기본값 사용 */ }
-  return 2; // 기본값: 2분
-}
-
 // ─── 스케줄러 시작 ───────────────────────────────────────────
 function startScheduler() {
   const days = ['일','월','화','수','목','금','토'];
@@ -332,16 +335,16 @@ function startScheduler() {
   console.log(`[Scheduler] 퇴실 리마인더 스케줄러 시작 (${desc})`);
 
   async function runCycle() {
-    var intervalMin = await getPushIntervalMinutes();
+    var ps = await getPushSettings();
 
     if (isWithinScheduleHours()) {
       try {
-        const reminders = await sendExitReminders();
+        const reminders = await sendExitReminders(ps.remindBeforeMin, ps.autoCloseMin);
         if (reminders.sent > 0) {
-          console.log(`[Scheduler] 퇴실 리마인더 ${reminders.sent}건 발송 (간격: ${intervalMin}분)`);
+          console.log(`[Scheduler] 퇴실 리마인더 ${reminders.sent}건 발송 (간격:${ps.intervalMin}분, 종료전:${ps.remindBeforeMin}분, 자동처리:${ps.autoCloseMin}분)`);
         }
 
-        const missed = await sendMissedExitAlerts();
+        const missed = await sendMissedExitAlerts(ps.autoCloseMin);
         if (missed.processed > 0) {
           console.log(`[Scheduler] 퇴실미확인 ${missed.processed}건 자동 처리`);
         }
@@ -350,10 +353,9 @@ function startScheduler() {
       }
     }
 
-    setTimeout(runCycle, intervalMin * 60 * 1000);
+    setTimeout(runCycle, ps.intervalMin * 60 * 1000);
   }
 
-  // 첫 실행은 1분 후
   setTimeout(runCycle, 60 * 1000);
 }
 
