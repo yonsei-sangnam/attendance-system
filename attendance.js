@@ -78,6 +78,21 @@ async function recordAttendance(studentId, classroomCode) {
     // 3. 상태별 처리
     if (existingRes.rows.length === 0) {
       // ─── 입실 처리 ─────────────────────────────────────
+
+      // 수업 종료 후 입실 차단
+      const endTimeStr = session.end_time.slice(0, 5); // HH:MM
+      const nowTimeStr = nowKST.toTimeString().slice(0, 5); // HH:MM
+      if (nowTimeStr >= endTimeStr) {
+        await client.query('COMMIT');
+        return {
+          success: false,
+          type: 'session_ended',
+          message: `수업이 이미 종료되었습니다. (종료: ${endTimeStr}) 출결 처리가 필요하면 담당자에게 문의하세요.`,
+          courseName: session.course_name,
+          classroomName: session.classroom_name,
+        };
+      }
+
       const classroomId = await getClassroomId(client, classroomCode);
 
       await client.query(`
