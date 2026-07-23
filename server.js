@@ -1357,7 +1357,16 @@ function renderAppPage() {
     .status-row { display:flex; justify-content:space-between; padding:10px 0; font-size:14px; }
     .status-label2 { color:#86868b; }
     .status-value2 { font-weight:600; }
-    .install-guide { background:#fff3e0; border-radius:10px; padding:14px 18px; margin-top:16px; font-size:13px; color:#e65100; line-height:1.8; }
+    .install-guide { background:#fff3e0; border:1px solid #ffcc80; border-radius:14px; padding:20px; margin-top:20px; font-size:14px; color:#1d1d1f; line-height:1.7; }
+    .install-guide .ig-title { font-size:16px; font-weight:700; color:#e65100; margin-bottom:14px; display:flex; align-items:center; gap:8px; }
+    .install-guide .ig-step { display:flex; align-items:flex-start; gap:10px; margin-bottom:10px; }
+    .install-guide .ig-num { flex-shrink:0; width:24px; height:24px; background:#e65100; color:#fff; border-radius:50%; font-size:13px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+    .install-guide .ig-text { font-size:13px; color:#333; }
+    .install-guide .ig-text b { color:#e65100; }
+    .install-guide .ig-note { background:#fff8e1; border-radius:8px; padding:10px 12px; margin-top:12px; font-size:12px; color:#e65100; line-height:1.6; }
+    .install-guide .ig-dismiss { display:block; margin:14px auto 0; padding:8px 20px; background:none; border:1.5px solid #e65100; border-radius:8px; color:#e65100; font-size:13px; font-weight:600; cursor:pointer; }
+    .install-guide .ig-samsung { background:#ff5252; color:#fff; border-radius:10px; padding:14px 16px; margin-bottom:14px; font-size:13px; line-height:1.7; }
+    .install-guide .ig-samsung b { color:#fff; }
   </style>
 
   </head>
@@ -1810,19 +1819,49 @@ function renderAppPage() {
 
       // ─── 홈 화면 추가 안내 ────────────────────────────────
       function showInstallGuide() {
-        const el = document.getElementById('installGuide');
+        var el = document.getElementById('installGuide');
         if (!el) return;
-        const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+        var isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
         if (isStandalone) { el.innerHTML = ''; return; }
+        if (localStorage.getItem('install_guide_dismissed')) { el.innerHTML = ''; return; }
 
-        const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-        const isAndroid = /android/i.test(navigator.userAgent);
+        var isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+        var isAndroid = /android/i.test(navigator.userAgent);
+        var isSamsung = /SamsungBrowser/i.test(navigator.userAgent);
+        var html = '';
 
         if (isIOS) {
-          el.innerHTML = '<div class="install-guide"><b>홈 화면에 추가하기 (필수)</b><br>Safari 하단의 공유 버튼(□↑)을 누르고<br>"홈 화면에 추가"를 선택하세요.<br><br>홈 화면에 추가해야 퇴실 알림을 받을 수 있습니다.</div>';
+          html = '<div class="install-guide">'
+            + '<div class="ig-title">📲 앱 설치 안내 (필수)</div>'
+            + '<div class="ig-step"><span class="ig-num">1</span><span class="ig-text">화면 하단의 <b>공유 버튼 □↑</b> 을 누르세요</span></div>'
+            + '<div class="ig-step"><span class="ig-num">2</span><span class="ig-text">목록에서 <b>"홈 화면에 추가"</b> 를 선택하세요</span></div>'
+            + '<div class="ig-step"><span class="ig-num">3</span><span class="ig-text">오른쪽 상단 <b>"추가"</b> 를 누르면 완료!</span></div>'
+            + '<div class="ig-note">⚠️ <b>반드시 Safari</b>에서 진행해야 합니다.<br>Chrome/네이버 등 다른 브라우저에서는 알림이 작동하지 않습니다.<br><br>💡 홈 화면에 추가해야 <b>퇴실 알림</b>을 받을 수 있습니다.</div>'
+            + '<button class="ig-dismiss" onclick="dismissInstallGuide()">이미 설치했어요</button>'
+            + '</div>';
         } else if (isAndroid) {
-          el.innerHTML = '<div class="install-guide"><b>홈 화면에 추가하기</b><br>크롬 메뉴(⋮)를 누르고<br>"홈 화면에 추가" 또는 "앱 설치"를 선택하세요.</div>';
+          var samsungWarning = '';
+          if (isSamsung) {
+            samsungWarning = '<div class="ig-samsung">⚠️ <b>삼성 인터넷 브라우저</b>에서는 알림이 작동하지 않습니다.<br><b>Chrome 브라우저</b>로 이 페이지를 열어서 설치해주세요.<br><br>📋 주소 복사: 주소창을 길게 눌러 복사 → Chrome에 붙여넣기</div>';
+          }
+          html = '<div class="install-guide">'
+            + samsungWarning
+            + '<div class="ig-title">📲 앱 설치 안내</div>'
+            + '<div class="ig-step"><span class="ig-num">1</span><span class="ig-text"><b>Chrome</b> 브라우저에서 이 페이지를 여세요</span></div>'
+            + '<div class="ig-step"><span class="ig-num">2</span><span class="ig-text">주소창 오른쪽 <b>메뉴(⋮)</b> 를 누르세요</span></div>'
+            + '<div class="ig-step"><span class="ig-num">3</span><span class="ig-text"><b>"홈 화면에 추가"</b> 또는 <b>"앱 설치"</b> 를 선택하세요</span></div>'
+            + '<div class="ig-note">💡 홈 화면에 앱으로 추가한 뒤, 위의 <b>퇴실 알림</b> 토글을 켜주세요.</div>'
+            + '<button class="ig-dismiss" onclick="dismissInstallGuide()">이미 설치했어요</button>'
+            + '</div>';
         }
+
+        el.innerHTML = html;
+      }
+
+      function dismissInstallGuide() {
+        localStorage.setItem('install_guide_dismissed', '1');
+        var el = document.getElementById('installGuide');
+        if (el) el.innerHTML = '';
       }
 
       document.getElementById('phoneInput').addEventListener('keypress', function(e) { if (e.key === 'Enter') appLogin(); });
