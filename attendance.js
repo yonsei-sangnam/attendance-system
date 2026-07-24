@@ -78,21 +78,6 @@ async function recordAttendance(studentId, classroomCode) {
     // 3. 상태별 처리
     if (existingRes.rows.length === 0) {
       // ─── 입실 처리 ─────────────────────────────────────
-
-      // 수업 종료 후 입실 차단
-      const endTimeStr = session.end_time.slice(0, 5); // HH:MM
-      const nowTimeStr = nowKST.toTimeString().slice(0, 5); // HH:MM
-      if (nowTimeStr >= endTimeStr) {
-        await client.query('COMMIT');
-        return {
-          success: false,
-          type: 'session_ended',
-          message: `수업이 이미 종료되었습니다. (종료: ${endTimeStr}) 출결 처리가 필요하면 담당자에게 문의하세요.`,
-          courseName: session.course_name,
-          classroomName: session.classroom_name,
-        };
-      }
-
       const classroomId = await getClassroomId(client, classroomCode);
 
       await client.query(`
@@ -222,7 +207,7 @@ async function getClassroomId(client, classroomCode) {
 // ─── 수강생의 오늘 출결 상태 조회 ────────────────────────────
 async function getTodayStatus(studentId) {
   const res = await db.query(`
-    SELECT a.check_in_at, a.check_out_at, a.status, a.exit_type,
+    SELECT a.attendance_id, a.check_in_at, a.check_out_at, a.status, a.exit_type,
            c.course_name, cr.classroom_name,
            cs.session_number, cs.start_time, cs.end_time
     FROM attendance a
@@ -231,12 +216,11 @@ async function getTodayStatus(studentId) {
     LEFT JOIN classrooms cr ON cr.classroom_id = a.classroom_id
     WHERE a.student_id = $1
       AND cs.session_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::DATE
-    ORDER BY a.check_in_at DESC
-    LIMIT 1
+    ORDER BY cs.start_time ASC
   `, [studentId]);
 
   if (res.rows.length === 0) return null;
-  return res.rows[0];
+  return res.rows;
 }
 
 
