@@ -1703,14 +1703,17 @@ function renderAppPage() {
       // ─── 푸시 알림에서 퇴실 처리 (위치확인 → 생체인증 → 퇴실) ──
       var checkoutFromPushHandled = false;
       async function handleCheckoutFromPush(hasGesture) {
-        if (checkoutFromPushHandled) return;
-        var params = new URLSearchParams(window.location.search);
-        if (params.get('checkout')) checkoutFromPushHandled = true;
-        // URL 파라미터에서 checkout 정보 추출 → _pendingCheckout에 저장
-        var params = new URLSearchParams(window.location.search);
-        if (params.get('checkout') === 'true') {
-          window._pendingCheckout = { sid: params.get('sid'), aid: params.get('aid') };
-          window.history.replaceState({}, '', '/app');
+        // 사용자가 직접 버튼을 터치한 경우(hasGesture=true)는 중복 방지 통과
+        if (!hasGesture && checkoutFromPushHandled) return;
+
+        // URL 파라미터 처리는 자동 호출 시에만 (버튼 터치 재시도 시 생략)
+        if (!hasGesture) {
+          var params = new URLSearchParams(window.location.search);
+          if (params.get('checkout')) checkoutFromPushHandled = true;
+          if (params.get('checkout') === 'true') {
+            window._pendingCheckout = { sid: params.get('sid'), aid: params.get('aid') };
+            window.history.replaceState({}, '', '/app');
+          }
         }
 
         if (!window._pendingCheckout) return;
