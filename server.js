@@ -947,7 +947,7 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
           var autoTimer = setInterval(function() {
             sec--;
             countEl.textContent = origText + ' (' + sec + '초 후 앱으로 이동)';
-            if (sec <= 0) { clearInterval(autoTimer); location.href = '/app'; }
+            if (sec <= 0) { clearInterval(autoTimer); var pv = document.getElementById('phoneInput').value.trim(); if (pv && pv.length >= 7) { localStorage.setItem('app_phone', pv); } location.href = '/app'; }
           }, 1000);
         }
       }
