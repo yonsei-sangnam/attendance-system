@@ -253,10 +253,10 @@ app.get('/api/my/status/:studentId', async (req, res) => {
       LEFT JOIN classrooms cr ON cr.classroom_id = a.classroom_id
       WHERE a.student_id = $1
         AND cs.session_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::DATE
-      ORDER BY a.check_in_at DESC LIMIT 1
+      ORDER BY cs.start_time ASC
     `, [req.params.studentId]);
     if (r.rows.length === 0) return res.json({ hasRecord: false });
-    res.json({ hasRecord: true, ...r.rows[0] });
+    res.json({ hasRecord: true, records: r.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -938,7 +938,20 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
         }
         showStep(4);
         registerPushIfReady();
+
+        // 출결 완료 후 5초 뒤 /app으로 자동 이동
+        if (a && a.success && (a.type === 'check_in' || a.type === 'check_out' || a.type === 'already_done')) {
+          var countEl = document.getElementById('doneTime');
+          var sec = 5;
+          var origText = countEl.textContent;
+          var autoTimer = setInterval(function() {
+            sec--;
+            countEl.textContent = origText + ' (' + sec + '초 후 앱으로 이동)';
+            if (sec <= 0) { clearInterval(autoTimer); location.href = '/app'; }
+          }, 1000);
+        }
       }
+
 
       // ─── 1. 전화번호로 수강생 조회 ──────────────────────
       async function lookupStudent() {
@@ -1553,42 +1566,52 @@ function renderAppPage() {
 
       // ─── 오늘 출결 현황 ───────────────────────────────────
       async function loadTodayStatus() {
-        const el = document.getElementById('todayStatus');
+        var el = document.getElementById('todayStatus');
         try {
-          const res = await fetch('/api/my/status/' + appStudentId);
-          const data = await res.json();
+          var res = await fetch('/api/my/status/' + appStudentId);
+          var data = await res.json();
 
           if (!data.hasRecord) {
             el.innerHTML = '<div class="msg msg-info">오늘 출결 기록이 없습니다.</div>';
             return;
           }
 
-          // 퇴실 버튼용 데이터 저장
+          var records = data.records || [];
           window._checkoutData = null;
-          if (data.check_in_at && !data.check_out_at && data.attendance_id) {
-            window._checkoutData = { sid: appStudentId, aid: data.attendance_id };
-          }
 
-          let html = '<div style="background:#f5f5f7;border-radius:10px;padding:14px;">';
-          html += '<div style="font-size:13px;font-weight:600;margin-bottom:8px;">오늘 출결 현황</div>';
-          html += '<div class="status-row"><span class="status-label2">과정</span><span class="status-value2">' + (data.course_name || '-') + '</span></div>';
-          html += '<div class="status-row"><span class="status-label2">입실</span><span class="status-value2">' + (data.check_in_at ? new Date(data.check_in_at).toLocaleTimeString('ko-KR', {timeZone:'Asia/Seoul', hour:'2-digit', minute:'2-digit'}) : '-') + '</span></div>';
-          html += '<div class="status-row"><span class="status-label2">퇴실</span><span class="status-value2">' + (data.check_out_at ? new Date(data.check_out_at).toLocaleTimeString('ko-KR', {timeZone:'Asia/Seoul', hour:'2-digit', minute:'2-digit'}) : '-') + '</span></div>';
-          html += '<div class="status-row"><span class="status-label2">상태</span><span class="status-value2">' + (data.status || '-') + '</span></div>';
+          var html = '<div style="font-size:13px;font-weight:600;margin-bottom:10px;">오늘 출결 현황</div>';
 
-          // 입실O + 퇴실X → 퇴실하기 버튼 표시
-          if (data.check_in_at && !data.check_out_at) {
-            html += '<div style="margin-top:12px;text-align:center;">';
-            html += '<button onclick="manualCheckout()" style="width:100%;padding:14px;background:#1a73e8;color:#fff;border:none;border-radius:10px;font-size:16px;font-weight:600;cursor:pointer;">🔐 퇴실하기</button>';
-            html += '<div style="font-size:11px;color:#86868b;margin-top:4px;">위치 확인 + 생체인증 후 퇴실 처리됩니다</div>';
+          for (var i = 0; i < records.length; i++) {
+            var r = records[i];
+            html += '<div style="background:#f5f5f7;border-radius:10px;padding:14px;margin-bottom:10px;">';
+            html += '<div class="status-row"><span class="status-label2">과정</span><span class="status-value2">' + (r.course_name || '-') + '</span></div>';
+            html += '<div class="status-row"><span class="status-label2">수업</span><span class="status-value2">' + (r.start_time ? r.start_time.slice(0,5) : '') + ' ~ ' + (r.end_time ? r.end_time.slice(0,5) : '') + '</span></div>';
+            html += '<div class="status-row"><span class="status-label2">입실</span><span class="status-value2">' + (r.check_in_at ? new Date(r.check_in_at).toLocaleTimeString('ko-KR', {timeZone:'Asia/Seoul', hour:'2-digit', minute:'2-digit'}) : '-') + '</span></div>';
+            html += '<div class="status-row"><span class="status-label2">퇴실</span><span class="status-value2">' + (r.check_out_at ? new Date(r.check_out_at).toLocaleTimeString('ko-KR', {timeZone:'Asia/Seoul', hour:'2-digit', minute:'2-digit'}) : '-') + '</span></div>';
+            html += '<div class="status-row"><span class="status-label2">상태</span><span class="status-value2">' + (r.status || '-') + '</span></div>';
+
+            if (r.check_in_at && !r.check_out_at && r.attendance_id) {
+              if (!window._checkoutData) {
+                window._checkoutData = { sid: appStudentId, aid: r.attendance_id };
+              }
+              html += '<div style="margin-top:12px;text-align:center;">';
+              html += '<button onclick="setCheckoutTarget(' + r.attendance_id + ')" style="width:100%;padding:14px;background:#1a73e8;color:#fff;border:none;border-radius:10px;font-size:16px;font-weight:600;cursor:pointer;">🔐 퇴실하기</button>';
+              html += '<div style="font-size:11px;color:#86868b;margin-top:4px;">위치 확인 + 생체인증 후 퇴실 처리됩니다</div>';
+              html += '</div>';
+            }
+
             html += '</div>';
           }
 
-          html += '</div>';
           el.innerHTML = html;
         } catch (err) {
           el.innerHTML = '<div class="msg msg-error">현황 조회 실패</div>';
         }
+      }
+
+      function setCheckoutTarget(aid) {
+        window._checkoutData = { sid: appStudentId, aid: aid };
+        manualCheckout();
       }
 
       // ─── 수동 퇴실 (앱 내 버튼) ────────────────────────────
