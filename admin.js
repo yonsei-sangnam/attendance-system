@@ -2030,6 +2030,14 @@ async function bulkAddSessions() {
 
   if (sessions.length === 0) { document.getElementById('sessionAddMsg').innerHTML = '<div class="msg msg-err">생성된 회차가 없습니다. 시작일과 요일을 확인하세요.</div>'; return; }
 
+  // 기존 회차 수 조회하여 번호 이어서 부여
+  try {
+    const existRes = await fetch('/api/admin/sessions/' + courseId);
+    const existing = await existRes.json();
+    const maxNum = existing.length > 0 ? Math.max(...existing.map(function(s) { return s.session_number; })) : 0;
+    sessions.forEach(function(s, i) { s.session_number = maxNum + i + 1; });
+  } catch (e) {}
+
   const selectedDayNames = selectedDays.map(function(d) { return dayNames[d]; }).join(',');
   if (!confirm(sessions.length + '개 회차를 추가하시겠습니까?\\n요일: ' + selectedDayNames + (weekInterval > 1 ? ' (격주)' : '') + '\\n기간: ' + sessions[0].session_date + ' ~ ' + sessions[sessions.length-1].session_date)) return;
 
