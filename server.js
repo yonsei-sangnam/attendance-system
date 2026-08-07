@@ -2292,6 +2292,16 @@ app.get('/.well-known/assetlinks.json', (req, res) => {
           '90:96:50:FB:8E:7F:E3:C0:22:71:01:7C:BA:EB:BF:48:F0:51:A8:E6:46:C5:4F:96:40:35:6D:43:95:7C:82:85'
         ]
       }
+    },
+    {
+      relation: ['delegate_permission/common.handle_all_urls', 'delegate_permission/common.get_login_creds'],
+      target: {
+        namespace: 'android_app',
+        package_name: 'com.soulstaryonsei.sangnamapp',
+        sha256_cert_fingerprints: [
+          '72:C6:03:8A:D6:E2:A9:C3:47:B4:0E:22:51:22:BB:37:CF:BA:47:AA:B5:18:3C:F0:22:FE:BF:39:03:C7:41:53'
+        ]
+      }
     }
   ]);
 });
