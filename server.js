@@ -120,6 +120,16 @@ admin.registerAdminRoutes(app);
 // 기본 라우트
 // ════════════════════════════════════════════════════════════
 
+// ─── iOS 패스키 공유 설정 ────────────────────────────────────
+app.get('/.well-known/apple-app-site-association', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.json({
+    webcredentials: {
+      apps: ['TEAM_ID_HERE.com.soulstaryonsei.sangnamapp']
+    }
+  });
+});
+
 app.get('/health', async (req, res) => {
   try {
     await db.query('SELECT 1');
@@ -199,6 +209,27 @@ app.get('/scan', async (req, res) => {
 
   // QR 유효 → 본인확인 + 생체인증 페이지
   res.send(renderScanAuthPage(result.classroomCode, result.classroomName, token));
+});
+
+// ─── API: 앱용 QR 토큰 검증 (JSON 응답) ─────────────────────
+app.post('/api/app/validate-scan', async (req, res) => {
+  try {
+    const { token, room } = req.body;
+    if (!token || !room) {
+      return res.json({ valid: false, reason: 'QR 코드를 다시 스캔해주세요.' });
+    }
+    const result = await qr.validateToken(token, room);
+    if (!result.valid) {
+      return res.json({ valid: false, reason: result.reason });
+    }
+    res.json({
+      valid: true,
+      classroomCode: result.classroomCode,
+      classroomName: result.classroomName
+    });
+  } catch (err) {
+    res.status(500).json({ valid: false, reason: err.message });
+  }
 });
 
 // ─── API: 전화번호로 수강생 조회 ─────────────────────────────
