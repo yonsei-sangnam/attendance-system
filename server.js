@@ -232,6 +232,226 @@ app.post('/api/app/validate-scan', async (req, res) => {
   }
 });
 
+// ─── 앱 전용: WebView 생체인증 페이지 ────────────────────────
+app.get('/app-auth', async (req, res) => {
+  const { action, studentId, token, classroomCode, attendanceId } = req.query;
+  if (!action || !studentId) {
+    return res.status(400).send('Missing parameters');
+  }
+
+  res.send(\`<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>생체인증</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,sans-serif; background:#f5f5f5;
+    display:flex; align-items:center; justify-content:center;
+    min-height:100vh; padding:20px; }
+  .card { background:#fff; border-radius:16px; padding:32px;
+    text-align:center; max-width:360px; width:100%;
+    box-shadow:0 2px 12px rgba(0,0,0,0.1); }
+  .status { font-size:18px; color:#003876; font-weight:bold; margin-bottom:16px; }
+  .sub { font-size:14px; color:#666; margin-bottom:24px; }
+  .spinner { width:40px; height:40px; border:4px solid #e0e0e0;
+    border-top-color:#003876; border-radius:50%;
+    animation:spin 1s linear infinite; margin:0 auto 16px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .error { color:#d32f2f; font-size:14px; margin-top:12px; }
+  .retry-btn { background:#003876; color:#fff; border:none;
+    padding:14px 32px; border-radius:8px; font-size:16px;
+    font-weight:bold; cursor:pointer; margin-top:16px; }
+</style>
+</head><body>
+<div class="card">
+  <div class="spinner" id="spinner"></div>
+  <div class="status" id="status">생체인증 준비 중...</div>
+  <div class="sub" id="sub">잠시만 기다려주세요</div>
+  <div id="errorArea"></div>
+</div>
+<script>
+const BASE = '';
+const ACTION = '\${action}';
+const STUDENT_ID = '\${studentId}';
+const TOKEN = '\${token || ''}';
+const CLASSROOM_CODE = '\${classroomCode || ''}';
+const ATTENDANCE_ID = '\${attendanceId || ''}';
+
+function send(msg) {
+  if (window.ReactNativeWebView) {
+    window.ReactNativeWebView.postMessage(JSON.stringify(msg));
+  }
+}
+
+function showError(text) {
+  document.getElementById('spinner').style.display = 'none';
+  document.getElementById('status').textContent = '오류 발생';
+  document.getElementById('sub').textContent = '';
+  document.getElementById('errorArea').innerHTML =
+    '<div class="error">' + text + '</div>' +
+    '<button class="retry-btn" onclick="location.reload()">다시 시도</button>';
+}
+
+function bufferToBase64url(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let str = '';
+  bytes.forEach(b => str += String.fromCharCode(b));
+  return btoa(str).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');
+}
+
+function base64urlToBuffer(base64url) {
+  const base64 = base64url.replace(/-/g,'+').replace(/_/g,'/');
+  const pad = base64.length % 4;
+  const padded = pad ? base64 + '='.repeat(4 - pad) : base64;
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+async function doRegister() {
+  try {
+    document.getElementById('status').textContent = '서버 연결 중...';
+    const optRes = await fetch(BASE + '/api/register/options', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ studentId: STUDENT_ID, token: TOKEN })
+    });
+    const options = await optRes.json();
+    if (options.error) { showError(options.error); return; }
+
+    options.challenge = base64urlToBuffer(options.challenge);
+    options.user.id = base64urlToBuffer(options.user.id);
+    if (options.excludeCredentials) {
+      options.excludeCredentials = options.excludeCredentials.map(c => ({
+        ...c, id: base64urlToBuffer(c.id)
+      }));
+    }
+
+    document.getElementById('status').textContent = '생체인증을 진행해주세요';
+    document.getElementById('sub').textContent = '얼굴인식 또는 지문을 사용합니다';
+
+    const credential = await navigator.credentials.create({ publicKey: options });
+
+    document.getElementById('status').textContent = '등록 확인 중...';
+    document.getElementById('sub').textContent = '';
+
+    const response = {
+      id: credential.id,
+      rawId: bufferToBase64url(credential.rawId),
+      type: credential.type,
+      response: {
+        clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+        attestationObject: bufferToBase64url(credential.response.attestationObject)
+      }
+    };
+
+    const verRes = await fetch(BASE + '/api/register/verify', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ studentId: STUDENT_ID, token: TOKEN, response: response })
+    });
+    const verResult = await verRes.json();
+
+    if (verResult.verified) {
+      document.getElementById('spinner').style.display = 'none';
+      document.getElementById('status').textContent = '등록 완료!';
+      send({ success: true, action: 'register' });
+    } else {
+      showError(verResult.error || '등록 검증 실패');
+      send({ success: false, error: verResult.error || '등록 검증 실패' });
+    }
+  } catch(e) {
+    if (e.name === 'NotAllowedError' || e.name === 'AbortError') {
+      showError('인증이 취소되었습니다.');
+      send({ success: false, error: 'cancelled' });
+    } else {
+      showError(e.message || '알 수 없는 오류');
+      send({ success: false, error: e.message });
+    }
+  }
+}
+
+async function doAuthenticate() {
+  try {
+    document.getElementById('status').textContent = '서버 연결 중...';
+    const optRes = await fetch(BASE + '/api/auth/passkey-start', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ studentId: STUDENT_ID })
+    });
+    const options = await optRes.json();
+    if (options.error) { showError(options.error); return; }
+
+    options.challenge = base64urlToBuffer(options.challenge);
+    if (options.allowCredentials) {
+      options.allowCredentials = options.allowCredentials.map(c => ({
+        ...c, id: base64urlToBuffer(c.id)
+      }));
+    }
+
+    document.getElementById('status').textContent = '생체인증을 진행해주세요';
+    document.getElementById('sub').textContent = '얼굴인식 또는 지문을 사용합니다';
+
+    const credential = await navigator.credentials.get({ publicKey: options });
+
+    document.getElementById('status').textContent = '인증 확인 중...';
+    document.getElementById('sub').textContent = '';
+
+    const response = {
+      id: credential.id,
+      rawId: bufferToBase64url(credential.rawId),
+      type: credential.type,
+      response: {
+        clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+        authenticatorData: bufferToBase64url(credential.response.authenticatorData),
+        signature: bufferToBase64url(credential.response.signature),
+        userHandle: credential.response.userHandle
+          ? bufferToBase64url(credential.response.userHandle) : null
+      }
+    };
+
+    let verRes;
+    if (ATTENDANCE_ID) {
+      verRes = await fetch(BASE + '/api/auth/checkout', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ response: response, studentId: STUDENT_ID, attendanceId: ATTENDANCE_ID })
+      });
+    } else if (CLASSROOM_CODE) {
+      verRes = await fetch(BASE + '/api/auth/passkey-verify', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ response: response, classroomCode: CLASSROOM_CODE })
+      });
+    } else {
+      showError('인증 파라미터 부족');
+      return;
+    }
+
+    const verResult = await verRes.json();
+    document.getElementById('spinner').style.display = 'none';
+
+    if (verResult.verified || verResult.success) {
+      document.getElementById('status').textContent = '인증 완료!';
+      send({ success: true, action: ACTION, result: verResult });
+    } else {
+      showError(verResult.error || verResult.message || '인증 실패');
+      send({ success: false, error: verResult.error || '인증 실패' });
+    }
+  } catch(e) {
+    if (e.name === 'NotAllowedError' || e.name === 'AbortError') {
+      showError('인증이 취소되었습니다.');
+      send({ success: false, error: 'cancelled' });
+    } else {
+      showError(e.message || '알 수 없는 오류');
+      send({ success: false, error: e.message });
+    }
+  }
+}
+
+if (ACTION === 'register') doRegister();
+else doAuthenticate();
+</script>
+</body></html>\`);
+});
+
 // ─── API: 전화번호로 수강생 조회 ─────────────────────────────
 app.post('/api/student/lookup', async (req, res) => {
   try {
@@ -2290,16 +2510,6 @@ app.get('/.well-known/assetlinks.json', (req, res) => {
         sha256_cert_fingerprints: [
           '3D:4B:BD:55:0D:CD:A3:78:97:D6:CD:BB:FD:16:0C:07:E3:D0:AA:8E:06:11:49:ED:6B:9A:E3:61:EB:6C:61:AF',
           '90:96:50:FB:8E:7F:E3:C0:22:71:01:7C:BA:EB:BF:48:F0:51:A8:E6:46:C5:4F:96:40:35:6D:43:95:7C:82:85'
-        ]
-      }
-    },
-    {
-      relation: ['delegate_permission/common.handle_all_urls', 'delegate_permission/common.get_login_creds'],
-      target: {
-        namespace: 'android_app',
-        package_name: 'com.soulstaryonsei.sangnamapp',
-        sha256_cert_fingerprints: [
-          '72:C6:03:8A:D6:E2:A9:C3:47:B4:0E:22:51:22:BB:37:CF:BA:47:AA:B5:18:3C:F0:22:FE:BF:39:03:C7:41:53'
         ]
       }
     }
