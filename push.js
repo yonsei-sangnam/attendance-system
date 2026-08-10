@@ -129,11 +129,6 @@ async function sendPush(studentId, payload) {
             },
             android: {
               priority: 'high',
-              notification: {
-                channelId: 'default',
-                icon: 'notification_icon',
-                clickAction: 'OPEN_APP',
-              },
             },
             webpush: {
               headers: { Urgency: 'high' },
