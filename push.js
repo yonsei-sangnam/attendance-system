@@ -103,53 +103,69 @@ async function sendPush(studentId, payload) {
 
   for (const sub of subs.rows) {
 
-    // ── FCM 발송 ──
-    if (sub.type === 'fcm') {
-      if (!fcmEnabled || !sub.fcm_token) {
-        results.push({ type: 'fcm', status: 'skipped', detail: 'FCM 비활성 또는 토큰 없음' });
-        continue;
-      }
+// ── FCM 발송 ──
+      if (sub.type === 'fcm') {
+        if (!fcmEnabled || !sub.fcm_token) {
+          results.push({ type: 'fcm', status: 'skipped', detail: 'FCM 비활성 또는 토큰 없음' });
+          continue;
+        }
+
         var clickUrl = 'https://attendance-system-naaw.onrender.com/app';
         if (payload.studentId && payload.attendanceId) {
           clickUrl += '?checkout=true&sid=' + encodeURIComponent(String(payload.studentId)) + '&aid=' + encodeURIComponent(String(payload.attendanceId));
         }
 
-        await admin.messaging().send({
-          token: sub.fcm_token,
-          webpush: {
-            headers: { Urgency: 'high' },
+        try {
+          await admin.messaging().send({
+            token: sub.fcm_token,
             notification: {
               title: payload.title || '출결 알림',
               body: payload.body || '',
-              icon: '/icon-192.png',
-              badge: '/icon-192.png',
-              vibrate: [200, 100, 200],
-              tag: 'checkout-' + Date.now(),
-              renotify: 'true',
-              require_interaction: 'true',
             },
-            fcm_options: {
-              link: clickUrl,
+            data: {
+              url: clickUrl,
+              studentId: String(payload.studentId || ''),
+              attendanceId: String(payload.attendanceId || ''),
             },
-          },
-        });
-      
-      try {
-
-        results.push({ type: 'fcm', status: 'sent' });
-      } catch (err) {
-        // 토큰 만료/무효 시 삭제
-        if (err.code === 'messaging/registration-token-not-registered' ||
-            err.code === 'messaging/invalid-registration-token') {
-          await db.query('DELETE FROM push_subscriptions WHERE id = $1', [sub.id]);
-          results.push({ type: 'fcm', status: 'expired', detail: 'token removed' });
-        } else {
-          console.error('[FCM] 발송 실패:', err.message);
-          results.push({ type: 'fcm', status: 'error', error: err.message });
+            android: {
+              priority: 'high',
+              notification: {
+                channelId: 'default',
+                icon: 'notification_icon',
+                clickAction: 'OPEN_APP',
+              },
+            },
+            webpush: {
+              headers: { Urgency: 'high' },
+              notification: {
+                title: payload.title || '출결 알림',
+                body: payload.body || '',
+                icon: '/icon-192.png',
+                badge: '/icon-192.png',
+                vibrate: [200, 100, 200],
+                tag: 'checkout-' + Date.now(),
+                renotify: true,
+                requireInteraction: true,
+              },
+              fcmOptions: {
+                link: clickUrl,
+              },
+            },
+          });
+          results.push({ type: 'fcm', status: 'sent' });
+        } catch (err) {
+          if (err.code === 'messaging/registration-token-not-registered' ||
+              err.code === 'messaging/invalid-registration-token') {
+            await db.query('DELETE FROM push_subscriptions WHERE id = $1', [sub.id]);
+            results.push({ type: 'fcm', status: 'expired', detail: 'token removed' });
+          } else {
+            console.error('[FCM] 발송 실패:', err.message);
+            results.push({ type: 'fcm', status: 'error', error: err.message });
+          }
         }
+
+        continue;
       }
-      continue;
-    }
 
     // ── Web Push 발송 (기존 로직 그대로) ──
     const subscription = {
