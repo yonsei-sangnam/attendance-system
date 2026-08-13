@@ -125,7 +125,7 @@ app.get('/.well-known/apple-app-site-association', (req, res) => {
   res.setHeader('Content-Type', 'application/json');
   res.json({
     webcredentials: {
-      apps: ['TEAM_ID_HERE.com.soulstaryonsei.sangnamapp']
+      apps: ['J453F5677M.com.soulstaryonsei.sangnamapp']
     }
   });
 });
