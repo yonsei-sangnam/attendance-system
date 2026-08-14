@@ -86,6 +86,55 @@ async function saveFcmToken(studentId, fcmToken) {
 }
 
 
+// ─── Expo Push Token 판별 ───────────────────────────────────
+function isExpoToken(token) {
+  if (!token || typeof token !== 'string') return false;
+  return token.indexOf('ExponentPushToken[') === 0 || token.indexOf('ExpoPushToken[') === 0;
+}
+
+// ─── Expo Push Service 발송 ─────────────────────────────────
+async function sendViaExpo(token, payload, clickUrl) {
+  const message = {
+    to: token,
+    sound: 'default',
+    priority: 'high',
+    channelId: 'default',
+    title: payload.title || '출결 알림',
+    body: payload.body || '',
+    data: {
+      url: clickUrl,
+      studentId: String(payload.studentId || ''),
+      attendanceId: String(payload.attendanceId || ''),
+    },
+  };
+
+  const res = await fetch('https://exp.host/--/api/v2/push/send', {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/json',
+      'Accept-Encoding': 'gzip, deflate',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(message),
+  });
+
+  const json = await res.json();
+  const ticket = json && json.data ? json.data : null;
+
+  if (!ticket) {
+    throw new Error('Expo 응답 형식 오류: ' + JSON.stringify(json));
+  }
+
+  if (ticket.status === 'error') {
+    const errCode = ticket.details && ticket.details.error ? ticket.details.error : '';
+    const e = new Error(ticket.message || 'Expo 발송 실패');
+    e.expoError = errCode;
+    throw e;
+  }
+
+  return ticket;
+}
+
 // ─── 구독 삭제 ───────────────────────────────────────────────
 async function removeSubscription(endpoint) {
   await db.query('DELETE FROM push_subscriptions WHERE endpoint = $1', [endpoint]);
@@ -105,14 +154,35 @@ async function sendPush(studentId, payload) {
 
 // ── FCM 발송 ──
       if (sub.type === 'fcm') {
-        if (!fcmEnabled || !sub.fcm_token) {
-          results.push({ type: 'fcm', status: 'skipped', detail: 'FCM 비활성 또는 토큰 없음' });
+        if (!sub.fcm_token) {
+          results.push({ type: 'fcm', status: 'skipped', detail: '토큰 없음' });
+          continue;
+        }
+        if (!isExpoToken(sub.fcm_token) && !fcmEnabled) {
+          results.push({ type: 'fcm', status: 'skipped', detail: 'FCM 비활성' });
           continue;
         }
 
         var clickUrl = 'https://attendance-system-naaw.onrender.com/app';
         if (payload.studentId && payload.attendanceId) {
           clickUrl += '?checkout=true&sid=' + encodeURIComponent(String(payload.studentId)) + '&aid=' + encodeURIComponent(String(payload.attendanceId));
+        }
+
+        // ── Expo Push Token이면 Expo Push Service로 발송 (iOS/Android 네이티브 앱) ──
+        if (isExpoToken(sub.fcm_token)) {
+          try {
+            await sendViaExpo(sub.fcm_token, payload, clickUrl);
+            results.push({ type: 'expo', status: 'sent' });
+          } catch (err) {
+            if (err.expoError === 'DeviceNotRegistered') {
+              await db.query('DELETE FROM push_subscriptions WHERE id = $1', [sub.id]);
+              results.push({ type: 'expo', status: 'expired', detail: 'token removed' });
+            } else {
+              console.error('[Expo] 발송 실패:', err.message);
+              results.push({ type: 'expo', status: 'error', error: err.message });
+            }
+          }
+          continue;
         }
 
         try {
