@@ -679,34 +679,55 @@ app.get('/api/my/status/:studentId', async (req, res) => {
 });
 
 // ─── 전체 출결 기록 조회 (앱 기록 탭용) ──────────────────────
+// ─── 전체 출결 기록 조회 (앱 기록 탭용) ──────────────────────
 app.get('/api/my/history/:studentId', async (req, res) => {
   try {
     var sid = req.params.studentId;
 
+    // enrollments 기준으로 전체 세션 조회, 출결 기록이 없으면 결석 처리
     var records = await db.query(
-      "SELECT a.attendance_id, a.check_in_at, a.check_out_at, a.status, a.exit_type," +
+      "SELECT a.attendance_id, a.check_in_at, a.check_out_at," +
+      " COALESCE(a.status, '결석') AS status," +
+      " COALESCE(a.exit_type, '정상') AS exit_type," +
       " cs.session_number, cs.session_date, cs.start_time, cs.end_time," +
       " c.course_name," +
       " COALESCE(cr.classroom_name, dcr.classroom_name) AS classroom_name" +
-      " FROM attendance a" +
-      " JOIN course_sessions cs ON cs.session_id = a.session_id" +
-      " JOIN courses c ON c.course_id = cs.course_id" +
+      " FROM enrollments e" +
+      " JOIN courses c ON c.course_id = e.course_id" +
+      " JOIN course_sessions cs ON cs.course_id = e.course_id" +
+      " LEFT JOIN attendance a ON a.student_id = e.student_id AND a.session_id = cs.session_id" +
       " LEFT JOIN classrooms cr ON cr.classroom_id = cs.classroom_id" +
       " LEFT JOIN classrooms dcr ON dcr.classroom_id = c.default_classroom_id" +
-      " WHERE a.student_id = $1" +
+      " WHERE e.student_id = $1" +
+      " AND (" +
+      "   cs.session_date < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::DATE" +
+      "   OR (" +
+      "     cs.session_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::DATE" +
+      "     AND cs.end_time < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::TIME" +
+      "   )" +
+      " )" +
       " ORDER BY cs.session_date DESC, cs.start_time DESC",
       [sid]
     );
 
+    // 통계 계산 (enrollments 기준)
     var statsResult = await db.query(
       "SELECT COUNT(*) as total," +
       " COUNT(CASE WHEN a.status = '출석' THEN 1 END) as attended," +
       " COUNT(CASE WHEN a.status = '지각' THEN 1 END) as late," +
-      " COUNT(CASE WHEN a.status = '결석' THEN 1 END) as absent" +
-      " FROM attendance a" +
-      " JOIN course_sessions cs ON cs.session_id = a.session_id" +
-      " WHERE a.student_id = $1" +
-      " AND cs.session_date <= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::DATE",
+      " COUNT(CASE WHEN a.status = '조퇴' THEN 1 END) as early_leave," +
+      " COUNT(CASE WHEN a.status IS NULL THEN 1 END) as absent" +
+      " FROM enrollments e" +
+      " JOIN course_sessions cs ON cs.course_id = e.course_id" +
+      " LEFT JOIN attendance a ON a.student_id = e.student_id AND a.session_id = cs.session_id" +
+      " WHERE e.student_id = $1" +
+      " AND (" +
+      "   cs.session_date < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::DATE" +
+      "   OR (" +
+      "     cs.session_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::DATE" +
+      "     AND cs.end_time < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::TIME" +
+      "   )" +
+      " )",
       [sid]
     );
 
@@ -714,19 +735,19 @@ app.get('/api/my/history/:studentId', async (req, res) => {
     var total = parseInt(row.total) || 0;
     var attended = parseInt(row.attended) || 0;
     var late = parseInt(row.late) || 0;
+    var earlyLeave = parseInt(row.early_leave) || 0;
     var absent = parseInt(row.absent) || 0;
     var rate = total > 0 ? Math.round((attended / total) * 100) : 0;
 
     res.json({
       records: records.rows,
-      stats: { total: total, attended: attended, late: late, absent: absent, rate: rate }
+      stats: { total: total, attended: attended, late: late, earlyLeave: earlyLeave, absent: absent, rate: rate }
     });
   } catch (err) {
     console.error('[History] 조회 오류:', err.message);
     res.status(500).json({ error: '출결 기록 조회 실패' });
   }
 });
-
 
 // ════════════════════════════════════════════════════════════
 // 생체인증 등록 (온보딩)
