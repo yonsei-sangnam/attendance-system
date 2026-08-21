@@ -320,6 +320,14 @@ app.get('/app-auth', async (req, res) => {
     return res.status(400).send('Missing parameters');
   }
 
+  // ── 앱(expo-location)이 넘겨준 좌표. 숫자로만 통과시켜 주입을 차단한다 ──
+  var latNum = parseFloat(req.query.lat);
+  var lngNum = parseFloat(req.query.lng);
+  var accNum = parseFloat(req.query.acc);
+  var appLat = isFinite(latNum) ? String(latNum) : '';
+  var appLng = isFinite(lngNum) ? String(lngNum) : '';
+  var appAcc = isFinite(accNum) ? String(accNum) : '';
+
   var html = '<!DOCTYPE html>'
     + '<html><head>'
     + '<meta charset="utf-8">'
@@ -364,6 +372,10 @@ app.get('/app-auth', async (req, res) => {
     + 'var CLASSROOM_CODE = "' + classroomCode + '";'
     + 'var ATTENDANCE_ID = "' + attendanceId + '";'
     + 'var RETURN_URL = decodeURIComponent("' + encodeURIComponent(returnUrl) + '");'
+    + 'var APP_LAT = "' + appLat + '";'
+    + 'var APP_LNG = "' + appLng + '";'
+    + 'var APP_ACC = "' + appAcc + '";'
+    + 'var MAX_ACCURACY = 500;'
     + ''
     + 'function goBack(success, msg) {'
     + '  var sep = RETURN_URL.indexOf("?") >= 0 ? "&" : "?";'
@@ -413,9 +425,6 @@ app.get('/app-auth', async (req, res) => {
     + ''
     + 'async function checkLocation() {'
     + '  try {'
-    + '    document.getElementById("status").textContent = "위치 확인 중...";'
-    + '    document.getElementById("sub").textContent = "GPS 정보를 가져오고 있습니다";'
-    + ''
     + '    var bldgRes = await fetch("/api/settings/building");'
     + '    var bldg = await bldgRes.json();'
     + ''
@@ -423,21 +432,35 @@ app.get('/app-auth', async (req, res) => {
     + '      return true;'
     + '    }'
     + ''
-    + '    var pos;'
-    + '    try {'
-    + '      pos = await new Promise(function(resolve, reject) {'
-    + '        navigator.geolocation.getCurrentPosition(resolve, reject,'
-    + '          { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });'
-    + '      });'
-    + '    } catch (firstErr) {'
-    + '      pos = await new Promise(function(resolve, reject) {'
-    + '        navigator.geolocation.getCurrentPosition(resolve, reject,'
-    + '          { enableHighAccuracy: false, timeout: 20000, maximumAge: 60000 });'
-    + '      });'
+    + '    var myLat, myLng;'
+    + ''
+    + '    if (APP_LAT !== "" && APP_LNG !== "") {'
+    + '      if (APP_ACC !== "" && parseFloat(APP_ACC) > MAX_ACCURACY) {'
+    + '        showLocationError("위치 정확도 부족", "설정에서 정확한 위치를 켜고 다시 시도해주세요.");'
+    + '        return false;'
+    + '      }'
+    + '      myLat = parseFloat(APP_LAT);'
+    + '      myLng = parseFloat(APP_LNG);'
+    + '    } else {'
+    + '      document.getElementById("status").textContent = "위치 확인 중...";'
+    + '      document.getElementById("sub").textContent = "GPS 정보를 가져오고 있습니다";'
+    + '      var pos;'
+    + '      try {'
+    + '        pos = await new Promise(function(resolve, reject) {'
+    + '          navigator.geolocation.getCurrentPosition(resolve, reject,'
+    + '            { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });'
+    + '        });'
+    + '      } catch (firstErr) {'
+    + '        pos = await new Promise(function(resolve, reject) {'
+    + '          navigator.geolocation.getCurrentPosition(resolve, reject,'
+    + '            { enableHighAccuracy: false, timeout: 20000, maximumAge: 60000 });'
+    + '        });'
+    + '      }'
+    + '      myLat = pos.coords.latitude;'
+    + '      myLng = pos.coords.longitude;'
     + '    }'
     + ''
-    + '    var dist = getDistanceMeters('
-    + '      pos.coords.latitude, pos.coords.longitude, bldg.lat, bldg.lng);'
+    + '    var dist = getDistanceMeters(myLat, myLng, bldg.lat, bldg.lng);'
     + ''
     + '    if (dist > (bldg.radius || 200)) {'
     + '      showLocationError("건물 외부 감지", "강의실 근처에서 다시 시도해주세요.");'
@@ -618,6 +641,7 @@ app.get('/app-auth', async (req, res) => {
 
   res.send(html);
 });
+
 
 // ─── API: 전화번호로 수강생 조회 ─────────────────────────────
 app.post('/api/student/lookup', async (req, res) => {
