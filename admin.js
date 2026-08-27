@@ -1719,6 +1719,7 @@ function renderCoursesPage(classrooms) {
   <div class="card">
     <h2>📋 과정 목록 <button class="btn btn-small" onclick="loadCourses()" style="margin-left:8px;">🔄</button></h2>
     <div id="courseList"><div id="loading">불러오는 중...</div></div>
+    <div id="courseEditArea"></div>
   </div>
 
   <!-- 과정 추가 -->
@@ -1813,6 +1814,7 @@ function renderCoursesPage(classrooms) {
 
 <script>
 let allCourses = [];
+let allClassrooms = [];
 
 window.addEventListener('load', function() { loadCourses(); loadClassrooms(); });
 
@@ -1835,7 +1837,8 @@ async function loadCourses() {
     html += '<td>' + (c.default_room || '-') + '</td>';
     html += '<td>' + c.student_count + '명</td>';
     html += '<td>' + c.session_count + '회</td>';
-    html += '<td><button class="btn btn-small btn-danger" onclick="deleteCourse(\\'' + c.course_id + '\\', \\'' + c.course_name + '\\')">삭제</button></td>';
+    html += '<td><button class="btn btn-small btn-outline" onclick="editCourse(\\'' + c.course_id + '\\')">수정</button> ';
+    html += '<button class="btn btn-small btn-danger" onclick="deleteCourse(\\'' + c.course_id + '\\', \\'' + c.course_name + '\\')">삭제</button></td>';
     html += '</tr>';
   }
   html += '</table>';
@@ -1884,6 +1887,92 @@ async function deleteCourse(courseId, name) {
   const res = await fetch('/api/admin/courses/' + courseId, { method:'DELETE' });
   const r = await res.json();
   if (r.success) { await loadCourses(); } else { alert('삭제 실패: ' + (r.error||'')); }
+}
+
+// ─── 과정 수정 ──────────────────────────────────────────
+function editCourse(courseId) {
+  const c = allCourses.find(function(x) { return String(x.course_id) === String(courseId); });
+  if (!c) { alert('과정 정보를 찾을 수 없습니다. 새로고침 후 다시 시도하세요.'); return; }
+
+  let roomOpts = '<option value="">선택</option>';
+  for (const r of allClassrooms) {
+    const sel = (String(r.classroom_id) === String(c.default_classroom_id)) ? ' selected' : '';
+    roomOpts += '<option value="' + r.classroom_id + '"' + sel + '>' + r.classroom_name + ' (' + r.classroom_code + ')</option>';
+  }
+
+  let typeOpts = '<option value="">선택</option>';
+  const types = ['모집과정', '위탁과정', '산교연과정'];
+  for (const t of types) {
+    typeOpts += '<option value="' + t + '"' + (c.course_type === t ? ' selected' : '') + '>' + t + '</option>';
+  }
+
+  const vName = String(c.course_name || '').replace(/"/g, '&quot;');
+  const vCode = String(c.course_code || '').replace(/"/g, '&quot;');
+  const vCohort = String(c.cohort || '').replace(/"/g, '&quot;');
+  const vTotal = (c.total_sessions === null || c.total_sessions === undefined) ? '' : c.total_sessions;
+
+  let html = '<div style="background:#f5f5f7;padding:16px;border-radius:10px;margin-top:12px;">';
+  html += '<b>✏️ 과정 수정</b>';
+  html += '<div style="font-size:12px;color:#86868b;margin:4px 0 12px 0;">회차 일정과 출결 기록은 변경되지 않습니다.</div>';
+  html += '<div class="form-row">';
+  html += '<div class="form-group"><label>과정명 *</label><input type="text" id="ec_name" value="' + vName + '" style="width:220px;"></div>';
+  html += '<div class="form-group"><label>약칭</label><input type="text" id="ec_code" value="' + vCode + '" style="width:120px;"></div>';
+  html += '<div class="form-group"><label>종류</label><select id="ec_type" style="width:130px;">' + typeOpts + '</select></div>';
+  html += '</div><div class="form-row">';
+  html += '<div class="form-group"><label>기수</label><input type="text" id="ec_cohort" value="' + vCohort + '" style="width:100px;"></div>';
+  html += '<div class="form-group"><label>기본 강의실</label><select id="ec_room" style="width:180px;">' + roomOpts + '</select></div>';
+  html += '<div class="form-group"><label>총 회차</label><input type="number" id="ec_total" value="' + vTotal + '" style="width:90px;"></div>';
+  html += '</div><div class="form-row">';
+  html += '<button class="btn btn-success" onclick="saveCourse(\\'' + c.course_id + '\\')">저장</button>';
+  html += '<button class="btn btn-outline" onclick="cancelEditCourse()">취소</button>';
+  html += '</div>';
+  html += '<div id="editCourseMsg"></div>';
+  html += '</div>';
+
+  document.getElementById('courseEditArea').innerHTML = html;
+  document.getElementById('ec_name').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function saveCourse(courseId) {
+  const name = document.getElementById('ec_name').value.trim();
+  if (!name) {
+    document.getElementById('editCourseMsg').innerHTML = '<div class="msg msg-err">과정명을 입력하세요.</div>';
+    return;
+  }
+
+  const data = {
+    course_name: name,
+    course_code: document.getElementById('ec_code').value.trim() || null,
+    course_type: document.getElementById('ec_type').value || null,
+    cohort: document.getElementById('ec_cohort').value.trim() || null,
+    default_classroom_id: document.getElementById('ec_room').value || null,
+    total_sessions: parseInt(document.getElementById('ec_total').value) || null,
+  };
+
+  try {
+    const res = await fetch('/api/admin/courses/' + courseId, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    const r = await res.json();
+    if (r.success) {
+      document.getElementById('courseEditArea').innerHTML = '<div class="msg msg-ok" style="margin-top:10px;">✅ 수정 완료</div>';
+      await loadCourses();
+      setTimeout(function() {
+        const area = document.getElementById('courseEditArea');
+        if (area) area.innerHTML = '';
+      }, 2500);
+    } else {
+      document.getElementById('editCourseMsg').innerHTML = '<div class="msg msg-err">❌ ' + (r.error || '수정 실패') + '</div>';
+    }
+  } catch (e) {
+    document.getElementById('editCourseMsg').innerHTML = '<div class="msg msg-err">❌ 통신 오류: ' + e.message + '</div>';
+  }
+}
+
+function cancelEditCourse() {
+  document.getElementById('courseEditArea').innerHTML = '';
 }
 
 // ─── 회차 관리 ──────────────────────────────────────────
@@ -2134,6 +2223,7 @@ async function freeAddSessions() {
 async function loadClassrooms() {
   const res = await fetch('/api/classrooms');
   const rooms = await res.json();
+  allClassrooms = rooms;
   let html = '<table><tr><th>코드</th><th>이름</th><th>관리</th></tr>';
   for (const r of rooms) {
     html += '<tr><td>' + r.classroom_code + '</td><td>' + r.classroom_name + '</td>';
