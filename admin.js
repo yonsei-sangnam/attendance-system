@@ -1,4 +1,5 @@
 const db = require('./db');
+const layout = require('./layout');
 
 // ─── 라우트 등록 ─────────────────────────────────────────────
 function registerAdminRoutes(app) {
@@ -719,179 +720,250 @@ function registerAdminRoutes(app) {
 // 시스템 설정 페이지 HTML
 // ═════════════════════════════════════════════════════════════
 function renderSettingsPage() {
-  return `<!DOCTYPE html>
-<html lang="ko">
-<head>
-  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title>시스템 설정 - 관리자</title>
-  <style>
-    * { box-sizing:border-box; margin:0; padding:0; }
-    body { font-family:-apple-system,'Malgun Gothic',sans-serif; background:#f5f5f7; color:#1d1d1f; padding:16px; }
-    .container { max-width:700px; margin:0 auto; }
-    h1 { font-size:22px; margin-bottom:4px; }
-    .subtitle { color:#86868b; font-size:13px; margin-bottom:20px; }
-    .card { background:#fff; border-radius:12px; padding:20px; margin-bottom:16px; box-shadow:0 1px 3px rgba(0,0,0,0.08); }
-    .card h2 { font-size:16px; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid #e5e5e7; }
-    .form-row { display:flex; gap:8px; flex-wrap:wrap; align-items:end; margin-bottom:10px; }
-    .form-group { display:flex; flex-direction:column; }
-    .form-group label { font-size:11px; color:#86868b; margin-bottom:3px; }
-    .form-group input { padding:8px 10px; border:1.5px solid #d2d2d7; border-radius:8px; font-size:13px; }
-    .form-group input:focus { border-color:#1a73e8; outline:none; }
-    .btn { padding:8px 16px; border:none; border-radius:8px; font-size:13px; cursor:pointer; background:#1a73e8; color:#fff; }
-    .btn:hover { background:#1557b0; }
-    .btn-outline { background:#fff; color:#1a73e8; border:1.5px solid #1a73e8; }
-    .btn-success { background:#34c759; }
-    .back-link { font-size:13px; color:#1a73e8; text-decoration:none; }
-    .toggle-row { display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid #e5e5e7; margin-bottom:12px; }
-    .toggle-switch { position:relative; width:51px; height:31px; }
-    .toggle-switch input { opacity:0; width:0; height:0; }
-    .toggle-slider { position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0; background:#e5e5e7; border-radius:31px; transition:.3s; }
-    .toggle-slider:before { content:""; position:absolute; height:27px; width:27px; left:2px; bottom:2px; background:#fff; border-radius:50%; transition:.3s; box-shadow:0 1px 3px rgba(0,0,0,0.2); }
-    .toggle-switch input:checked + .toggle-slider { background:#34c759; }
-    .toggle-switch input:checked + .toggle-slider:before { transform:translateX(20px); }
-    .info-box { background:#e8f0fe; border-radius:8px; padding:14px 16px; font-size:13px; color:#1a73e8; line-height:1.8; margin-bottom:12px; }
-    .warn-box { background:#fff3e0; border-radius:8px; padding:14px 16px; font-size:13px; color:#e65100; line-height:1.8; margin-top:12px; }
-    #mapPreview { width:100%; height:200px; border-radius:10px; background:#f5f5f7; border:1.5px solid #e5e5e7; display:flex; align-items:center; justify-content:center; font-size:13px; color:#86868b; margin-top:10px; }
-    #msg { font-size:13px; margin-top:8px; min-height:20px; }
-  </style>
-</head>
-<body>
-  <div class="container"><div style="padding:14px 0 10px 0;"><img src="/logo.png" alt="연세대학교 상남경영원" style="height:52px;display:block;"></div>
+  const pageCss = `
+  .st-h1 { margin:0; font-size:32px; font-weight:800; letter-spacing:-0.025em; line-height:1.1; }
+  .st-lead { font-size:13px; font-weight:500; color:var(--sn-gray); margin-top:6px; }
+  .st-cardtitle { font-size:16px; font-weight:800; letter-spacing:-0.015em; }
+  .st-help { font-size:11.5px; color:var(--sn-gray); margin-top:12px; line-height:1.7; }
+  .st-note { font-size:12px; color:var(--sn-gray); margin-top:8px; line-height:1.7; }
 
-  <a href="/admin" class="back-link">← 대시보드로 돌아가기</a>
-  <h1 style="margin-top:12px;">⚙️ 시스템 설정</h1>
-  <p class="subtitle">퇴실 위치 검증 및 인증 설정</p>
+  .st-toggle {
+    appearance:none; border:none; cursor:pointer; flex-shrink:0;
+    height:38px; min-width:74px; padding:0 18px; border-radius:999px;
+    font-size:13px; font-weight:800; letter-spacing:0.02em;
+    background:var(--sn-line); color:var(--sn-gray);
+    transition:background .15s ease, color .15s ease;
+  }
+  .st-toggle.on { background:var(--sn-navy); color:#fff; }
 
-  <div class="card">
-    <h2>📍 건물 위치 설정</h2>
-    <div class="info-box">
-      퇴실 알림 탭 시 수강생의 위치를 확인합니다.<br>
-      수강생이 지정한 건물 반경 안에 있을 때만 퇴실 처리됩니다.<br>
-      <b>퇴실 처리 순서: 위치 확인 → 생체인증 → 퇴실 완료</b>
-    </div>
+  .st-field { display:flex; flex-direction:column; gap:6px; }
+  .st-field label { font-size:11.5px; font-weight:600; color:var(--sn-gray); }
+  .st-input {
+    height:44px; width:100%; padding:0 14px;
+    border:1.5px solid var(--sn-line); border-radius:12px; background:#fff;
+    font-size:14px; font-weight:600; color:var(--sn-ink);
+    font-variant-numeric:tabular-nums; outline:none;
+    transition:border-color .15s ease;
+  }
+  .st-input:focus { border-color:var(--sn-navy); }
 
-    <div class="toggle-row">
-      <div>
-        <div style="font-size:15px;font-weight:500;">위치 검증 사용</div>
-        <div style="font-size:12px;color:#86868b;">OFF 시 위치 확인 없이 생체인증만으로 퇴실 처리</div>
-      </div>
-      <label class="toggle-switch">
-        <input type="checkbox" id="locationEnabled">
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
+  .st-preview {
+    flex:1; min-height:250px; margin-top:14px; border-radius:16px;
+    background:var(--sn-bg); display:flex; align-items:center; justify-content:center;
+    position:relative; overflow:hidden;
+  }
+  .st-circle {
+    border:2px solid var(--sn-navy); border-radius:50%;
+    background:rgba(0,56,118,0.07);
+    display:flex; align-items:center; justify-content:center;
+    transition:width .2s ease, height .2s ease;
+  }
+  .st-pin { width:10px; height:10px; border-radius:50%; background:var(--sn-navy); }
+  .st-badge {
+    position:absolute; bottom:12px; left:12px;
+    font-size:11.5px; font-weight:600; color:var(--sn-gray);
+    background:#fff; padding:5px 10px; border-radius:999px;
+  }
+  .st-warn {
+    background:#fff8e6; border-radius:14px; padding:14px 16px; margin-top:14px;
+    font-size:12px; color:#7a5a05; line-height:1.8;
+  }
+  .st-warn b { color:#4a3505; }
+  `;
 
-    <div class="form-row">
-      <div class="form-group"><label>위도 (Latitude)</label><input type="number" id="lat" placeholder="37.123456" step="0.000001" style="width:150px;"></div>
-      <div class="form-group"><label>경도 (Longitude)</label><input type="number" id="lng" placeholder="127.123456" step="0.000001" style="width:150px;"></div>
-      <div class="form-group"><label>허용 반경 (미터)</label><input type="number" id="radius" placeholder="200" style="width:100px;" min="50" max="2000"></div>
-    </div>
+  const body =
+      '<section class="sn-section">'
+    +   '<h1 class="st-h1">시스템 설정</h1>'
+    +   '<div class="st-lead">퇴실 위치 검증 · 퇴실 알림 타이밍</div>'
 
-    <div class="form-row" style="gap:6px;">
-      <button class="btn btn-outline" onclick="getMyLocation()">📍 현재 위치 가져오기</button>
-      <button class="btn btn-success" onclick="saveSettings()">저장</button>
-    </div>
+    // ── 1행: 위치 검증 + 반경 미리보기 ──
+    +   '<div class="sn-grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr));margin-top:18px;">'
 
-    <div id="msg"></div>
+    +     '<div class="sn-card">'
+    +       '<div style="display:flex;align-items:flex-start;gap:16px;">'
+    +         '<div style="flex:1;">'
+    +           '<div class="st-cardtitle">퇴실 위치 검증</div>'
+    +           '<div class="st-note">'
+    +             'ON &middot; 위치 확인 &rarr; 생체인증 &rarr; 퇴실 처리<br>'
+    +             'OFF &middot; 생체인증 &rarr; 퇴실 처리 (위치 무관)'
+    +           '</div>'
+    +         '</div>'
+    +         '<button type="button" class="st-toggle" id="locToggle" aria-pressed="false">OFF</button>'
+    +       '</div>'
+    +       '<div style="margin-top:18px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">'
+    +         '<div class="st-field"><label for="lat">위도 (Latitude)</label>'
+    +           '<input class="st-input" type="number" id="lat" step="0.000001" placeholder="37.564938"></div>'
+    +         '<div class="st-field"><label for="lng">경도 (Longitude)</label>'
+    +           '<input class="st-input" type="number" id="lng" step="0.000001" placeholder="126.942565"></div>'
+    +         '<div class="st-field" style="grid-column:1 / -1;"><label for="radius">허용 반경 (미터)</label>'
+    +           '<input class="st-input" type="number" id="radius" min="50" max="2000" placeholder="500"></div>'
+    +       '</div>'
+    +       '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">'
+    +         '<button type="button" class="sn-btn sn-btn-secondary" style="height:44px;" id="btnGetLoc">현재 위치 가져오기</button>'
+    +         '<button type="button" class="sn-btn sn-btn-primary" style="height:44px;" data-save>저장</button>'
+    +       '</div>'
+    +       '<div class="st-help">반경을 너무 좁게 잡으면 건물 안에서도 위치 확인이 실패합니다. 구글지도 좌표와 &lsquo;현재 위치 가져오기&rsquo;를 번갈아 테스트해 정하세요.</div>'
+    +       '<div class="st-warn">'
+    +         '<b>주의사항</b><br>'
+    +         '&middot; 실내 GPS 오차는 10~50m입니다 (건물 구조에 따라 다름)<br>'
+    +         '&middot; 반경은 건물 크기 + 여유 50~100m 를 더해 잡는 것을 권장합니다<br>'
+    +         '&middot; 위치 권한을 거부한 수강생은 퇴실 처리가 불가합니다<br>'
+    +         '&middot; 실제 강의실에서 테스트한 뒤 반경을 조정하세요'
+    +       '</div>'
+    +     '</div>'
 
-    <div class="warn-box">
-      <b>⚠️ 주의사항</b><br>
-      - 실내 GPS 오차: 10~50m (건물 구조에 따라 다름)<br>
-      - 반경은 건물 크기 + 여유 50~100m 추가 권장<br>
-      - 위치 권한을 거부한 수강생은 퇴실 처리 불가<br>
-      - 테스트 후 반경을 조정하세요
-    </div>
-  </div>
+    +     '<div class="sn-card" style="display:flex;flex-direction:column;">'
+    +       '<div class="st-cardtitle">허용 반경 미리보기</div>'
+    +       '<div class="st-note">입력한 반경의 상대적인 크기를 보여줍니다. 실제 지도가 아닙니다.</div>'
+    +       '<div class="st-preview">'
+    +         '<div class="st-circle" id="radiusCircle" style="width:190px;height:190px;"><div class="st-pin"></div></div>'
+    +         '<div class="st-badge" id="radiusBadge">반경 &mdash;</div>'
+    +       '</div>'
+    +     '</div>'
 
-  <div class="card">
-    <h2>🔔 퇴실 알림 설정</h2>
-    <div class="info-box">
-      수업 종료 전후로 퇴실 미처리 수강생에게 푸시 알림을 보냅니다.<br>
-      종료 후 자동 처리 시간이 지나면 '퇴실미확인'으로 자동 처리됩니다.
-    </div>
+    +   '</div>'
 
-    <div class="form-row">
-      <div class="form-group">
-        <label>종료 전 알림 시작 (분)</label>
-        <input type="number" id="remindBefore" placeholder="10" style="width:100px;" min="1" max="30" value="10">
-      </div>
-      <div class="form-group">
-        <label>종료 후 자동 처리 (분)</label>
-        <input type="number" id="autoClose" placeholder="10" style="width:100px;" min="1" max="60" value="10">
-      </div>
-      <div class="form-group">
-        <label>발송 간격 (분)</label>
-        <input type="number" id="pushInterval" placeholder="2" style="width:100px;" min="1" max="30" value="2">
-      </div>
-    </div>
+    // ── 2행: 퇴실 알림 설정 ──
+    +   '<div class="sn-card" style="margin-top:14px;">'
+    +     '<div class="st-cardtitle">퇴실 알림 설정</div>'
+    +     '<div class="st-note">'
+    +       '수업 종료 전후로 퇴실하지 않은 수강생에게 푸시 알림을 보냅니다.<br>'
+    +       '종료 후 자동 처리 시간이 지나면 &lsquo;퇴실미확인&rsquo;으로 자동 처리됩니다.'
+    +     '</div>'
+    +     '<div style="margin-top:18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;">'
+    +       '<div class="st-field"><label for="remindBefore">종료 전 알림 시작 (분)</label>'
+    +         '<input class="st-input" type="number" id="remindBefore" min="1" max="30" value="10"></div>'
+    +       '<div class="st-field"><label for="autoClose">종료 후 자동 처리 (분)</label>'
+    +         '<input class="st-input" type="number" id="autoClose" min="1" max="60" value="10"></div>'
+    +       '<div class="st-field"><label for="pushInterval">발송 간격 (분)</label>'
+    +         '<input class="st-input" type="number" id="pushInterval" min="1" max="30" value="2"></div>'
+    +     '</div>'
+    +     '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">'
+    +       '<button type="button" class="sn-btn sn-btn-primary" style="height:44px;" data-save>저장</button>'
+    +     '</div>'
+    +     '<div class="st-warn">'
+    +       '<b>참고</b><br>'
+    +       '&middot; 종료 전 알림 시작 &mdash; 수업 종료 N분 전부터 퇴실 알림 발송 시작 (기본 10분)<br>'
+    +       '&middot; 종료 후 자동 처리 &mdash; 수업 종료 후 N분까지 퇴실하지 않으면 &lsquo;퇴실미확인&rsquo; 자동 처리 (기본 10분)<br>'
+    +       '&middot; 발송 간격 &mdash; 알림 반복 발송 주기 (기본 2분)<br>'
+    +       '&middot; 두 카드의 저장 버튼은 모두 <b>전체 설정</b>을 함께 저장합니다'
+    +     '</div>'
+    +   '</div>'
+    + '</section>'
 
-    <div class="warn-box">
-      <b>💡 참고</b><br>
-      - 종료 전 알림 시작: 수업 종료 N분 전부터 퇴실 알림 발송 시작 (기본: 10분)<br>
-      - 종료 후 자동 처리: 수업 종료 후 N분까지 퇴실 안하면 '퇴실미확인' 자동 처리 (기본: 10분)<br>
-      - 발송 간격: 알림 반복 발송 주기 (기본: 2분)
-    </div>
-  </div>
-</div>
+    + '<div id="snToast" style="position:fixed;left:50%;bottom:28px;transform:translateX(-50%);'
+    +   'background:var(--sn-navy);color:#fff;font-size:13px;font-weight:700;padding:12px 20px;'
+    +   'border-radius:999px;box-shadow:0 8px 24px rgba(0,56,118,0.25);opacity:0;pointer-events:none;'
+    +   'transition:opacity .2s ease;z-index:50;max-width:88vw;text-align:center;"></div>';
 
-<script>
-  window.addEventListener('load', loadSettings);
+  const pageJs = `
+  var toastTimer = null;
+  function showToast(msg, bad) {
+    var t = document.getElementById('snToast');
+    if (!t) return;
+    t.textContent = msg;
+    t.style.background = bad ? '#D32F2F' : 'var(--sn-navy)';
+    t.style.opacity = '1';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function() { t.style.opacity = '0'; }, 2400);
+  }
+
+  var locOn = false;
+  var toggle = document.getElementById('locToggle');
+  function setToggle(v) {
+    locOn = !!v;
+    toggle.textContent = locOn ? 'ON' : 'OFF';
+    toggle.classList.toggle('on', locOn);
+    toggle.setAttribute('aria-pressed', locOn ? 'true' : 'false');
+  }
+  toggle.addEventListener('click', function() { setToggle(!locOn); });
+
+  var radiusInput = document.getElementById('radius');
+  function drawRadius() {
+    var r = parseInt(radiusInput.value, 10);
+    var badge = document.getElementById('radiusBadge');
+    var circle = document.getElementById('radiusCircle');
+    if (!r || r <= 0) { badge.textContent = '반경 —'; circle.style.width = '120px'; circle.style.height = '120px'; return; }
+    // 50m=110px ~ 2000m=230px 사이로 완만하게 매핑 (상대 크기 감각용)
+    var px = Math.round(110 + Math.min(1, Math.log(r / 50) / Math.log(40)) * 120);
+    circle.style.width = px + 'px';
+    circle.style.height = px + 'px';
+    badge.textContent = '반경 ' + r + 'm';
+  }
+  radiusInput.addEventListener('input', drawRadius);
 
   async function loadSettings() {
     try {
-      const res = await fetch('/api/settings/building');
-      const data = await res.json();
-      document.getElementById('locationEnabled').checked = data.enabled;
+      var res = await fetch('/api/settings/building');
+      var data = await res.json();
+      setToggle(data.enabled);
       if (data.lat) document.getElementById('lat').value = data.lat;
       if (data.lng) document.getElementById('lng').value = data.lng;
       document.getElementById('radius').value = data.radius || 200;
       document.getElementById('pushInterval').value = data.pushIntervalMinutes || 2;
       document.getElementById('remindBefore').value = data.pushRemindBeforeMinutes || 10;
       document.getElementById('autoClose').value = data.pushAutoCloseMinutes || 10;
-    } catch (e) { console.error(e); }
+      drawRadius();
+    } catch (e) {
+      showToast('설정을 불러오지 못했습니다', true);
+    }
   }
 
-  function getMyLocation() {
-    if (!navigator.geolocation) { alert('이 브라우저는 위치를 지원하지 않습니다.'); return; }
-    document.getElementById('msg').innerHTML = '<span style="color:#1a73e8;">위치 확인 중...</span>';
+  document.getElementById('btnGetLoc').addEventListener('click', function() {
+    if (!navigator.geolocation) { showToast('이 브라우저는 위치를 지원하지 않습니다', true); return; }
+    showToast('위치 확인 중…');
     navigator.geolocation.getCurrentPosition(
       function(pos) {
         document.getElementById('lat').value = pos.coords.latitude.toFixed(6);
         document.getElementById('lng').value = pos.coords.longitude.toFixed(6);
-        document.getElementById('msg').innerHTML = '<span style="color:#34c759;">✅ 현재 위치 적용 완료 (정확도: ' + Math.round(pos.coords.accuracy) + 'm)</span>';
+        showToast('현재 위치 적용 완료 (정확도 ' + Math.round(pos.coords.accuracy) + 'm)');
       },
-      function(err) {
-        document.getElementById('msg').innerHTML = '<span style="color:#ff3b30;">위치 오류: ' + err.message + '</span>';
-      },
+      function(err) { showToast('위치 오류: ' + err.message, true); },
       { enableHighAccuracy: true, timeout: 10000 }
     );
-  }
+  });
 
   async function saveSettings() {
-    const data = {
+    var data = {
       lat:     parseFloat(document.getElementById('lat').value) || null,
       lng:     parseFloat(document.getElementById('lng').value) || null,
-      radius:  parseInt(document.getElementById('radius').value) || 200,
-      enabled: document.getElementById('locationEnabled').checked,
-      pushIntervalMinutes: parseInt(document.getElementById('pushInterval').value) || 2,
-      pushRemindBeforeMinutes: parseInt(document.getElementById('remindBefore').value) || 10,
-      pushAutoCloseMinutes: parseInt(document.getElementById('autoClose').value) || 10,
+      radius:  parseInt(document.getElementById('radius').value, 10) || 200,
+      enabled: locOn,
+      pushIntervalMinutes:     parseInt(document.getElementById('pushInterval').value, 10) || 2,
+      pushRemindBeforeMinutes: parseInt(document.getElementById('remindBefore').value, 10) || 10,
+      pushAutoCloseMinutes:    parseInt(document.getElementById('autoClose').value, 10) || 10
     };
+    if (data.enabled && (data.lat === null || data.lng === null)) {
+      showToast('위치 검증을 켜려면 위도·경도를 입력하세요', true);
+      return;
+    }
     try {
-      const res = await fetch('/api/admin/settings', {
-        method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)
+      var res = await fetch('/api/admin/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
       });
-      const r = await res.json();
-      document.getElementById('msg').innerHTML = r.success
-        ? '<span style="color:#34c759;">✅ 저장 완료</span>'
-        : '<span style="color:#ff3b30;">❌ 저장 실패</span>';
+      var r = await res.json();
+      showToast(r.success ? '저장 완료' : ('저장 실패: ' + (r.error || '')), !r.success);
     } catch (e) {
-      document.getElementById('msg').innerHTML = '<span style="color:#ff3b30;">❌ ' + e.message + '</span>';
+      showToast('저장 실패: ' + e.message, true);
     }
   }
-</script>
-</body>
-</html>`;
+
+  document.querySelectorAll('[data-save]').forEach(function(b) {
+    b.addEventListener('click', saveSettings);
+  });
+
+  loadSettings();
+  `;
+
+  return layout.renderShell({
+    active: 'settings',
+    title: '시스템 설정',
+    body: body,
+    pageCss: pageCss,
+    pageJs: pageJs
+  });
 }
 
 
