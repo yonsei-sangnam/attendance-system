@@ -9,6 +9,7 @@ const attend = require('./attendance');
 const admin = require('./admin');
 const sync = require('./sync');
 const push = require('./push');
+const layout = require('./layout');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -405,26 +406,63 @@ app.get('/', (req, res) => {
 // ═══ 관리자 대시보드 ═════════════════════════════════════════
 app.get('/admin', async (req, res) => {
   try {
+    const KST = "(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::DATE";
+
     const dbCheck = await db.query('SELECT NOW() AS server_time');
     const classrooms = await db.query('SELECT classroom_code, classroom_name FROM classrooms ORDER BY classroom_code');
-    const courses = await db.query(`
-      SELECT c.course_name, c.course_code, c.course_type, c.cohort, cr.classroom_name AS default_room
-      FROM courses c LEFT JOIN classrooms cr ON cr.classroom_id = c.default_classroom_id
-      ORDER BY c.course_type, c.course_name
+
+    // ── 오늘 진행 중인 수업 ──────────────────────────────
+    const todayRows = await db.query(`
+      SELECT cs.session_id, cs.session_number, cs.start_time, cs.end_time,
+             c.course_id, c.course_name, c.course_code, c.cohort,
+             COALESCE(cr.classroom_name, dcr.classroom_name) AS room_name,
+             (SELECT COUNT(*) FROM enrollments e WHERE e.course_id = c.course_id) AS enrolled,
+             (SELECT COUNT(*) FROM attendance a
+               WHERE a.session_id = cs.session_id AND a.check_in_at IS NOT NULL) AS checked_in
+      FROM course_sessions cs
+      JOIN courses c ON c.course_id = cs.course_id
+      LEFT JOIN classrooms cr ON cr.classroom_id = cs.classroom_id
+      LEFT JOIN classrooms dcr ON dcr.classroom_id = c.default_classroom_id
+      WHERE cs.session_date = ${KST}
+      ORDER BY cs.start_time, c.course_name
     `);
-    const studentCount = await db.query('SELECT COUNT(*) AS cnt FROM students');
-    const credCount = await db.query('SELECT COUNT(DISTINCT student_id) AS cnt FROM credentials');
-    const sessionCount = await db.query('SELECT COUNT(*) AS cnt FROM course_sessions');
-    const attendanceCount = await db.query('SELECT COUNT(*) AS cnt FROM attendance');
+
+    // ── 오늘의 출결 집계 ─────────────────────────────────
+    const kpi = await db.query(`
+      SELECT
+        (SELECT COUNT(DISTINCT cs.course_id) FROM course_sessions cs
+          WHERE cs.session_date = ${KST}) AS courses_today,
+        (SELECT COUNT(*) FROM course_sessions cs
+          JOIN enrollments e ON e.course_id = cs.course_id
+          WHERE cs.session_date = ${KST}) AS expected,
+        (SELECT COUNT(*) FROM attendance a
+          JOIN course_sessions cs ON cs.session_id = a.session_id
+          WHERE cs.session_date = ${KST} AND a.check_in_at IS NOT NULL) AS checked_in,
+        (SELECT COUNT(*) FROM attendance a
+          JOIN course_sessions cs ON cs.session_id = a.session_id
+          WHERE cs.session_date = ${KST} AND a.exit_type = '퇴실미확인') AS no_checkout
+    `);
+
+    // ── 전체 누적 현황 ───────────────────────────────────
+    const totals = await db.query(`
+      SELECT
+        (SELECT COUNT(*) FROM courses) AS courses,
+        (SELECT COUNT(*) FROM classrooms) AS classrooms,
+        (SELECT COUNT(*) FROM students) AS students,
+        (SELECT COUNT(DISTINCT student_id) FROM credentials) AS creds,
+        (SELECT COUNT(*) FROM course_sessions) AS sessions,
+        (SELECT COUNT(*) FROM attendance) AS attendance
+    `);
+
     const baseUrl = `${req.protocol}://${req.get('host')}`;
 
     res.send(renderAdminPage({
-      serverTime: dbCheck.rows[0].server_time, baseUrl,
-      classrooms: classrooms.rows, courses: courses.rows,
-      studentCount: studentCount.rows[0].cnt,
-      credCount: credCount.rows[0].cnt,
-      sessionCount: sessionCount.rows[0].cnt,
-      attendanceCount: attendanceCount.rows[0].cnt,
+      serverTime: dbCheck.rows[0].server_time,
+      baseUrl,
+      classrooms: classrooms.rows,
+      today: todayRows.rows,
+      kpi: kpi.rows[0],
+      totals: totals.rows[0],
     }));
   } catch (err) {
     res.status(500).send(`<html><body style="font-family:sans-serif;padding:40px;"><h1>DB 연결 실패</h1><p>${err.message}</p></body></html>`);
@@ -2592,95 +2630,207 @@ function renderAppPage() {
 
 // ─── 관리자 대시보드 ─────────────────────────────────────────
 function renderAdminPage(data) {
-  const classroomRows = data.classrooms.map(c => `
-    <tr><td>${c.classroom_code}</td><td>${c.classroom_name}</td>
-    <td><a href="/qr/${c.classroom_code}" target="_blank" class="btn-link">QR 화면 열기 →</a></td></tr>
-  `).join('');
-  const courseRows = data.courses.map(c => `
-    <tr><td>${c.course_name}</td><td>${c.course_code||''}</td>
-    <td><span class="badge ${c.course_type==='모집과정'?'blue':c.course_type==='위탁과정'?'green':c.course_type==='산교연과정'?'orange':'gray'}">${c.course_type||'-'}</span></td>
-    <td>${c.cohort||'-'}</td><td>${c.default_room||'-'}</td></tr>
-  `).join('');
+  const esc = layout.esc;
 
-  return `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>출결 관리 시스템</title>
-  <style>
-    ${COMMON_CSS}
-    .status-bar { background:#fff; border-radius:12px; padding:16px 20px; margin-bottom:20px; display:flex; gap:24px; flex-wrap:wrap; align-items:center; box-shadow:0 1px 3px rgba(0,0,0,0.08); }
-    .status-item { display:flex; flex-direction:column; }
-    .status-label { font-size:12px; color:#86868b; }
-    .status-value { font-size:18px; font-weight:600; }
-    .status-ok { color:#34c759; }
-    .card { max-width:100%; text-align:left; padding:20px; margin-bottom:20px; }
-    table { width:100%; border-collapse:collapse; font-size:14px; }
-    th { text-align:left; padding:8px 12px; background:#f5f5f7; color:#86868b; font-weight:500; font-size:12px; }
-    td { padding:8px 12px; border-top:1px solid #e5e5e7; }
-    .badge { padding:2px 8px; border-radius:4px; font-size:12px; font-weight:500; }
-    .blue { background:#e8f0fe; color:#1a73e8; } .green { background:#e6f4ea; color:#137333; }
-    .orange { background:#fef3e0; color:#e37400; } .gray { background:#f1f3f4; color:#5f6368; }
-    .stats-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:12px; }
-    .stat-box { background:#f5f5f7; border-radius:8px; padding:16px; text-align:center; }
-    .stat-number { font-size:28px; font-weight:700; color:#1a73e8; }
-    .stat-label { font-size:12px; color:#86868b; margin-top:4px; }
-    .btn-link { color:#1a73e8; text-decoration:none; font-size:13px; }
-    .btn-link:hover { text-decoration:underline; }
-    .info-box { background:#e8f0fe; border-radius:8px; padding:14px 18px; margin-top:12px; font-size:13px; color:#1a73e8; line-height:1.6; }
-  </style></head>
-  <body>
-  <div class="container"><div style="padding:14px 0 10px 0;"><img src="/logo.png" alt="연세대학교 상남경영원" style="height:52px;display:block;"></div>
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;"><div><h1>📋 출결 관리 시스템</h1><p class="subtitle">관리자 대시보드</p></div><a href="/admin/logout" style="display:inline-block;padding:10px 24px;background:#ff3b30;color:#fff;border-radius:10px;text-decoration:none;font-size:14px;font-weight:600;white-space:nowrap;">로그아웃</a></div>
-    <div class="status-bar">
-      <div class="status-item"><span class="status-label">서버</span><span class="status-value status-ok">● 정상</span></div>
-      <div class="status-item"><span class="status-label">DB</span><span class="status-value status-ok">● 연결됨</span></div>
-      <div class="status-item"><span class="status-label">KST</span><span class="status-value">${new Date(data.serverTime).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})}</span></div>
-    </div>
-    <div class="card"><h2>📊 현재 데이터 현황</h2>
-      <div class="stats-grid">
-        <div class="stat-box"><div class="stat-number">${data.courses.length}</div><div class="stat-label">교육과정</div></div>
-        <div class="stat-box"><div class="stat-number">${data.classrooms.length}</div><div class="stat-label">강의실</div></div>
-        <div class="stat-box"><div class="stat-number">${data.studentCount}</div><div class="stat-label">수강생</div></div>
-        <div class="stat-box"><div class="stat-number">${data.credCount}</div><div class="stat-label">생체인증 등록</div></div>
-        <div class="stat-box"><div class="stat-number">${data.sessionCount}</div><div class="stat-label">회차 스케줄</div></div>
-        <div class="stat-box"><div class="stat-number">${data.attendanceCount}</div><div class="stat-label">출결 기록</div></div>
-      </div>
-    </div>
-    <div class="card"><h2>📊 출결 현황 관리</h2>
-      <p style="font-size:14px;color:#86868b;margin-bottom:12px;">과정별/회차별 출결 조회, 상태 수동 변경, 결석 일괄 처리:</p>
-      <a href="/admin/attendance" class="btn-link" style="font-size:15px;font-weight:600;">출결 현황 페이지 열기 →</a>
-    </div>
-    <div class="card"><h2>👥 수강생 관리</h2>
-      <p style="font-size:14px;color:#86868b;margin-bottom:12px;">수강생 일괄 등록, 생체인증 등록 현황, 통합 관리 시트:</p>
-      <a href="/admin/students" class="btn-link" style="font-size:15px;font-weight:600;">수강생 관리 페이지 열기 →</a>
-    </div>
-    <div class="card"><h2>🏫 교육과정 관리</h2>
-      <p style="font-size:14px;color:#86868b;margin-bottom:12px;">교육과정 추가/수정/삭제, 회차 관리, 강의실 관리:</p>
-      <a href="/admin/courses" class="btn-link" style="font-size:15px;font-weight:600;">교육과정 관리 페이지 열기 →</a>
-    </div>
-    <div class="card"><h2>⚙️ 시스템 설정</h2>
-      <p style="font-size:14px;color:#86868b;margin-bottom:12px;">퇴실 위치 검증, 건물 반경 설정:</p>
-      <a href="/admin/settings" class="btn-link" style="font-size:15px;font-weight:600;">시스템 설정 열기 →</a>
-    </div>
-    <div class="card"><h2>📤 구글시트 동기화</h2>
-      <p style="font-size:14px;color:#86868b;margin-bottom:12px;">과정별 출결 데이터를 구글시트로 자동 내보내기:</p>
-      <a href="/admin/sync" class="btn-link" style="font-size:15px;font-weight:600;">구글시트 동기화 설정 →</a>
-    </div>
-    <div class="card"><h2>🚪 강의실 QR 코드</h2>
-      <table><tr><th>코드</th><th>이름</th><th>QR</th></tr>${classroomRows}</table>
-      <div class="info-box">💡 각 강의실 태블릿/노트북에서 "QR 화면 열기"를 클릭하세요.</div>
-    </div>
-    <div class="card"><h2>🔐 생체인증 등록 페이지</h2>
-      <p style="font-size:14px;color:#86868b;margin-bottom:12px;">수업 첫날 수강생 단체 등록 시 아래 주소를 안내하세요:</p>
-      <div style="background:#f5f5f7;padding:12px;border-radius:8px;font-family:monospace;font-size:14px;word-break:break-all;">${data.baseUrl}/register</div>
-      <div class="info-box">💡 수강생이 이 주소에 접속 → 전화번호 입력 → 지문/Face ID 등록</div>
-    </div>
-    <div class="card"><h2>📱 수강생 앱 (PWA)</h2>
-      <p style="font-size:14px;color:#86868b;margin-bottom:12px;">생체인증 등록 후, 아래 주소를 홈 화면에 추가하도록 안내하세요:</p>
-      <div style="background:#f5f5f7;padding:12px;border-radius:8px;font-family:monospace;font-size:14px;word-break:break-all;">${data.baseUrl}/app</div>
-      <div class="info-box">💡 수강생이 이 주소에 접속 → 전화번호 입력 → 홈 화면에 추가 → 알림 토글 켜기</div>
-    </div>
-    <div class="card"><h2>🏫 교육과정</h2>
-      <table><tr><th>과정명</th><th>약칭</th><th>종류</th><th>기수</th><th>강의실</th></tr>${courseRows}</table>
-    </div>
-  </div></body></html>`;
+  function fmtTime(t) {
+    if (!t) return '—';
+    return String(t).slice(0, 5);
+  }
+  function pct(a, b) {
+    const n = Number(a) || 0, d = Number(b) || 0;
+    if (!d) return 0;
+    return Math.round((n / d) * 100);
+  }
+
+  // ── 1. 오늘 진행 중인 수업 ──────────────────────────
+  let todayHtml;
+  if (!data.today.length) {
+    todayHtml = '<div class="sn-card" style="text-align:center;padding:40px 20px;color:var(--sn-gray);font-size:13.5px;font-weight:600;">'
+              + '오늘 예정된 수업이 없습니다.</div>';
+  } else {
+    todayHtml = '<div class="sn-grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr));">'
+      + data.today.map(function(r) {
+          const rate = pct(r.checked_in, r.enrolled);
+          const barW = Math.min(100, rate);
+          const barColor = rate >= 80 ? 'var(--sn-navy)' : (rate >= 50 ? '#2a63a8' : 'var(--sn-amber)');
+          const abbr = r.course_code || '과정';
+          return '<div class="sn-card" style="display:flex;flex-direction:column;gap:16px;">'
+            + '<div>'
+            +   '<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">'
+            +     '<span style="font-size:11.5px;font-weight:700;color:#fff;background:var(--sn-navy);padding:3px 9px;border-radius:999px;">' + esc(abbr) + '</span>'
+            +     '<span style="font-size:11.5px;font-weight:600;color:var(--sn-gray);">' + esc(r.room_name || '강의실 미지정') + '</span>'
+            +   '</div>'
+            +   '<div style="font-size:17px;font-weight:800;letter-spacing:-0.015em;margin-top:9px;line-height:1.3;">'
+            +     esc(r.course_name) + (r.cohort ? ' <span style="font-size:13px;font-weight:600;color:var(--sn-gray);">' + esc(r.cohort) + '기</span>' : '')
+            +   '</div>'
+            + '</div>'
+            + '<div style="display:grid;grid-template-columns:repeat(3,1fr);background:var(--sn-bg);border-radius:14px;padding:12px 14px;">'
+            +   '<div><div style="font-size:11px;font-weight:600;color:var(--sn-gray);">회차</div>'
+            +     '<div style="font-size:15px;font-weight:800;margin-top:3px;font-variant-numeric:tabular-nums;">' + esc(r.session_number) + '회</div></div>'
+            +   '<div><div style="font-size:11px;font-weight:600;color:var(--sn-gray);">수업시간</div>'
+            +     '<div style="font-size:15px;font-weight:800;margin-top:3px;font-variant-numeric:tabular-nums;letter-spacing:-0.02em;">' + fmtTime(r.start_time) + '~' + fmtTime(r.end_time) + '</div></div>'
+            +   '<div><div style="font-size:11px;font-weight:600;color:var(--sn-gray);">입실</div>'
+            +     '<div style="font-size:15px;font-weight:800;margin-top:3px;font-variant-numeric:tabular-nums;">' + esc(r.checked_in) + '/' + esc(r.enrolled) + '</div></div>'
+            + '</div>'
+            + '<div style="display:flex;align-items:center;gap:12px;">'
+            +   '<div style="flex:1;height:8px;background:var(--sn-line);border-radius:999px;overflow:hidden;">'
+            +     '<div style="height:100%;width:' + barW + '%;background:' + barColor + ';border-radius:999px;"></div>'
+            +   '</div>'
+            +   '<span style="font-size:13px;font-weight:800;font-variant-numeric:tabular-nums;min-width:44px;text-align:right;">' + rate + '%</span>'
+            + '</div>'
+            + '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
+            +   '<a class="sn-btn sn-btn-primary" href="/admin/attendance">출결 조회·수정</a>'
+            +   '<a class="sn-btn sn-btn-secondary" href="/admin/sync">시트 동기화</a>'
+            + '</div>'
+            + '</div>';
+        }).join('')
+      + '</div>';
+  }
+
+  // ── 2. 배포용 주소 · 강의실 QR ───────────────────────
+  const appUrl = data.baseUrl + '/app';
+  const regUrl = data.baseUrl + '/register';
+
+  const roomTiles = data.classrooms.map(function(c) {
+    return '<div style="display:flex;align-items:center;gap:10px;background:var(--sn-bg);border-radius:14px;padding:12px 14px;">'
+      + '<div>'
+      +   '<div style="font-size:13.5px;font-weight:800;">' + esc(c.classroom_name) + '</div>'
+      +   '<div style="font-size:11.5px;font-weight:600;color:var(--sn-gray);font-variant-numeric:tabular-nums;margin-top:2px;">' + esc(c.classroom_code) + '</div>'
+      + '</div>'
+      + '<a class="sn-btn sn-btn-primary sn-btn-sm" style="margin-left:auto;" href="/qr/' + encodeURIComponent(c.classroom_code) + '" target="_blank" rel="noopener">QR 열기</a>'
+      + '</div>';
+  }).join('');
+
+  // ── 3. 오늘의 출결 KPI ───────────────────────────────
+  const k = data.kpi || {};
+  const expected = Number(k.expected) || 0;
+  const checkedIn = Number(k.checked_in) || 0;
+  const missing = Math.max(0, expected - checkedIn);
+  const rateAll = pct(checkedIn, expected);
+
+  function kpiCard(label, value, bg, labelColor, valueColor) {
+    return '<div class="sn-card" style="background:' + bg + ';">'
+      + '<div style="font-size:12px;font-weight:700;color:' + labelColor + ';">' + esc(label) + '</div>'
+      + '<div style="font-size:40px;font-weight:800;line-height:1;margin-top:12px;letter-spacing:-0.03em;color:' + valueColor + ';font-variant-numeric:tabular-nums;">' + esc(value) + '</div>'
+      + '</div>';
+  }
+
+  const kpiHtml = '<div class="sn-grid" style="grid-template-columns:repeat(auto-fit,minmax(178px,1fr));margin-top:16px;">'
+    + kpiCard('진행 중 과정', (k.courses_today || 0) + '개', '#fff', 'var(--sn-gray)', 'var(--sn-ink)')
+    + kpiCard('오늘 수업 수강생', expected + '명', '#fff', 'var(--sn-gray)', 'var(--sn-ink)')
+    + kpiCard('미입실', missing + '명', 'var(--sn-amber)', '#4a3505', '#2b1f03')
+    + kpiCard('퇴실 미확인', (k.no_checkout || 0) + '명', '#fff', 'var(--sn-gray)', 'var(--sn-ink)')
+    + kpiCard('오늘 출석률', rateAll + '%', 'var(--sn-navy)', '#a9c3dd', '#fff')
+    + '</div>';
+
+  // ── 4. 전체 누적 현황 ────────────────────────────────
+  const t = data.totals || {};
+  function totCell(label, value) {
+    return '<div style="text-align:center;padding:6px 4px;">'
+      + '<div style="font-size:24px;font-weight:800;color:var(--sn-navy);font-variant-numeric:tabular-nums;">' + esc(value) + '</div>'
+      + '<div style="font-size:11.5px;font-weight:600;color:var(--sn-gray);margin-top:4px;">' + esc(label) + '</div>'
+      + '</div>';
+  }
+  const totalsHtml = '<div class="sn-card" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;">'
+    + totCell('교육과정', t.courses || 0)
+    + totCell('강의실', t.classrooms || 0)
+    + totCell('수강생', t.students || 0)
+    + totCell('생체인증 등록', t.creds || 0)
+    + totCell('회차 스케줄', t.sessions || 0)
+    + totCell('출결 기록', t.attendance || 0)
+    + '</div>';
+
+  // ── 본문 조립 ────────────────────────────────────────
+  const body =
+      '<section class="sn-section">'
+    +   '<div class="sn-head-row">'
+    +     '<h2 class="sn-h2">오늘 진행 중인 수업</h2>'
+    +     '<span class="sn-sub">' + data.today.length + '개 회차</span>'
+    +   '</div>'
+    +   todayHtml
+    + '</section>'
+
+    + '<section class="sn-section">'
+    +   '<div class="sn-head-row"><h2 class="sn-h2">배포용 주소 · 강의실 QR</h2></div>'
+    +   '<div class="sn-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));">'
+    +     '<div class="sn-card">'
+    +       '<div style="font-size:13.5px;font-weight:800;">수강생용 앱 (홈 화면 추가)</div>'
+    +       '<div style="font-size:12px;color:var(--sn-gray);margin-top:8px;word-break:break-all;line-height:1.6;" id="urlApp">' + esc(appUrl) + '</div>'
+    +       '<button type="button" class="sn-btn sn-btn-secondary" style="height:40px;font-size:12px;margin-top:14px;" data-copy="urlApp">주소 복사</button>'
+    +     '</div>'
+    +     '<div class="sn-card">'
+    +       '<div style="font-size:13.5px;font-weight:800;">생체인증 등록 페이지</div>'
+    +       '<div style="font-size:12px;color:var(--sn-gray);margin-top:8px;word-break:break-all;line-height:1.6;" id="urlReg">' + esc(regUrl) + '</div>'
+    +       '<button type="button" class="sn-btn sn-btn-secondary" style="height:40px;font-size:12px;margin-top:14px;" data-copy="urlReg">주소 복사</button>'
+    +     '</div>'
+    +   '</div>'
+    +   '<div class="sn-card" style="margin-top:14px;">'
+    +     '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+    +       '<div style="font-size:15px;font-weight:800;letter-spacing:-0.015em;">강의실 QR</div>'
+    +       '<span style="font-size:11px;font-weight:700;color:var(--sn-red);background:var(--sn-red-bg);padding:3px 9px;border-radius:999px;">주소 공유 금지</span>'
+    +       '<span style="font-size:12px;color:var(--sn-gray);margin-left:auto;">각 강의실 태블릿·노트북에서 열어 두세요</span>'
+    +     '</div>'
+    +     '<div class="sn-grid" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:14px;">' + roomTiles + '</div>'
+    +   '</div>'
+    + '</section>'
+
+    + '<section class="sn-section">'
+    +   '<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">'
+    +     '<div>'
+    +       '<h2 class="sn-h2-lg">오늘의 출결</h2>'
+    +       '<div style="font-size:13px;font-weight:500;color:var(--sn-gray);margin-top:6px;">진행 중인 수업 ' + (k.courses_today || 0) + '개 · 미입실 ' + missing + '명</div>'
+    +     '</div>'
+    +     '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
+    +       '<button type="button" class="sn-btn sn-btn-secondary" style="height:44px;" onclick="location.reload()">새로고침</button>'
+    +       '<a class="sn-btn sn-btn-primary" style="height:44px;" href="/admin/attendance">출결 현황 열기</a>'
+    +     '</div>'
+    +   '</div>'
+    +   kpiHtml
+    + '</section>'
+
+    + '<section class="sn-section">'
+    +   '<div class="sn-head-row"><h2 class="sn-h2">전체 현황</h2></div>'
+    +   totalsHtml
+    + '</section>'
+
+    + '<div id="snToast" style="position:fixed;left:50%;bottom:28px;transform:translateX(-50%);'
+    +   'background:var(--sn-navy);color:#fff;font-size:13px;font-weight:700;padding:12px 20px;'
+    +   'border-radius:999px;box-shadow:0 8px 24px rgba(0,56,118,0.25);opacity:0;pointer-events:none;'
+    +   'transition:opacity .2s ease;z-index:50;"></div>';
+
+  const pageJs =
+      'document.querySelectorAll("[data-copy]").forEach(function(b){'
+    +   'b.addEventListener("click", function(){'
+    +     'var src=document.getElementById(b.getAttribute("data-copy"));'
+    +     'if(!src) return;'
+    +     'var text=src.textContent.trim();'
+    +     'function done(){ showToast("주소를 복사했습니다"); }'
+    +     'if(navigator.clipboard && window.isSecureContext){'
+    +       'navigator.clipboard.writeText(text).then(done).catch(fallback);'
+    +     '} else { fallback(); }'
+    +     'function fallback(){'
+    +       'var ta=document.createElement("textarea"); ta.value=text;'
+    +       'ta.style.position="fixed"; ta.style.opacity="0"; document.body.appendChild(ta);'
+    +       'ta.select(); try{ document.execCommand("copy"); done(); }catch(e){ showToast("복사에 실패했습니다"); }'
+    +       'document.body.removeChild(ta);'
+    +     '}'
+    +   '});'
+    + '});'
+    + 'var toastTimer=null;'
+    + 'function showToast(msg){'
+    +   'var t=document.getElementById("snToast"); if(!t) return;'
+    +   't.textContent=msg; t.style.opacity="1";'
+    +   'clearTimeout(toastTimer); toastTimer=setTimeout(function(){ t.style.opacity="0"; },1800);'
+    + '}';
+
+  return layout.renderShell({
+    active: 'dashboard',
+    title: '대시보드',
+    serverTime: data.serverTime,
+    dbOk: true,
+    body: body,
+    pageJs: pageJs,
+  });
 }
 
 
