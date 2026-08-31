@@ -1990,600 +1990,723 @@ function renderStudentsPage(courses) {
 // 교육과정 관리 페이지 HTML
 // ═════════════════════════════════════════════════════════════
 function renderCoursesPage(classrooms) {
-  const classroomOptions = classrooms.map(c =>
-    `<option value="${c.classroom_id}">${c.classroom_name} (${c.classroom_code})</option>`
-  ).join('');
+  const esc = layout.esc;
 
-  return `<!DOCTYPE html>
-<html lang="ko">
-<head>
-  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title>교육과정 관리 - 관리자</title>
-  <style>
-    * { box-sizing:border-box; margin:0; padding:0; }
-    body { font-family:-apple-system,'Malgun Gothic',sans-serif; background:#f5f5f7; color:#1d1d1f; padding:16px; }
-    .container { max-width:1100px; margin:0 auto; }
-    h1 { font-size:22px; margin-bottom:4px; }
-    .subtitle { color:#86868b; font-size:13px; margin-bottom:20px; }
-    .card { background:#fff; border-radius:12px; padding:20px; margin-bottom:16px; box-shadow:0 1px 3px rgba(0,0,0,0.08); }
-    .card h2 { font-size:16px; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid #e5e5e7; }
-    table { width:100%; border-collapse:collapse; font-size:13px; }
-    th { text-align:left; padding:8px 10px; background:#f5f5f7; color:#86868b; font-weight:500; font-size:12px; }
-    td { padding:8px 10px; border-top:1px solid #f0f0f0; }
-    tr:hover { background:#fafafa; }
-    .btn { padding:6px 12px; border:none; border-radius:6px; font-size:12px; cursor:pointer; background:#1a73e8; color:#fff; }
-    .btn:hover { background:#1557b0; }
-    .btn-small { padding:4px 8px; font-size:11px; }
-    .btn-outline { background:#fff; color:#1a73e8; border:1px solid #1a73e8; }
-    .btn-danger { background:#ff3b30; color:#fff; }
-    .btn-success { background:#34c759; color:#fff; }
-    .back-link { font-size:13px; color:#1a73e8; text-decoration:none; }
-    .form-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; align-items:end; }
-    .form-group { display:flex; flex-direction:column; }
-    .form-group label { font-size:11px; color:#86868b; margin-bottom:3px; }
-    .form-group input, .form-group select { padding:8px 10px; border:1.5px solid #d2d2d7; border-radius:8px; font-size:13px; }
-    .form-group input:focus, .form-group select:focus { border-color:#1a73e8; outline:none; }
-    .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:500; }
-    .badge.blue { background:#e8f0fe; color:#1a73e8; }
-    .badge.green { background:#e6f4ea; color:#137333; }
-    .badge.orange { background:#fef3e0; color:#e37400; }
-    .msg { font-size:13px; margin-top:6px; }
-    .msg-ok { color:#34c759; } .msg-err { color:#ff3b30; }
-    #loading { text-align:center; padding:20px; color:#86868b; }
-    .session-row { display:flex; gap:6px; align-items:center; padding:6px 0; border-bottom:1px solid #f0f0f0; font-size:13px; }
-    .session-row:last-child { border-bottom:none; }
-  </style>
-</head>
-<body>
-  <div class="container"><div style="padding:14px 0 10px 0;"><img src="/logo.png" alt="연세대학교 상남경영원" style="height:52px;display:block;"></div>
+  const classroomOptions = classrooms.map(function(c) {
+    return '<option value="' + esc(c.classroom_id) + '">' + esc(c.classroom_name) + ' (' + esc(c.classroom_code) + ')</option>';
+  }).join('');
 
-  <a href="/admin" class="back-link">← 대시보드로 돌아가기</a>
-  <h1 style="margin-top:12px;">🏫 교육과정 관리</h1>
-  <p class="subtitle">교육과정 추가/수정/삭제, 회차 관리, 강의실 관리</p>
+  const pageCss = `
+  .cs-h1 { margin:0; font-size:32px; font-weight:800; letter-spacing:-0.025em; line-height:1.1; }
+  .cs-lead { font-size:13px; font-weight:500; color:var(--sn-gray); margin-top:6px; }
+  .cs-title { font-size:16px; font-weight:800; letter-spacing:-0.015em; }
 
-  <!-- 과정 목록 -->
-  <div class="card">
-    <h2>📋 과정 목록 <button class="btn btn-small" onclick="loadCourses()" style="margin-left:8px;">🔄</button></h2>
-    <div id="courseList"><div id="loading">불러오는 중...</div></div>
-    <div id="courseEditArea"></div>
-  </div>
-
-  <!-- 과정 추가 -->
-  <div class="card">
-    <h2>➕ 과정 추가</h2>
-    <div class="form-row">
-      <div class="form-group"><label>과정명 *</label><input type="text" id="cName" placeholder="영 오너스 최고경영자과정" style="width:220px;"></div>
-      <div class="form-group"><label>약칭</label><input type="text" id="cCode" placeholder="영오너스" style="width:100px;"></div>
-      <div class="form-group"><label>종류</label>
-        <select id="cType" style="width:120px;">
-          <option value="">선택</option><option value="모집과정">모집과정</option><option value="위탁과정">위탁과정</option><option value="산교연과정">산교연과정</option>
-        </select>
-      </div>
-      <div class="form-group"><label>기수</label><input type="text" id="cCohort" placeholder="10기" style="width:80px;"></div>
-      <div class="form-group"><label>기본 강의실</label>
-        <select id="cRoom" style="width:180px;"><option value="">선택</option>${classroomOptions}</select>
-      </div>
-      <div class="form-group"><label>총 회차</label><input type="number" id="cTotal" placeholder="15" style="width:70px;"></div>
-      <button class="btn" onclick="addCourse()">추가</button>
-    </div>
-    <div id="addCourseMsg"></div>
-  </div>
-
-  <!-- 회차 관리 -->
-  <div class="card">
-    <h2>📅 회차 관리</h2>
-    <div class="form-row">
-      <div class="form-group"><label>과정 선택</label>
-        <select id="sessionCourseSelect" onchange="loadSessionsForCourse()" style="width:300px;">
-          <option value="">-- 선택 --</option>
-        </select>
-      </div>
-    </div>
-    <div id="sessionList"></div>
-
-    <div id="sessionAddArea" style="display:none; margin-top:16px; padding-top:12px; border-top:1px solid #e5e5e7;">
-      <b style="font-size:13px;">회차 일괄 추가</b>
-      <div class="form-row" style="margin-top:8px;">
-        <div class="form-group"><label>시작일</label><input type="date" id="sStartDate" style="width:140px;"></div>
-        <div class="form-group"><label>회차 수</label><input type="number" id="sCount" value="15" style="width:70px;"></div>
-        <div class="form-group"><label>주 간격</label>
-          <select id="sWeekInterval" style="width:80px;"><option value="1" selected>매주</option><option value="2">격주</option></select>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label>수업 요일 (복수 선택)</label>
-          <div style="display:flex;gap:4px;margin-top:2px;">
-            <label style="font-size:13px;cursor:pointer;padding:4px 10px;border:1.5px solid #d2d2d7;border-radius:6px;"><input type="checkbox" class="dayCheck" value="1" style="margin-right:2px;">월</label>
-            <label style="font-size:13px;cursor:pointer;padding:4px 10px;border:1.5px solid #d2d2d7;border-radius:6px;"><input type="checkbox" class="dayCheck" value="2" style="margin-right:2px;">화</label>
-            <label style="font-size:13px;cursor:pointer;padding:4px 10px;border:1.5px solid #d2d2d7;border-radius:6px;"><input type="checkbox" class="dayCheck" value="3" style="margin-right:2px;">수</label>
-            <label style="font-size:13px;cursor:pointer;padding:4px 10px;border:1.5px solid #d2d2d7;border-radius:6px;"><input type="checkbox" class="dayCheck" value="4" style="margin-right:2px;">목</label>
-            <label style="font-size:13px;cursor:pointer;padding:4px 10px;border:1.5px solid #d2d2d7;border-radius:6px;"><input type="checkbox" class="dayCheck" value="5" checked style="margin-right:2px;">금</label>
-            <label style="font-size:13px;cursor:pointer;padding:4px 10px;border:1.5px solid #d2d2d7;border-radius:6px;"><input type="checkbox" class="dayCheck" value="6" style="margin-right:2px;">토</label>
-          </div>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label>시작 시각</label><input type="time" id="sStart" value="09:00" style="width:110px;"></div>
-        <div class="form-group"><label>종료 시각</label><input type="time" id="sEnd" value="18:00" style="width:110px;"></div>
-        <div class="form-group"><label>지각 기준</label><input type="time" id="sLate" value="09:20" style="width:110px;"></div>
-        <div class="form-group"><label>조퇴 기준</label><input type="time" id="sEarly" value="17:00" style="width:110px;"></div>
-        <button class="btn btn-success" onclick="bulkAddSessions()">일괄 추가</button>
-      </div>
-      <div id="sessionAddMsg"></div>
-
-      <div style="margin-top:20px; padding-top:12px; border-top:1px solid #e5e5e7;">
-        <b style="font-size:13px;">📝 자유 입력 (불규칙 일정용)</b>
-        <div style="font-size:12px;color:#86868b;margin:6px 0 8px;">한 줄에 하나씩 입력. 형식: <code>날짜 시작시간 종료시간 [지각기준 조퇴기준] [비고]</code><br>
-        예시:<br>
-        <code>2026-03-02 09:00 18:00</code><br>
-        <code>2026-03-11 13:00 18:00 13:20 17:00</code><br>
-        <code>2026-03-17 10:00 15:00 10:20 14:00 외부워크샵</code></div>
-        <textarea id="freeSessionInput" style="width:100%;min-height:100px;padding:10px;border:1.5px solid #d2d2d7;border-radius:8px;font-size:13px;font-family:monospace;" placeholder="2026-03-02 09:00 18:00&#10;2026-03-03 09:00 18:00&#10;2026-03-11 13:00 18:00 13:20 17:00 오후수업&#10;..."></textarea>
-        <div style="margin-top:6px;"><button class="btn btn-success" onclick="freeAddSessions()">자유 입력 추가</button></div>
-        <div id="freeSessionMsg"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 강의실 관리 -->
-  <div class="card">
-    <h2>🚪 강의실 관리</h2>
-    <div id="classroomList"></div>
-    <div class="form-row" style="margin-top:12px;">
-      <div class="form-group"><label>강의실 코드</label><input type="text" id="crCode" placeholder="R101" style="width:100px;"></div>
-      <div class="form-group"><label>강의실 이름</label><input type="text" id="crName" placeholder="101호" style="width:150px;"></div>
-      <button class="btn" onclick="addClassroom()">추가</button>
-    </div>
-    <div id="crMsg"></div>
-  </div>
-</div>
-
-<script>
-let allCourses = [];
-let allClassrooms = [];
-
-window.addEventListener('load', function() { loadCourses(); loadClassrooms(); });
-
-// ─── 과정 목록 ──────────────────────────────────────────
-async function loadCourses() {
-  const el = document.getElementById('courseList');
-  el.innerHTML = '<div id="loading">불러오는 중...</div>';
-  const res = await fetch('/api/admin/courses');
-  allCourses = await res.json();
-
-  if (allCourses.length === 0) { el.innerHTML = '<div style="color:#86868b;text-align:center;padding:20px;">등록된 과정이 없습니다.</div>'; updateCourseSelect(); return; }
-
-  let html = '<table><tr><th>과정명</th><th>약칭</th><th>종류</th><th>기수</th><th>강의실</th><th>수강생</th><th>회차</th><th>관리</th></tr>';
-  for (const c of allCourses) {
-    html += '<tr>';
-    html += '<td><b>' + c.course_name + '</b></td>';
-    html += '<td>' + (c.course_code || '-') + '</td>';
-    html += '<td>' + (c.course_type ? '<span class="badge ' + (c.course_type==='모집과정'?'blue':c.course_type==='위탁과정'?'green':'orange') + '">' + c.course_type + '</span>' : '-') + '</td>';
-    html += '<td>' + (c.cohort || '-') + '</td>';
-    html += '<td>' + (c.default_room || '-') + '</td>';
-    html += '<td>' + c.student_count + '명</td>';
-    html += '<td>' + c.session_count + '회</td>';
-    html += '<td><button class="btn btn-small btn-outline" onclick="editCourse(\\'' + c.course_id + '\\')">수정</button> ';
-    html += '<button class="btn btn-small btn-danger" onclick="deleteCourse(\\'' + c.course_id + '\\', \\'' + c.course_name + '\\')">삭제</button></td>';
-    html += '</tr>';
+  .cs-field { display:flex; flex-direction:column; gap:6px; margin:0; }
+  .cs-field label { font-size:11.5px; font-weight:600; color:var(--sn-gray); }
+  .cs-input, .cs-select {
+    height:44px; width:100%; padding:0 12px;
+    border:1.5px solid var(--sn-line); border-radius:12px; background:#fff;
+    font-size:13px; font-weight:600; color:var(--sn-ink); outline:none;
+    transition:border-color .15s ease;
   }
-  html += '</table>';
-  el.innerHTML = html;
-  updateCourseSelect();
-}
-
-function updateCourseSelect() {
-  const sel = document.getElementById('sessionCourseSelect');
-  const val = sel.value;
-  sel.innerHTML = '<option value="">-- 선택 --</option>';
-  for (const c of allCourses) {
-    sel.innerHTML += '<option value="' + c.course_id + '">' + c.course_name + ' ' + (c.cohort||'') + '</option>';
+  .cs-input:focus, .cs-select:focus { border-color:var(--sn-navy); }
+  .cs-area {
+    width:100%; min-height:120px; padding:14px;
+    border:1.5px solid var(--sn-line); border-radius:14px; background:#fff;
+    font-size:12.5px; line-height:1.8; color:var(--sn-ink);
+    outline:none; resize:vertical;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   }
-  sel.value = val;
-}
+  .cs-area:focus { border-color:var(--sn-navy); }
 
-async function addCourse() {
-  const data = {
-    course_name: document.getElementById('cName').value.trim(),
-    course_code: document.getElementById('cCode').value.trim(),
-    course_type: document.getElementById('cType').value,
-    cohort: document.getElementById('cCohort').value.trim(),
-    default_classroom_id: document.getElementById('cRoom').value || null,
-    total_sessions: parseInt(document.getElementById('cTotal').value) || null,
-  };
-  if (!data.course_name) { document.getElementById('addCourseMsg').innerHTML = '<div class="msg msg-err">과정명을 입력하세요.</div>'; return; }
-
-  const res = await fetch('/api/admin/courses', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
-  const r = await res.json();
-  if (r.success) {
-    document.getElementById('addCourseMsg').innerHTML = '<div class="msg msg-ok">✅ 추가 완료</div>';
-    document.getElementById('cName').value = '';
-    document.getElementById('cCode').value = '';
-    document.getElementById('cCohort').value = '';
-    document.getElementById('cTotal').value = '';
-    await loadCourses();
-  } else {
-    document.getElementById('addCourseMsg').innerHTML = '<div class="msg msg-err">❌ ' + (r.error||'실패') + '</div>';
+  .cs-tablewrap { background:#fff; border-radius:20px; padding:8px 20px 14px; overflow-x:auto; }
+  table.cs-table { width:100%; border-collapse:collapse; }
+  .cs-table th {
+    text-align:left; padding:12px 10px; font-size:11.5px; font-weight:700;
+    color:var(--sn-gray); letter-spacing:0.04em; border-bottom:1px solid var(--sn-line); white-space:nowrap;
   }
-}
+  .cs-table td { padding:11px 10px; border-bottom:1px solid var(--sn-line2); font-size:13px; }
+  .cs-table tbody tr:hover { background:#f9fafb; }
+  .cs-num { font-variant-numeric:tabular-nums; }
+  .cs-mut { color:var(--sn-gray); font-size:12.5px; }
 
-async function deleteCourse(courseId, name) {
-  if (!confirm(name + ' 과정을 삭제하시겠습니까?\\n관련된 모든 회차, 수강등록, 출결 데이터가 함께 삭제됩니다.')) return;
-  if (!confirm('정말로 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) return;
-  const res = await fetch('/api/admin/courses/' + courseId, { method:'DELETE' });
-  const r = await res.json();
-  if (r.success) { await loadCourses(); } else { alert('삭제 실패: ' + (r.error||'')); }
-}
+  .cs-tag { display:inline-block; padding:3px 10px; border-radius:999px; font-size:11.5px; font-weight:700; white-space:nowrap; }
+  .tg-모집과정 { background:#dce8f5; color:#003876; }
+  .tg-위탁과정 { background:#e6f4ea; color:#137333; }
+  .tg-산교연과정 { background:#fbe4d5; color:#9a5200; }
 
-// ─── 과정 수정 ──────────────────────────────────────────
-function editCourse(courseId) {
-  const c = allCourses.find(function(x) { return String(x.course_id) === String(courseId); });
-  if (!c) { alert('과정 정보를 찾을 수 없습니다. 새로고침 후 다시 시도하세요.'); return; }
-
-  let roomOpts = '<option value="">선택</option>';
-  for (const r of allClassrooms) {
-    const sel = (String(r.classroom_id) === String(c.default_classroom_id)) ? ' selected' : '';
-    roomOpts += '<option value="' + r.classroom_id + '"' + sel + '>' + r.classroom_name + ' (' + r.classroom_code + ')</option>';
+  .cs-mini {
+    height:34px; padding:0 12px; border-radius:999px; border:1px solid var(--sn-line);
+    background:#fff; font-size:11.5px; font-weight:700; cursor:pointer; white-space:nowrap;
+    color:var(--sn-navy); transition:background .12s ease;
   }
+  .cs-mini:hover { background:var(--sn-bg); }
+  .cs-mini.red { background:var(--sn-red-bg); border-color:#f3cdcb; color:#c22525; }
+  .cs-mini.red:hover { background:#f7cdcb; }
 
-  let typeOpts = '<option value="">선택</option>';
-  const types = ['모집과정', '위탁과정', '산교연과정'];
-  for (const t of types) {
-    typeOpts += '<option value="' + t + '"' + (c.course_type === t ? ' selected' : '') + '>' + t + '</option>';
+  .cs-day {
+    display:inline-flex; align-items:center; justify-content:center;
+    min-width:44px; height:40px; padding:0 10px; cursor:pointer;
+    border:1.5px solid var(--sn-line); border-radius:12px; background:#fff;
+    font-size:13px; font-weight:700; color:var(--sn-ink); user-select:none;
+    transition:background .12s ease, border-color .12s ease, color .12s ease;
   }
+  .cs-day input { display:none; }
+  .cs-day.on { background:var(--sn-navy); border-color:var(--sn-navy); color:#fff; }
 
-  const vName = String(c.course_name || '').replace(/"/g, '&quot;');
-  const vCode = String(c.course_code || '').replace(/"/g, '&quot;');
-  const vCohort = String(c.cohort || '').replace(/"/g, '&quot;');
-  const vTotal = (c.total_sessions === null || c.total_sessions === undefined) ? '' : c.total_sessions;
-
-  let html = '<div style="background:#f5f5f7;padding:16px;border-radius:10px;margin-top:12px;">';
-  html += '<b>✏️ 과정 수정</b>';
-  html += '<div style="font-size:12px;color:#86868b;margin:4px 0 12px 0;">회차 일정과 출결 기록은 변경되지 않습니다.</div>';
-  html += '<div class="form-row">';
-  html += '<div class="form-group"><label>과정명 *</label><input type="text" id="ec_name" value="' + vName + '" style="width:220px;"></div>';
-  html += '<div class="form-group"><label>약칭</label><input type="text" id="ec_code" value="' + vCode + '" style="width:120px;"></div>';
-  html += '<div class="form-group"><label>종류</label><select id="ec_type" style="width:130px;">' + typeOpts + '</select></div>';
-  html += '</div><div class="form-row">';
-  html += '<div class="form-group"><label>기수</label><input type="text" id="ec_cohort" value="' + vCohort + '" style="width:100px;"></div>';
-  html += '<div class="form-group"><label>기본 강의실</label><select id="ec_room" style="width:180px;">' + roomOpts + '</select></div>';
-  html += '<div class="form-group"><label>총 회차</label><input type="number" id="ec_total" value="' + vTotal + '" style="width:90px;"></div>';
-  html += '</div><div class="form-row">';
-  html += '<button class="btn btn-success" onclick="saveCourse(\\'' + c.course_id + '\\')">저장</button>';
-  html += '<button class="btn btn-outline" onclick="cancelEditCourse()">취소</button>';
-  html += '</div>';
-  html += '<div id="editCourseMsg"></div>';
-  html += '</div>';
-
-  document.getElementById('courseEditArea').innerHTML = html;
-  document.getElementById('ec_name').scrollIntoView({ behavior: 'smooth', block: 'center' });
-}
-
-async function saveCourse(courseId) {
-  const name = document.getElementById('ec_name').value.trim();
-  if (!name) {
-    document.getElementById('editCourseMsg').innerHTML = '<div class="msg msg-err">과정명을 입력하세요.</div>';
-    return;
+  .cs-sub {
+    background:var(--sn-bg); border-radius:16px; padding:16px 18px; margin-top:14px;
   }
-
-  const data = {
-    course_name: name,
-    course_code: document.getElementById('ec_code').value.trim() || null,
-    course_type: document.getElementById('ec_type').value || null,
-    cohort: document.getElementById('ec_cohort').value.trim() || null,
-    default_classroom_id: document.getElementById('ec_room').value || null,
-    total_sessions: parseInt(document.getElementById('ec_total').value) || null,
-  };
-
-  try {
-    const res = await fetch('/api/admin/courses/' + courseId, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
-    });
-    const r = await res.json();
-    if (r.success) {
-      document.getElementById('courseEditArea').innerHTML = '<div class="msg msg-ok" style="margin-top:10px;">✅ 수정 완료</div>';
-      await loadCourses();
-      setTimeout(function() {
-        const area = document.getElementById('courseEditArea');
-        if (area) area.innerHTML = '';
-      }, 2500);
-    } else {
-      document.getElementById('editCourseMsg').innerHTML = '<div class="msg msg-err">❌ ' + (r.error || '수정 실패') + '</div>';
-    }
-  } catch (e) {
-    document.getElementById('editCourseMsg').innerHTML = '<div class="msg msg-err">❌ 통신 오류: ' + e.message + '</div>';
+  .cs-info {
+    background:#dce8f5; border-radius:14px; padding:13px 15px;
+    font-size:12.5px; color:#003876; line-height:1.8;
   }
-}
-
-function cancelEditCourse() {
-  document.getElementById('courseEditArea').innerHTML = '';
-}
-
-// ─── 회차 관리 ──────────────────────────────────────────
-async function loadSessionsForCourse() {
-  const courseId = document.getElementById('sessionCourseSelect').value;
-  const el = document.getElementById('sessionList');
-  const addArea = document.getElementById('sessionAddArea');
-  if (!courseId) { el.innerHTML = ''; addArea.style.display = 'none'; return; }
-
-  addArea.style.display = 'block';
-  el.innerHTML = '<div id="loading">불러오는 중...</div>';
-  const res = await fetch('/api/admin/sessions/' + courseId);
-  const sessions = await res.json();
-  window._sessions = {};
-  for (const s of sessions) { window._sessions[s.session_id] = s; }
-
-  if (sessions.length === 0) { el.innerHTML = '<div style="color:#86868b;padding:10px;">등록된 회차가 없습니다.</div>'; return; }
-
-  let html = '<div style="margin-bottom:8px;"><button class="btn btn-small" onclick="loadSessionsForCourse()">🔄 새로고침</button></div>';
-  html += '<div style="overflow-x:auto;"><table><tr><th>회차</th><th>날짜</th><th>시간</th><th>지각</th><th>조퇴</th><th>워크샵</th><th>비고</th><th>출결</th><th>관리</th></tr>';
-  for (const s of sessions) {
-    const date = s.session_date ? s.session_date.split('T')[0] : '-';
-    const start = s.start_time ? s.start_time.slice(0,5) : '-';
-    const end = s.end_time ? s.end_time.slice(0,5) : '-';
-    const late = s.late_cutoff ? s.late_cutoff.slice(0,5) : '-';
-    const early = s.early_leave_cutoff ? s.early_leave_cutoff.slice(0,5) : '-';
-    html += '<tr>';
-    html += '<td style="font-weight:600;">' + s.session_number + '회</td>';
-    html += '<td>' + date + '</td>';
-    html += '<td>' + start + '~' + end + '</td>';
-    html += '<td>' + late + '</td>';
-    html += '<td>' + early + '</td>';
-    html += '<td>' + (s.is_workshop ? '🏕️' : '-') + '</td>';
-    html += '<td style="font-size:12px;color:#86868b;max-width:120px;">' + (s.note || '') + '</td>';
-    html += '<td style="color:#1a73e8;">' + s.attendance_count + '명</td>';
-    html += '<td style="white-space:nowrap;">';
-    html += '<button class="btn btn-small btn-outline" onclick="editSession(\\'' + s.session_id + '\\')">수정</button> ';
-    html += '<button class="btn btn-small btn-danger" onclick="deleteSession(\\'' + s.session_id + '\\', ' + s.session_number + ')">삭제</button>';
-    html += '</td></tr>';
+  .cs-info code {
+    background:rgba(255,255,255,0.75); padding:2px 6px; border-radius:6px;
+    font-size:11.5px; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   }
-  html += '</table></div>';
-  html += '<div id="editFormArea"></div>';
-  el.innerHTML = html;
-}
+  .cs-empty { background:#fff; border-radius:20px; padding:34px 20px; text-align:center; color:var(--sn-gray); font-size:13.5px; font-weight:600; }
+  .cs-editbox { background:var(--sn-bg); border-radius:16px; padding:18px; margin-top:14px; }
+  `;
 
-function editSession(sessionId) {
-  const s = window._sessions[sessionId];
-  if (!s) return;
-  const date = s.session_date ? s.session_date.split('T')[0] : '';
-  const start = s.start_time ? s.start_time.slice(0,5) : '';
-  const end = s.end_time ? s.end_time.slice(0,5) : '';
-  const late = s.late_cutoff ? s.late_cutoff.slice(0,5) : '';
-  const early = s.early_leave_cutoff ? s.early_leave_cutoff.slice(0,5) : '';
+  const typeOptions = '<option value="">선택</option>'
+    + ['모집과정', '위탁과정', '산교연과정'].map(function(t) {
+        return '<option value="' + t + '">' + t + '</option>'; }).join('');
 
-  let html = '<div style="background:#f5f5f7;padding:16px;border-radius:10px;margin-top:12px;">';
-  html += '<b>' + s.session_number + '회차 수정</b><br><br>';
-  html += '<div class="form-row">';
-  html += '<div class="form-group"><label>날짜</label><input type="date" id="ed_date" value="' + date + '" style="width:140px;"></div>';
-  html += '<div class="form-group"><label>시작</label><input type="time" id="ed_start" value="' + start + '" style="width:110px;"></div>';
-  html += '<div class="form-group"><label>종료</label><input type="time" id="ed_end" value="' + end + '" style="width:110px;"></div>';
-  html += '</div><div class="form-row">';
-  html += '<div class="form-group"><label>지각 기준</label><input type="time" id="ed_late" value="' + late + '" style="width:110px;"></div>';
-  html += '<div class="form-group"><label>조퇴 기준</label><input type="time" id="ed_early" value="' + early + '" style="width:110px;"></div>';
-  html += '<div class="form-group"><label>워크샵</label><select id="ed_ws" style="width:80px;"><option value="false"' + (!s.is_workshop ? ' selected' : '') + '>아니오</option><option value="true"' + (s.is_workshop ? ' selected' : '') + '>예</option></select></div>';
-  html += '</div><div class="form-row">';
-  html += '<div class="form-group"><label>비고</label><input type="text" id="ed_note" value="' + (s.note || '').replace(/"/g, '&quot;') + '" placeholder="공휴일, 단체식사, 외부행사 등" style="width:250px;"></div>';
-  html += '<button class="btn btn-success" onclick="saveSession(\\'' + sessionId + '\\')">저장</button>';
-  html += '<button class="btn btn-outline" onclick="loadSessionsForCourse()">취소</button>';
-  html += '</div></div>';
+  const body =
+      '<section class="sn-section">'
+    +   '<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">'
+    +     '<div>'
+    +       '<h1 class="cs-h1">교육과정 관리</h1>'
+    +       '<div class="cs-lead">교육과정 · 회차 · 강의실 관리</div>'
+    +     '</div>'
+    +     '<button type="button" class="sn-btn sn-btn-secondary" style="height:44px;" id="btnReload">새로고침</button>'
+    +   '</div>'
+    + '</section>'
 
-  document.getElementById('editFormArea').innerHTML = html;
-  document.getElementById('ed_date').scrollIntoView({ behavior: 'smooth' });
-}
+    // ── 과정 목록 ──
+    + '<section class="sn-section" style="padding-top:18px;">'
+    +   '<div class="sn-head-row"><h2 class="sn-h2">과정 목록</h2><span class="sn-sub" id="courseCount"></span></div>'
+    +   '<div id="courseList"><div class="cs-empty">불러오는 중…</div></div>'
+    +   '<div id="courseEditArea"></div>'
+    + '</section>'
 
-async function saveSession(sessionId) {
-  const data = {
-    session_date: document.getElementById('ed_date').value,
-    start_time: document.getElementById('ed_start').value,
-    end_time: document.getElementById('ed_end').value,
-    late_cutoff: document.getElementById('ed_late').value,
-    early_leave_cutoff: document.getElementById('ed_early').value,
-    is_workshop: document.getElementById('ed_ws').value === 'true',
-    note: document.getElementById('ed_note').value.trim() || null,
-  };
-  const res = await fetch('/api/admin/sessions/' + sessionId, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
-  const r = await res.json();
-  if (r.success) { await loadSessionsForCourse(); } else { alert('수정 실패: ' + (r.error||'')); }
-}
+    // ── 과정 추가 ──
+    + '<section class="sn-section" style="padding-top:18px;">'
+    +   '<div class="sn-card">'
+    +     '<div class="cs-title">교육과정 추가</div>'
+    +     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:14px;">'
+    +       '<div class="cs-field" style="grid-column:span 2;"><label for="cName">과정명 *</label>'
+    +         '<input class="cs-input" type="text" id="cName" placeholder="영 오너스 최고경영자과정"></div>'
+    +       '<div class="cs-field"><label for="cCode">약칭</label>'
+    +         '<input class="cs-input" type="text" id="cCode" placeholder="YO"></div>'
+    +       '<div class="cs-field"><label for="cType">종류</label>'
+    +         '<select class="cs-select" id="cType">' + typeOptions + '</select></div>'
+    +       '<div class="cs-field"><label for="cCohort">기수</label>'
+    +         '<input class="cs-input" type="text" id="cCohort" placeholder="10"></div>'
+    +       '<div class="cs-field"><label for="cRoom">기본 강의실</label>'
+    +         '<select class="cs-select" id="cRoom"><option value="">선택</option>' + classroomOptions + '</select></div>'
+    +       '<div class="cs-field"><label for="cTotal">총 회차</label>'
+    +         '<input class="cs-input" type="number" id="cTotal" placeholder="15"></div>'
+    +     '</div>'
+    +     '<button type="button" class="sn-btn sn-btn-primary" style="height:44px;margin-top:14px;" id="btnAddCourse">과정 추가</button>'
+    +   '</div>'
+    + '</section>'
 
-async function bulkAddSessions() {
-  const courseId = document.getElementById('sessionCourseSelect').value;
-  if (!courseId) return;
-  const startDate = document.getElementById('sStartDate').value;
-  const count = parseInt(document.getElementById('sCount').value);
-  const weekInterval = parseInt(document.getElementById('sWeekInterval').value);
-  const startTime = document.getElementById('sStart').value;
-  const endTime = document.getElementById('sEnd').value;
-  const lateCutoff = document.getElementById('sLate').value;
-  const earlyCutoff = document.getElementById('sEarly').value;
+    // ── 회차 관리 ──
+    + '<section class="sn-section" style="padding-top:18px;">'
+    +   '<div class="sn-head-row"><h2 class="sn-h2">회차 관리</h2><span class="sn-sub" id="sessionCount"></span></div>'
+    +   '<div class="sn-card" style="padding:16px 18px;">'
+    +     '<div class="cs-field" style="max-width:420px;">'
+    +       '<label for="sessionCourseSelect">과정 선택</label>'
+    +       '<select class="cs-select" id="sessionCourseSelect"><option value="">-- 선택 --</option></select>'
+    +     '</div>'
+    +   '</div>'
+    +   '<div id="sessionList" style="margin-top:14px;"></div>'
+    +   '<div id="editFormArea"></div>'
 
-  // 선택된 요일 (1=월 ~ 6=토, JS의 getDay()는 0=일 1=월 ... 6=토)
-  const selectedDays = [];
-  document.querySelectorAll('.dayCheck:checked').forEach(function(cb) { selectedDays.push(parseInt(cb.value)); });
+    +   '<div id="sessionAddArea" style="display:none;margin-top:14px;">'
+    +     '<div class="sn-grid" style="grid-template-columns:repeat(auto-fit,minmax(360px,1fr));">'
 
-  if (!startDate || !count) { document.getElementById('sessionAddMsg').innerHTML = '<div class="msg msg-err">시작일과 회차 수를 입력하세요.</div>'; return; }
-  if (selectedDays.length === 0) { document.getElementById('sessionAddMsg').innerHTML = '<div class="msg msg-err">수업 요일을 하나 이상 선택하세요.</div>'; return; }
+    +       '<div class="sn-card">'
+    +         '<div class="cs-title">회차 일괄 추가</div>'
+    +         '<div class="cs-mut" style="margin-top:6px;">규칙적인 요일·시간으로 반복되는 일정을 한 번에 만듭니다.</div>'
+    +         '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-top:14px;">'
+    +           '<div class="cs-field"><label for="sStartDate">시작일</label><input class="cs-input" type="date" id="sStartDate"></div>'
+    +           '<div class="cs-field"><label for="sCount">회차 수</label><input class="cs-input" type="number" id="sCount" value="15" min="1" max="200"></div>'
+    +           '<div class="cs-field"><label for="sWeekInterval">주 간격</label>'
+    +             '<select class="cs-select" id="sWeekInterval"><option value="1" selected>매주</option><option value="2">격주</option></select></div>'
+    +         '</div>'
+    +         '<div class="cs-field" style="margin-top:12px;"><label>수업 요일 (복수 선택)</label>'
+    +           '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:2px;">'
+    +             [['1','월'],['2','화'],['3','수'],['4','목'],['5','금'],['6','토']].map(function(d) {
+                    return '<label class="cs-day' + (d[0] === '5' ? ' on' : '') + '">'
+                      + '<input type="checkbox" class="dayCheck" value="' + d[0] + '"' + (d[0] === '5' ? ' checked' : '') + '>' + d[1] + '</label>';
+                  }).join('')
+    +           '</div>'
+    +         '</div>'
+    +         '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-top:12px;">'
+    +           '<div class="cs-field"><label for="sStart">시작 시각</label><input class="cs-input" type="time" id="sStart" value="09:00"></div>'
+    +           '<div class="cs-field"><label for="sEnd">종료 시각</label><input class="cs-input" type="time" id="sEnd" value="18:00"></div>'
+    +           '<div class="cs-field"><label for="sLate">지각 기준</label><input class="cs-input" type="time" id="sLate" value="09:20"></div>'
+    +           '<div class="cs-field"><label for="sEarly">조퇴 기준</label><input class="cs-input" type="time" id="sEarly" value="17:00"></div>'
+    +         '</div>'
+    +         '<button type="button" class="sn-btn sn-btn-primary" style="height:44px;margin-top:14px;" id="btnBulkSession">일괄 추가</button>'
+    +       '</div>'
 
-  const dayNames = ['일','월','화','수','목','금','토'];
+    +       '<div class="sn-card">'
+    +         '<div class="cs-title">회차 자유 입력</div>'
+    +         '<div class="cs-mut" style="margin-top:6px;">불규칙한 일정을 한 줄에 하나씩 직접 적습니다.</div>'
+    +         '<div class="cs-info" style="margin-top:12px;">'
+    +           '형식: <code>날짜 시작 종료 [지각기준 조퇴기준] [비고]</code><br>'
+    +           '<code>2026-03-02 09:00 18:00</code><br>'
+    +           '<code>2026-03-11 13:00 18:00 13:20 17:00</code><br>'
+    +           '<code>2026-03-17 10:00 15:00 10:20 14:00 외부워크샵</code>'
+    +         '</div>'
+    +         '<textarea class="cs-area" id="freeSessionInput" style="margin-top:12px;" placeholder="2026-03-02 09:00 18:00&#10;2026-03-11 13:00 18:00 13:20 17:00 오후수업"></textarea>'
+    +         '<div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;">'
+    +           '<button type="button" class="sn-btn sn-btn-primary" style="height:44px;" id="btnFreeSession">자유 입력 추가</button>'
+    +           '<span class="cs-mut" id="freePreview"></span>'
+    +         '</div>'
+    +       '</div>'
 
-  const sessions = [];
-  const d = new Date(startDate);
-  let weekCount = 0;
-  let lastWeekNum = -1;
+    +     '</div>'
+    +   '</div>'
+    + '</section>'
 
-  // 최대 365일까지 탐색 (안전장치)
-  for (let safety = 0; safety < 365 && sessions.length < count; safety++) {
-    // JS getDay(): 0=일, 1=월, ..., 6=토
-    const jsDay = d.getDay();
-    // 우리 체크박스: 1=월, 2=화, ..., 6=토 (일요일은 없음)
-    const ourDay = jsDay === 0 ? 7 : jsDay;  // 일=7로 변환 (체크박스에 없으므로 자동 제외)
+    // ── 강의실 관리 ──
+    + '<section class="sn-section" style="padding-top:18px;">'
+    +   '<div class="sn-head-row"><h2 class="sn-h2">강의실 관리</h2></div>'
+    +   '<div class="sn-card">'
+    +     '<div id="classroomList"></div>'
+    +     '<div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-top:14px;">'
+    +       '<div class="cs-field" style="max-width:150px;"><label for="crCode">강의실 코드</label>'
+    +         '<input class="cs-input" type="text" id="crCode" placeholder="ROOM_101"></div>'
+    +       '<div class="cs-field" style="max-width:200px;"><label for="crName">강의실 이름</label>'
+    +         '<input class="cs-input" type="text" id="crName" placeholder="101호 로렐"></div>'
+    +       '<button type="button" class="sn-btn sn-btn-primary" style="height:44px;" id="btnAddRoom">강의실 추가</button>'
+    +     '</div>'
+    +   '</div>'
+    + '</section>'
 
-    // 주 번호 계산 (격주 처리용)
-    const weekNum = Math.floor(safety / 7);
-    if (weekNum !== lastWeekNum) {
-      lastWeekNum = weekNum;
-      weekCount++;
-    }
+    + '<div id="snToast" style="position:fixed;left:50%;bottom:28px;transform:translateX(-50%);'
+    +   'background:var(--sn-navy);color:#fff;font-size:13px;font-weight:700;padding:12px 20px;'
+    +   'border-radius:999px;box-shadow:0 8px 24px rgba(0,56,118,0.25);opacity:0;pointer-events:none;'
+    +   'transition:opacity .2s ease;z-index:120;max-width:88vw;text-align:center;"></div>';
 
-    // 격주인 경우 짝수 주만 (1주차=추가, 2주차=건너뜀, 3주차=추가...)
-    const isActiveWeek = weekInterval === 1 || (weekCount % 2 === 1);
+  const pageJs = `
+  var allCourses = [];
+  var allClassrooms = [];
+  var sessionMap = {};
 
-    if (isActiveWeek && selectedDays.includes(ourDay)) {
-      const dateStr = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-      sessions.push({
-        session_number: sessions.length + 1,
-        session_date: dateStr,
-        start_time: startTime, end_time: endTime,
-        late_cutoff: lateCutoff, early_leave_cutoff: earlyCutoff,
-      });
-    }
-
-    d.setDate(d.getDate() + 1);
+  var toastTimer = null;
+  function showToast(msg, bad) {
+    var t = document.getElementById('snToast');
+    if (!t) return;
+    t.textContent = msg;
+    t.style.background = bad ? '#D32F2F' : 'var(--sn-navy)';
+    t.style.opacity = '1';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function() { t.style.opacity = '0'; }, 2600);
   }
-
-  if (sessions.length === 0) { document.getElementById('sessionAddMsg').innerHTML = '<div class="msg msg-err">생성된 회차가 없습니다. 시작일과 요일을 확인하세요.</div>'; return; }
-
-  // 기존 회차 수 조회하여 번호 이어서 부여
-  try {
-    const existRes = await fetch('/api/admin/sessions/' + courseId);
-    const existing = await existRes.json();
-    const maxNum = existing.length > 0 ? Math.max(...existing.map(function(s) { return s.session_number; })) : 0;
-    sessions.forEach(function(s, i) { s.session_number = maxNum + i + 1; });
-  } catch (e) {}
-
-  const selectedDayNames = selectedDays.map(function(d) { return dayNames[d]; }).join(',');
-  if (!confirm(sessions.length + '개 회차를 추가하시겠습니까?\\n요일: ' + selectedDayNames + (weekInterval > 1 ? ' (격주)' : '') + '\\n기간: ' + sessions[0].session_date + ' ~ ' + sessions[sessions.length-1].session_date)) return;
-
-  const res = await fetch('/api/admin/sessions/bulk', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ course_id: courseId, sessions }) });
-  const r = await res.json();
-  if (r.success) {
-    document.getElementById('sessionAddMsg').innerHTML = '<div class="msg msg-ok">✅ ' + r.added + '개 회차 추가 완료</div>';
-    await loadSessionsForCourse();
-    await loadCourses();
-  } else {
-    document.getElementById('sessionAddMsg').innerHTML = '<div class="msg msg-err">❌ ' + (r.error||'실패') + '</div>';
+  function esc(v) {
+    return String(v === null || v === undefined ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
-}
+  function hhmm(t) { return t ? String(t).slice(0, 5) : '—'; }
+  function dOnly(v) { return v ? String(v).split('T')[0] : '—'; }
 
-async function deleteSession(sessionId, num) {
-  if (!confirm(num + '회차를 삭제하시겠습니까? 해당 회차의 출결 데이터도 함께 삭제됩니다.')) return;
-  const res = await fetch('/api/admin/sessions/' + sessionId, { method:'DELETE' });
-  const r = await res.json();
-  if (r.success) { await loadSessionsForCourse(); await loadCourses(); } else { alert('삭제 실패: ' + (r.error||'')); }
-}
-
-async function freeAddSessions() {
-  const courseId = document.getElementById('sessionCourseSelect').value;
-  if (!courseId) { alert('과정을 선택하세요.'); return; }
-  const input = document.getElementById('freeSessionInput').value.trim();
-  const msgEl = document.getElementById('freeSessionMsg');
-  if (!input) { msgEl.innerHTML = '<div class="msg msg-err">입력 내용이 없습니다.</div>'; return; }
-
-  // 기존 회차 수 조회 (session_number 이어서 부여)
-  const existRes = await fetch('/api/admin/sessions/' + courseId);
-  const existing = await existRes.json();
-  let nextNum = existing.length > 0 ? Math.max(...existing.map(s => s.session_number)) + 1 : 1;
-
-  const lines = input.split('\\n').filter(l => l.trim());
-  const sessions = [];
-  const errors = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const parts = lines[i].trim().split(/\\s+/);
-    if (parts.length < 3) { errors.push((i+1) + '번째 줄: 최소 날짜, 시작, 종료 필요'); continue; }
-
-    const dateMatch = parts[0].match(/^\\d{4}-\\d{2}-\\d{2}$/);
-    if (!dateMatch) { errors.push((i+1) + '번째 줄: 날짜 형식 오류 (YYYY-MM-DD)'); continue; }
-
-    const session = {
-      session_number: nextNum++,
-      session_date: parts[0],
-      start_time: parts[1],
-      end_time: parts[2],
-      late_cutoff: parts[3] || parts[1],  // 지각 기준 없으면 시작시간
-      early_leave_cutoff: parts[4] || parts[2],  // 조퇴 기준 없으면 종료시간
-      is_workshop: false,
-    };
-
-    // 5번째 이후는 비고 (note) - 서버에서 별도 처리
-    if (parts.length > 5) {
-      session.note = parts.slice(5).join(' ');
-    }
-
-    sessions.push(session);
-  }
-
-  if (errors.length > 0) {
-    msgEl.innerHTML = '<div class="msg msg-err">⚠️ 형식 오류:\\n' + errors.join('\\n') + '</div>';
-    return;
-  }
-
-  if (sessions.length === 0) { msgEl.innerHTML = '<div class="msg msg-err">유효한 입력이 없습니다.</div>'; return; }
-
-  // 미리보기
-  let preview = sessions.map(s => s.session_number + '회 ' + s.session_date + ' ' + s.start_time + '~' + s.end_time + (s.note ? ' (' + s.note + ')' : '')).join('\\n');
-  if (!confirm(sessions.length + '개 회차를 추가합니다:\\n\\n' + preview)) return;
-
-  // note 포함 회차는 개별 추가 (bulk API에 note 지원 추가)
-  let added = 0;
-  for (const s of sessions) {
+  /* ── 과정 목록 ── */
+  async function loadCourses() {
+    var el = document.getElementById('courseList');
+    el.innerHTML = '<div class="cs-empty">불러오는 중…</div>';
     try {
-      const res = await fetch('/api/admin/sessions', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ course_id: courseId, ...s })
+      var res = await fetch('/api/admin/courses');
+      allCourses = await res.json();
+    } catch (e) {
+      el.innerHTML = '<div class="cs-empty">과정을 불러오지 못했습니다.</div>';
+      return;
+    }
+    document.getElementById('courseCount').textContent = allCourses.length + '개 과정';
+    if (!allCourses.length) {
+      el.innerHTML = '<div class="cs-empty">등록된 과정이 없습니다.</div>';
+      updateCourseSelect();
+      return;
+    }
+    var rows = allCourses.map(function(c) {
+      var tag = c.course_type
+        ? '<span class="cs-tag tg-' + esc(c.course_type) + '">' + esc(c.course_type) + '</span>'
+        : '<span class="cs-mut">—</span>';
+      return '<tr>'
+        + '<td style="font-weight:700;">' + esc(c.course_name) + '</td>'
+        + '<td class="cs-mut">' + esc(c.course_code || '—') + '</td>'
+        + '<td>' + tag + '</td>'
+        + '<td class="cs-num">' + esc(c.cohort || '—') + '</td>'
+        + '<td class="cs-mut">' + esc(c.default_room || '—') + '</td>'
+        + '<td class="cs-num">' + esc(c.student_count) + '명</td>'
+        + '<td class="cs-num">' + esc(c.session_count) + '회</td>'
+        + '<td style="white-space:nowrap;">'
+        +   '<button type="button" class="cs-mini" data-cact="edit" data-id="' + esc(c.course_id) + '">수정</button> '
+        +   '<button type="button" class="cs-mini red" data-cact="del" data-id="' + esc(c.course_id) + '" data-name="' + esc(c.course_name) + '">삭제</button>'
+        + '</td></tr>';
+    }).join('');
+    el.innerHTML = '<div class="cs-tablewrap"><table class="cs-table" style="min-width:820px;">'
+      + '<thead><tr><th>과정명</th><th>약칭</th><th>종류</th><th>기수</th><th>강의실</th>'
+      + '<th>수강생</th><th>회차</th><th style="width:150px;">관리</th></tr></thead>'
+      + '<tbody>' + rows + '</tbody></table></div>';
+    updateCourseSelect();
+  }
+
+  function updateCourseSelect() {
+    var sel = document.getElementById('sessionCourseSelect');
+    var val = sel.value;
+    sel.innerHTML = '<option value="">-- 선택 --</option>'
+      + allCourses.map(function(c) {
+          return '<option value="' + esc(c.course_id) + '">' + esc(c.course_name)
+            + (c.cohort ? ' ' + esc(c.cohort) + '기' : '') + '</option>';
+        }).join('');
+    sel.value = val;
+  }
+
+  document.getElementById('btnReload').addEventListener('click', function() {
+    loadCourses(); loadClassrooms();
+    if (document.getElementById('sessionCourseSelect').value) loadSessionsForCourse();
+    showToast('새로고침했습니다');
+  });
+
+  /* ── 과정 추가 ── */
+  document.getElementById('btnAddCourse').addEventListener('click', async function() {
+    var data = {
+      course_name: document.getElementById('cName').value.trim(),
+      course_code: document.getElementById('cCode').value.trim() || null,
+      course_type: document.getElementById('cType').value || null,
+      cohort: document.getElementById('cCohort').value.trim() || null,
+      default_classroom_id: document.getElementById('cRoom').value || null,
+      total_sessions: parseInt(document.getElementById('cTotal').value, 10) || null
+    };
+    if (!data.course_name) { showToast('과정명을 입력하세요', true); return; }
+    try {
+      var res = await fetch('/api/admin/courses', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
       });
-      const r = await res.json();
-      if (r.success) added++;
-    } catch (e) { /* skip */ }
+      var r = await res.json();
+      if (r.success) {
+        showToast('과정을 추가했습니다');
+        ['cName','cCode','cCohort','cTotal'].forEach(function(id) { document.getElementById(id).value = ''; });
+        document.getElementById('cType').value = '';
+        document.getElementById('cRoom').value = '';
+        loadCourses();
+      } else showToast('추가 실패: ' + (r.error || ''), true);
+    } catch (e) { showToast('추가 실패: ' + e.message, true); }
+  });
+
+  /* ── 과정 수정 / 삭제 ── */
+  document.getElementById('courseList').addEventListener('click', function(ev) {
+    var b = ev.target.closest('[data-cact]');
+    if (!b) return;
+    if (b.getAttribute('data-cact') === 'edit') editCourse(b.getAttribute('data-id'));
+    else deleteCourse(b.getAttribute('data-id'), b.getAttribute('data-name'));
+  });
+
+  async function deleteCourse(id, name) {
+    if (!confirm(name + ' 과정을 삭제합니다.\\n관련된 모든 회차·수강등록·출결 데이터가 함께 삭제됩니다.')) return;
+    if (!confirm('되돌릴 수 없습니다. 정말 삭제할까요?')) return;
+    try {
+      var res = await fetch('/api/admin/courses/' + id, { method: 'DELETE' });
+      var r = await res.json();
+      if (r.success) { showToast(name + ' 과정을 삭제했습니다'); loadCourses(); }
+      else showToast('삭제 실패: ' + (r.error || ''), true);
+    } catch (e) { showToast('삭제 실패: ' + e.message, true); }
   }
 
-  msgEl.innerHTML = '<div class="msg msg-ok">✅ ' + added + '개 회차 추가 완료</div>';
-  document.getElementById('freeSessionInput').value = '';
-  await loadSessionsForCourse();
-  await loadCourses();
-}
+  function editCourse(id) {
+    var c = allCourses.filter(function(x) { return String(x.course_id) === String(id); })[0];
+    if (!c) { showToast('과정 정보를 찾을 수 없습니다', true); return; }
 
-// ─── 강의실 관리 ────────────────────────────────────────
-async function loadClassrooms() {
-  const res = await fetch('/api/classrooms');
-  const rooms = await res.json();
-  allClassrooms = rooms;
-  let html = '<table><tr><th>코드</th><th>이름</th><th>관리</th></tr>';
-  for (const r of rooms) {
-    html += '<tr><td>' + r.classroom_code + '</td><td>' + r.classroom_name + '</td>';
-    html += '<td><button class="btn btn-small btn-danger" onclick="deleteClassroom(\\'' + r.classroom_id + '\\', \\'' + r.classroom_name + '\\')">삭제</button></td></tr>';
+    var roomOpts = '<option value="">선택</option>' + allClassrooms.map(function(r) {
+      var sel = String(r.classroom_id) === String(c.default_classroom_id) ? ' selected' : '';
+      return '<option value="' + esc(r.classroom_id) + '"' + sel + '>' + esc(r.classroom_name) + ' (' + esc(r.classroom_code) + ')</option>';
+    }).join('');
+    var typeOpts = '<option value="">선택</option>' + ['모집과정','위탁과정','산교연과정'].map(function(t) {
+      return '<option value="' + t + '"' + (c.course_type === t ? ' selected' : '') + '>' + t + '</option>';
+    }).join('');
+
+    document.getElementById('courseEditArea').innerHTML =
+        '<div class="cs-editbox">'
+      +   '<div class="cs-title">과정 수정</div>'
+      +   '<div class="cs-mut" style="margin-top:5px;">회차 일정과 출결 기록은 변경되지 않습니다.</div>'
+      +   '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:14px;">'
+      +     '<div class="cs-field" style="grid-column:span 2;"><label>과정명 *</label>'
+      +       '<input class="cs-input" type="text" id="ec_name" value="' + esc(c.course_name || '') + '"></div>'
+      +     '<div class="cs-field"><label>약칭</label>'
+      +       '<input class="cs-input" type="text" id="ec_code" value="' + esc(c.course_code || '') + '"></div>'
+      +     '<div class="cs-field"><label>종류</label><select class="cs-select" id="ec_type">' + typeOpts + '</select></div>'
+      +     '<div class="cs-field"><label>기수</label>'
+      +       '<input class="cs-input" type="text" id="ec_cohort" value="' + esc(c.cohort || '') + '"></div>'
+      +     '<div class="cs-field"><label>기본 강의실</label><select class="cs-select" id="ec_room">' + roomOpts + '</select></div>'
+      +     '<div class="cs-field"><label>총 회차</label>'
+      +       '<input class="cs-input" type="number" id="ec_total" value="' + esc(c.total_sessions === null || c.total_sessions === undefined ? '' : c.total_sessions) + '"></div>'
+      +   '</div>'
+      +   '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">'
+      +     '<button type="button" class="sn-btn sn-btn-primary" style="height:44px;" id="btnSaveCourse">저장</button>'
+      +     '<button type="button" class="sn-btn sn-btn-secondary" style="height:44px;" id="btnCancelCourse">취소</button>'
+      +   '</div>'
+      + '</div>';
+
+    document.getElementById('btnCancelCourse').addEventListener('click', function() {
+      document.getElementById('courseEditArea').innerHTML = '';
+    });
+    document.getElementById('btnSaveCourse').addEventListener('click', function() { saveCourse(id); });
+    document.getElementById('ec_name').scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
-  html += '</table>';
-  document.getElementById('classroomList').innerHTML = html;
-}
 
-async function addClassroom() {
-  const code = document.getElementById('crCode').value.trim();
-  const name = document.getElementById('crName').value.trim();
-  if (!code || !name) { document.getElementById('crMsg').innerHTML = '<div class="msg msg-err">코드와 이름을 입력하세요.</div>'; return; }
-  const res = await fetch('/api/admin/classrooms', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ classroom_code:code, classroom_name:name }) });
-  const r = await res.json();
-  if (r.success) {
-    document.getElementById('crCode').value = '';
-    document.getElementById('crName').value = '';
-    document.getElementById('crMsg').innerHTML = '<div class="msg msg-ok">✅ 추가 완료</div>';
-    await loadClassrooms();
-  } else {
-    document.getElementById('crMsg').innerHTML = '<div class="msg msg-err">❌ ' + (r.error||'실패') + '</div>';
+  async function saveCourse(id) {
+    var name = document.getElementById('ec_name').value.trim();
+    if (!name) { showToast('과정명을 입력하세요', true); return; }
+    var data = {
+      course_name: name,
+      course_code: document.getElementById('ec_code').value.trim() || null,
+      course_type: document.getElementById('ec_type').value || null,
+      cohort: document.getElementById('ec_cohort').value.trim() || null,
+      default_classroom_id: document.getElementById('ec_room').value || null,
+      total_sessions: parseInt(document.getElementById('ec_total').value, 10) || null
+    };
+    try {
+      var res = await fetch('/api/admin/courses/' + id, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+      });
+      var r = await res.json();
+      if (r.success) {
+        showToast('과정을 수정했습니다');
+        document.getElementById('courseEditArea').innerHTML = '';
+        loadCourses();
+      } else showToast('수정 실패: ' + (r.error || ''), true);
+    } catch (e) { showToast('수정 실패: ' + e.message, true); }
   }
-}
 
-async function deleteClassroom(id, name) {
-  if (!confirm(name + ' 강의실을 삭제하시겠습니까?')) return;
-  const res = await fetch('/api/admin/classrooms/' + id, { method:'DELETE' });
-  const r = await res.json();
-  if (r.success) { await loadClassrooms(); } else { alert('삭제 실패: ' + (r.error||'')); }
-}
-</script>
-</body>
-</html>`;
+  /* ── 회차 목록 ── */
+  var sessSel = document.getElementById('sessionCourseSelect');
+  sessSel.addEventListener('change', loadSessionsForCourse);
+
+  async function loadSessionsForCourse() {
+    var courseId = sessSel.value;
+    var el = document.getElementById('sessionList');
+    var addArea = document.getElementById('sessionAddArea');
+    document.getElementById('editFormArea').innerHTML = '';
+    if (!courseId) {
+      el.innerHTML = '';
+      addArea.style.display = 'none';
+      document.getElementById('sessionCount').textContent = '';
+      return;
+    }
+    addArea.style.display = '';
+    el.innerHTML = '<div class="cs-empty">불러오는 중…</div>';
+    var sessions;
+    try {
+      var res = await fetch('/api/admin/sessions/' + courseId);
+      sessions = await res.json();
+    } catch (e) {
+      el.innerHTML = '<div class="cs-empty">회차를 불러오지 못했습니다.</div>';
+      return;
+    }
+    sessionMap = {};
+    sessions.forEach(function(s) { sessionMap[s.session_id] = s; });
+    document.getElementById('sessionCount').textContent = sessions.length + '개 회차';
+    if (!sessions.length) {
+      el.innerHTML = '<div class="cs-empty">등록된 회차가 없습니다. 아래에서 추가하세요.</div>';
+      return;
+    }
+    var rows = sessions.map(function(s) {
+      return '<tr>'
+        + '<td class="cs-num" style="font-weight:800;">' + esc(s.session_number) + '회</td>'
+        + '<td class="cs-num">' + dOnly(s.session_date) + '</td>'
+        + '<td class="cs-num">' + hhmm(s.start_time) + '~' + hhmm(s.end_time) + '</td>'
+        + '<td class="cs-num cs-mut">' + hhmm(s.late_cutoff) + '</td>'
+        + '<td class="cs-num cs-mut">' + hhmm(s.early_leave_cutoff) + '</td>'
+        + '<td>' + (s.is_workshop ? '<span class="cs-tag tg-산교연과정">워크샵</span>' : '<span class="cs-mut">—</span>') + '</td>'
+        + '<td class="cs-mut" style="max-width:160px;">' + esc(s.note || '') + '</td>'
+        + '<td class="cs-num">' + esc(s.attendance_count) + '명</td>'
+        + '<td style="white-space:nowrap;">'
+        +   '<button type="button" class="cs-mini" data-sact="edit" data-id="' + esc(s.session_id) + '">수정</button> '
+        +   '<button type="button" class="cs-mini red" data-sact="del" data-id="' + esc(s.session_id) + '" data-num="' + esc(s.session_number) + '">삭제</button>'
+        + '</td></tr>';
+    }).join('');
+    el.innerHTML = '<div class="cs-tablewrap"><table class="cs-table" style="min-width:900px;">'
+      + '<thead><tr><th style="width:64px;">회차</th><th>날짜</th><th>수업시간</th><th>지각 기준</th>'
+      + '<th>조퇴 기준</th><th>워크샵</th><th>비고</th><th>출결</th><th style="width:150px;">관리</th></tr></thead>'
+      + '<tbody>' + rows + '</tbody></table></div>';
+  }
+
+  document.getElementById('sessionList').addEventListener('click', function(ev) {
+    var b = ev.target.closest('[data-sact]');
+    if (!b) return;
+    if (b.getAttribute('data-sact') === 'edit') editSession(b.getAttribute('data-id'));
+    else deleteSession(b.getAttribute('data-id'), b.getAttribute('data-num'));
+  });
+
+  function editSession(sid) {
+    var s = sessionMap[sid];
+    if (!s) return;
+    document.getElementById('editFormArea').innerHTML =
+        '<div class="cs-editbox">'
+      +   '<div class="cs-title">' + esc(s.session_number) + '회차 수정</div>'
+      +   '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-top:14px;">'
+      +     '<div class="cs-field"><label>날짜</label><input class="cs-input" type="date" id="ed_date" value="' + (dOnly(s.session_date) === '—' ? '' : dOnly(s.session_date)) + '"></div>'
+      +     '<div class="cs-field"><label>시작</label><input class="cs-input" type="time" id="ed_start" value="' + (s.start_time ? String(s.start_time).slice(0,5) : '') + '"></div>'
+      +     '<div class="cs-field"><label>종료</label><input class="cs-input" type="time" id="ed_end" value="' + (s.end_time ? String(s.end_time).slice(0,5) : '') + '"></div>'
+      +     '<div class="cs-field"><label>지각 기준</label><input class="cs-input" type="time" id="ed_late" value="' + (s.late_cutoff ? String(s.late_cutoff).slice(0,5) : '') + '"></div>'
+      +     '<div class="cs-field"><label>조퇴 기준</label><input class="cs-input" type="time" id="ed_early" value="' + (s.early_leave_cutoff ? String(s.early_leave_cutoff).slice(0,5) : '') + '"></div>'
+      +     '<div class="cs-field"><label>워크샵</label><select class="cs-select" id="ed_ws">'
+      +       '<option value="false"' + (!s.is_workshop ? ' selected' : '') + '>아니오</option>'
+      +       '<option value="true"' + (s.is_workshop ? ' selected' : '') + '>예</option></select></div>'
+      +     '<div class="cs-field" style="grid-column:span 2;"><label>비고</label>'
+      +       '<input class="cs-input" type="text" id="ed_note" value="' + esc(s.note || '') + '" placeholder="공휴일, 단체식사, 외부행사 등"></div>'
+      +   '</div>'
+      +   '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">'
+      +     '<button type="button" class="sn-btn sn-btn-primary" style="height:44px;" id="btnSaveSession">저장</button>'
+      +     '<button type="button" class="sn-btn sn-btn-secondary" style="height:44px;" id="btnCancelSession">취소</button>'
+      +   '</div>'
+      + '</div>';
+    document.getElementById('btnCancelSession').addEventListener('click', function() {
+      document.getElementById('editFormArea').innerHTML = '';
+    });
+    document.getElementById('btnSaveSession').addEventListener('click', function() { saveSession(sid); });
+    document.getElementById('ed_date').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  async function saveSession(sid) {
+    var data = {
+      session_date: document.getElementById('ed_date').value,
+      start_time: document.getElementById('ed_start').value,
+      end_time: document.getElementById('ed_end').value,
+      late_cutoff: document.getElementById('ed_late').value,
+      early_leave_cutoff: document.getElementById('ed_early').value,
+      is_workshop: document.getElementById('ed_ws').value === 'true',
+      note: document.getElementById('ed_note').value.trim() || null
+    };
+    try {
+      var res = await fetch('/api/admin/sessions/' + sid, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+      });
+      var r = await res.json();
+      if (r.success) { showToast('회차를 수정했습니다'); loadSessionsForCourse(); }
+      else showToast('수정 실패: ' + (r.error || ''), true);
+    } catch (e) { showToast('수정 실패: ' + e.message, true); }
+  }
+
+  async function deleteSession(sid, num) {
+    if (!confirm(num + '회차를 삭제합니다.\\n해당 회차의 출결 데이터도 함께 삭제됩니다.')) return;
+    try {
+      var res = await fetch('/api/admin/sessions/' + sid, { method: 'DELETE' });
+      var r = await res.json();
+      if (r.success) { showToast(num + '회차를 삭제했습니다'); loadSessionsForCourse(); loadCourses(); }
+      else showToast('삭제 실패: ' + (r.error || ''), true);
+    } catch (e) { showToast('삭제 실패: ' + e.message, true); }
+  }
+
+  /* ── 요일 칩 ── */
+  document.querySelectorAll('.cs-day').forEach(function(lb) {
+    var cb = lb.querySelector('input');
+    lb.addEventListener('click', function(ev) {
+      ev.preventDefault();
+      cb.checked = !cb.checked;
+      lb.classList.toggle('on', cb.checked);
+    });
+  });
+
+  /* ── 회차 일괄 추가 ── */
+  document.getElementById('btnBulkSession').addEventListener('click', async function() {
+    var courseId = sessSel.value;
+    if (!courseId) { showToast('과정을 먼저 선택하세요', true); return; }
+    var startDate = document.getElementById('sStartDate').value;
+    var count = parseInt(document.getElementById('sCount').value, 10);
+    var weekInterval = parseInt(document.getElementById('sWeekInterval').value, 10);
+    var startTime = document.getElementById('sStart').value;
+    var endTime = document.getElementById('sEnd').value;
+    var lateCutoff = document.getElementById('sLate').value;
+    var earlyCutoff = document.getElementById('sEarly').value;
+
+    var selectedDays = [];
+    document.querySelectorAll('.dayCheck:checked').forEach(function(cb) { selectedDays.push(parseInt(cb.value, 10)); });
+    if (!startDate || !count) { showToast('시작일과 회차 수를 입력하세요', true); return; }
+    if (!selectedDays.length) { showToast('수업 요일을 하나 이상 선택하세요', true); return; }
+
+    var dayNames = ['일','월','화','수','목','금','토'];
+    var sessions = [];
+    var d = new Date(startDate + 'T00:00:00');
+    var weekCount = 0, lastWeekNum = -1;
+    for (var safety = 0; safety < 365 && sessions.length < count; safety++) {
+      var jsDay = d.getDay();
+      var ourDay = jsDay === 0 ? 7 : jsDay;
+      var weekNum = Math.floor(safety / 7);
+      if (weekNum !== lastWeekNum) { lastWeekNum = weekNum; weekCount++; }
+      var isActiveWeek = weekInterval === 1 || (weekCount % 2 === 1);
+      if (isActiveWeek && selectedDays.indexOf(ourDay) >= 0) {
+        sessions.push({
+          session_number: sessions.length + 1,
+          session_date: d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'),
+          start_time: startTime, end_time: endTime,
+          late_cutoff: lateCutoff, early_leave_cutoff: earlyCutoff
+        });
+      }
+      d.setDate(d.getDate() + 1);
+    }
+    if (!sessions.length) { showToast('생성된 회차가 없습니다. 시작일과 요일을 확인하세요', true); return; }
+
+    try {
+      var ex = await fetch('/api/admin/sessions/' + courseId);
+      var existing = await ex.json();
+      var maxNum = existing.length ? Math.max.apply(null, existing.map(function(s) { return s.session_number; })) : 0;
+      sessions.forEach(function(s, i) { s.session_number = maxNum + i + 1; });
+    } catch (e) { /* 번호는 1부터 유지 */ }
+
+    var names = selectedDays.map(function(x) { return dayNames[x]; }).join(',');
+    if (!confirm(sessions.length + '개 회차를 추가합니다.\\n요일: ' + names + (weekInterval > 1 ? ' (격주)' : '')
+      + '\\n기간: ' + sessions[0].session_date + ' ~ ' + sessions[sessions.length - 1].session_date)) return;
+
+    try {
+      var res = await fetch('/api/admin/sessions/bulk', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ course_id: courseId, sessions: sessions })
+      });
+      var r = await res.json();
+      if (r.success) { showToast(r.added + '개 회차를 추가했습니다'); loadSessionsForCourse(); loadCourses(); }
+      else showToast('추가 실패: ' + (r.error || ''), true);
+    } catch (e) { showToast('추가 실패: ' + e.message, true); }
+  });
+
+  /* ── 회차 자유 입력 ── */
+  function parseFree(text) {
+    var out = [], errors = [];
+    text.split('\\n').forEach(function(line, i) {
+      if (!line.trim()) return;
+      var p = line.trim().split(/\\s+/);
+      if (p.length < 3) { errors.push((i + 1) + '번째 줄 — 날짜·시작·종료가 필요합니다'); return; }
+      if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(p[0])) { errors.push((i + 1) + '번째 줄 — 날짜 형식 오류 (YYYY-MM-DD)'); return; }
+      var s = {
+        session_date: p[0], start_time: p[1], end_time: p[2],
+        late_cutoff: p[3] || p[1], early_leave_cutoff: p[4] || p[2],
+        is_workshop: false
+      };
+      if (p.length > 5) s.note = p.slice(5).join(' ');
+      out.push(s);
+    });
+    return { list: out, errors: errors };
+  }
+
+  var freeEl = document.getElementById('freeSessionInput');
+  freeEl.addEventListener('input', function() {
+    var r = parseFree(freeEl.value);
+    var el = document.getElementById('freePreview');
+    if (r.errors.length) { el.textContent = '형식 오류 ' + r.errors.length + '건'; el.style.color = '#D32F2F'; }
+    else { el.textContent = r.list.length ? (r.list.length + '개 회차 인식됨') : ''; el.style.color = ''; }
+  });
+
+  document.getElementById('btnFreeSession').addEventListener('click', async function() {
+    var courseId = sessSel.value;
+    if (!courseId) { showToast('과정을 먼저 선택하세요', true); return; }
+    var parsed = parseFree(freeEl.value);
+    if (parsed.errors.length) { alert('형식 오류:\\n' + parsed.errors.join('\\n')); return; }
+    if (!parsed.list.length) { showToast('입력 내용이 없습니다', true); return; }
+
+    var nextNum = 1;
+    try {
+      var ex = await fetch('/api/admin/sessions/' + courseId);
+      var existing = await ex.json();
+      nextNum = existing.length ? Math.max.apply(null, existing.map(function(s) { return s.session_number; })) + 1 : 1;
+    } catch (e) { /* 1부터 */ }
+    parsed.list.forEach(function(s) { s.session_number = nextNum++; });
+
+    var preview = parsed.list.map(function(s) {
+      return s.session_number + '회 ' + s.session_date + ' ' + s.start_time + '~' + s.end_time + (s.note ? ' (' + s.note + ')' : '');
+    }).join('\\n');
+    if (!confirm(parsed.list.length + '개 회차를 추가합니다:\\n\\n' + preview)) return;
+
+    var added = 0;
+    for (var i = 0; i < parsed.list.length; i++) {
+      try {
+        var body = { course_id: courseId };
+        for (var k in parsed.list[i]) body[k] = parsed.list[i][k];
+        var res = await fetch('/api/admin/sessions', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        var r = await res.json();
+        if (r.success) added++;
+      } catch (e) { /* 건너뜀 */ }
+    }
+    showToast(added + '개 회차를 추가했습니다' + (added < parsed.list.length ? ' (' + (parsed.list.length - added) + '건 실패)' : ''),
+      added < parsed.list.length);
+    freeEl.value = '';
+    document.getElementById('freePreview').textContent = '';
+    loadSessionsForCourse();
+    loadCourses();
+  });
+
+  /* ── 강의실 관리 ── */
+  async function loadClassrooms() {
+    try {
+      var res = await fetch('/api/classrooms');
+      allClassrooms = await res.json();
+    } catch (e) { allClassrooms = []; }
+    var el = document.getElementById('classroomList');
+    if (!allClassrooms.length) {
+      el.innerHTML = '<div class="cs-mut" style="padding:8px 0;">등록된 강의실이 없습니다.</div>';
+      return;
+    }
+    el.innerHTML = '<div class="cs-tablewrap" style="padding:0;background:transparent;"><table class="cs-table" style="min-width:360px;">'
+      + '<thead><tr><th style="width:150px;">코드</th><th>이름</th><th style="width:90px;">관리</th></tr></thead><tbody>'
+      + allClassrooms.map(function(r) {
+          return '<tr><td class="cs-num">' + esc(r.classroom_code) + '</td>'
+            + '<td style="font-weight:700;">' + esc(r.classroom_name) + '</td>'
+            + '<td><button type="button" class="cs-mini red" data-ract="del" data-id="' + esc(r.classroom_id) + '" data-name="' + esc(r.classroom_name) + '">삭제</button></td></tr>';
+        }).join('')
+      + '</tbody></table></div>';
+  }
+
+  document.getElementById('classroomList').addEventListener('click', async function(ev) {
+    var b = ev.target.closest('[data-ract]');
+    if (!b) return;
+    var name = b.getAttribute('data-name');
+    if (!confirm(name + ' 강의실을 삭제할까요?')) return;
+    try {
+      var res = await fetch('/api/admin/classrooms/' + b.getAttribute('data-id'), { method: 'DELETE' });
+      var r = await res.json();
+      if (r.success) { showToast(name + ' 강의실을 삭제했습니다'); loadClassrooms(); }
+      else showToast('삭제 실패: ' + (r.error || ''), true);
+    } catch (e) { showToast('삭제 실패: ' + e.message, true); }
+  });
+
+  document.getElementById('btnAddRoom').addEventListener('click', async function() {
+    var code = document.getElementById('crCode').value.trim();
+    var name = document.getElementById('crName').value.trim();
+    if (!code || !name) { showToast('코드와 이름을 모두 입력하세요', true); return; }
+    try {
+      var res = await fetch('/api/admin/classrooms', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ classroom_code: code, classroom_name: name })
+      });
+      var r = await res.json();
+      if (r.success) {
+        showToast('강의실을 추가했습니다');
+        document.getElementById('crCode').value = '';
+        document.getElementById('crName').value = '';
+        loadClassrooms();
+      } else showToast('추가 실패: ' + (r.error || ''), true);
+    } catch (e) { showToast('추가 실패: ' + e.message, true); }
+  });
+
+  loadCourses();
+  loadClassrooms();
+  `;
+
+  return layout.renderShell({
+    active: 'courses',
+    title: '교육과정 관리',
+    body: body,
+    pageCss: pageCss,
+    pageJs: pageJs
+  });
 }
 
 
