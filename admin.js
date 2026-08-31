@@ -1458,415 +1458,531 @@ function renderAttendancePage(courses) {
 // 수강생 관리 페이지 HTML
 // ═════════════════════════════════════════════════════════════
 function renderStudentsPage(courses) {
-  const courseOptions = courses.map(c =>
-    `<option value="${c.course_id}">${c.course_name} ${c.cohort || ''} [${c.course_type || ''}]</option>`
-  ).join('');
+  const esc = layout.esc;
 
-  return `<!DOCTYPE html>
-<html lang="ko">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>수강생 관리 - 관리자</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, 'Malgun Gothic', sans-serif; background: #f5f5f7; color: #1d1d1f; padding: 16px; }
-    .container { max-width: 1100px; margin: 0 auto; }
-    h1 { font-size: 22px; margin-bottom: 4px; }
-    .subtitle { color: #86868b; font-size: 13px; margin-bottom: 20px; }
-    .card { background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-    .card h2 { font-size: 16px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #e5e5e7; }
-    select { padding: 10px 14px; border: 1.5px solid #d2d2d7; border-radius: 10px; font-size: 14px; background: #fff; min-width: 250px; }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th { text-align: left; padding: 8px 10px; background: #f5f5f7; color: #86868b; font-weight: 500; font-size: 12px; }
-    td { padding: 8px 10px; border-top: 1px solid #f0f0f0; }
-    tr:hover { background: #fafafa; }
-    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
-    .b-ok { background: #e6f4ea; color: #137333; }
-    .b-no { background: #fce8e6; color: #c5221f; }
-    .b-push { background: #e8f0fe; color: #1a73e8; }
-    .btn { padding: 6px 12px; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; background: #1a73e8; color: #fff; }
-    .btn:hover { background: #1557b0; }
-    .btn-small { padding: 4px 8px; font-size: 11px; }
-    .btn-outline { background: #fff; color: #1a73e8; border: 1px solid #1a73e8; }
-    .btn-danger { background: #ff3b30; color: #fff; }
-    .btn-danger:hover { background: #d62d22; }
-    textarea { width: 100%; min-height: 150px; padding: 12px; border: 1.5px solid #d2d2d7; border-radius: 10px; font-size: 13px; font-family: monospace; resize: vertical; }
-    textarea:focus { border-color: #1a73e8; outline: none; }
-    .back-link { font-size: 13px; color: #1a73e8; text-decoration: none; }
-    .info-box { background: #e8f0fe; border-radius: 8px; padding: 14px 18px; margin-bottom: 16px; font-size: 13px; color: #1a73e8; line-height: 1.8; }
-    .stats { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
-    .stat { background: #f5f5f7; border-radius: 8px; padding: 10px 14px; text-align: center; min-width: 70px; }
-    .stat-num { font-size: 20px; font-weight: 700; }
-    .stat-label { font-size: 11px; color: #86868b; margin-top: 2px; }
-    #loading { text-align: center; padding: 20px; color: #86868b; }
-    .mgmt-section { margin-top: 16px; }
-    .mgmt-section input { padding: 8px 12px; border: 1.5px solid #d2d2d7; border-radius: 8px; font-size: 13px; font-family: monospace; width: 360px; }
-  </style>
-</head>
-<body>
-  <div class="container"><div style="padding:14px 0 10px 0;"><img src="/logo.png" alt="연세대학교 상남경영원" style="height:52px;display:block;"></div>
+  const courseOptions = courses.map(function(c) {
+    const label = c.course_name
+      + (c.cohort ? ' ' + c.cohort + '기' : '')
+      + (c.course_type ? ' [' + c.course_type + ']' : '');
+    return '<option value="' + esc(c.course_id) + '">' + esc(label) + '</option>';
+  }).join('');
 
-  <a href="/admin" class="back-link">← 대시보드로 돌아가기</a>
-  <h1 style="margin-top:12px;">👥 수강생 관리</h1>
-  <p class="subtitle">수강생 조회, 일괄 등록, 생체인증 현황</p>
+  const pageCss = `
+  .sd-h1 { margin:0; font-size:32px; font-weight:800; letter-spacing:-0.025em; line-height:1.1; }
+  .sd-lead { font-size:13px; font-weight:500; color:var(--sn-gray); margin-top:6px; }
 
-  <div class="card" id="pendingCard" style="display:none;">
-    <h2>⚠️ 재등록 승인 대기</h2>
-    <p style="font-size:13px;color:#86868b;margin-bottom:12px;">이미 등록된 수강생이 재등록을 시도했습니다. 본인 확인 후 승인하세요.</p>
-    <div id="pendingList"></div>
-  </div>
+  .sd-field { display:flex; flex-direction:column; gap:6px; margin:0; }
+  .sd-field label { font-size:11.5px; font-weight:600; color:var(--sn-gray); }
+  .sd-select, .sd-input {
+    height:44px; width:100%; padding:0 14px;
+    border:1.5px solid var(--sn-line); border-radius:12px; background:#fff;
+    font-size:13px; font-weight:600; color:var(--sn-ink); outline:none;
+    transition:border-color .15s ease;
+  }
+  .sd-select:focus, .sd-input:focus { border-color:var(--sn-navy); }
+  .sd-area {
+    width:100%; min-height:150px; padding:14px;
+    border:1.5px solid var(--sn-line); border-radius:14px; background:#fff;
+    font-size:13px; font-weight:500; line-height:1.7; color:var(--sn-ink);
+    outline:none; resize:vertical; font-family:inherit;
+  }
+  .sd-area:focus { border-color:var(--sn-navy); }
 
-  <div class="card">
-    <h2>📋 수강생 조회</h2>
-    <select id="courseSelect" onchange="loadStudents()">
-      <option value="">-- 과정 선택 --</option>
-      ${courseOptions}
-    </select>
-    <div id="studentList" style="margin-top:16px;"></div>
-  </div>
+  .sd-kpi { background:#fff; border-radius:16px; padding:16px; }
+  .sd-kpi .lb { font-size:11.5px; font-weight:600; color:var(--sn-gray); }
+  .sd-kpi .vl { font-size:28px; font-weight:800; line-height:1; margin-top:8px; letter-spacing:-0.03em; font-variant-numeric:tabular-nums; }
 
-  <div class="card">
-    <h2>🕐 실시간 등록 현황 <span style="font-size:12px;color:#86868b;font-weight:400;">(최근 24시간 · 5초 자동 갱신)</span></h2>
-    <div id="regLog" style="font-size:13px;min-height:40px;"></div>
-  </div>
+  .sd-tablewrap { background:#fff; border-radius:20px; padding:8px 20px 14px; overflow-x:auto; margin-top:14px; }
+  table.sd-table { width:100%; min-width:840px; border-collapse:collapse; }
+  .sd-table th {
+    text-align:left; padding:12px 10px; font-size:11.5px; font-weight:700;
+    color:var(--sn-gray); letter-spacing:0.04em; border-bottom:1px solid var(--sn-line); white-space:nowrap;
+  }
+  .sd-table td { padding:11px 10px; border-bottom:1px solid var(--sn-line2); font-size:13px; }
+  .sd-table tbody tr:hover { background:#f9fafb; }
+  .sd-num { font-variant-numeric:tabular-nums; }
+  .sd-mut { color:var(--sn-gray); font-size:12.5px; }
 
-  <div class="card">
-    <h2>📝 수강생 일괄 등록</h2>
-    <div class="info-box">
-      아래 텍스트 영역에 수강생 정보를 붙여넣거나 직접 입력하세요.<br>
-      <b>형식: 이름[탭 또는 공백]전화번호</b> (한 줄에 한 명)<br>
-      예시: 홍길동 01012345678 또는 홍길동 010-1234-5678<br>
-      엑셀에서 이름/전화번호 열을 선택 → 복사(Ctrl+C) → 아래에 붙여넣기(Ctrl+V)도 가능
-    </div>
-    <select id="bulkCourseSelect" style="margin-bottom:12px;">
-      <option value="">-- 등록할 과정 선택 --</option>
-      ${courseOptions}
-    </select><br>
-    <textarea id="bulkInput" placeholder="홍길동 01012345678&#10;김철수 010-9876-5432&#10;..."></textarea>
-    <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
-      <button class="btn" onclick="bulkRegister()">일괄 등록</button>
-      <span id="bulkResult" style="font-size:13px;"></span>
-    </div>
-  </div>
+  .sd-tag { display:inline-block; padding:3px 10px; border-radius:999px; font-size:11.5px; font-weight:700; white-space:nowrap; }
+  .tg-ok   { background:#dce8f5; color:#003876; }
+  .tg-no   { background:#fadedd; color:#c22525; }
+  .tg-push { background:#e6f4ea; color:#137333; }
+  .tg-off  { background:#eceded; color:#656668; }
+  .tg-wait { background:#fff3cd; color:#856404; }
 
-  <div class="card">
-    <h2>📊 통합 관리 시트 (구글시트)</h2>
-    <div class="info-box">
-      전체 과정의 수강생 명단 + 생체인증 등록 여부 + 푸시 구독 여부를 하나의 구글시트로 내보냅니다.
-    </div>
-    <div class="mgmt-section">
-      <input type="text" id="mgmtSheetId" placeholder="통합 관리용 스프레드시트 ID 입력">
-      <button class="btn" onclick="syncManagement()" style="margin-left:8px;">동기화</button>
-      <span id="mgmtResult" style="font-size:13px; margin-left:8px;"></span>
-    </div>
-  </div>
-</div>
+  .sd-mini {
+    height:34px; padding:0 12px; border-radius:999px; border:1px solid var(--sn-line);
+    background:#fff; font-size:11.5px; font-weight:700; cursor:pointer; white-space:nowrap;
+    color:var(--sn-navy); transition:background .12s ease;
+  }
+  .sd-mini:hover { background:var(--sn-bg); }
+  .sd-mini.green { background:#e6f4ea; border-color:#cbe6d4; color:#137333; }
+  .sd-mini.green:hover { background:#d9edde; }
+  .sd-mini.red { background:var(--sn-red-bg); border-color:#f3cdcb; color:#c22525; }
+  .sd-mini.red:hover { background:#f7cdcb; }
 
-<script>
-// ─── 수강생 목록 로드 ────────────────────────────────────
-async function loadStudents() {
-  const courseId = document.getElementById('courseSelect').value;
-  const el = document.getElementById('studentList');
-  if (!courseId) { el.innerHTML = ''; return; }
+  .sd-empty { background:#fff; border-radius:20px; padding:36px 20px; text-align:center; color:var(--sn-gray); font-size:13.5px; font-weight:600; }
+  .sd-info {
+    background:#dce8f5; border-radius:14px; padding:14px 16px;
+    font-size:12.5px; color:#003876; line-height:1.8;
+  }
+  .sd-warncard { border:1.5px solid #f0c36d; background:#fffaf0; }
 
-  el.innerHTML = '<div id="loading">불러오는 중...</div>';
-  try {
-    const res = await fetch('/api/admin/students/' + courseId);
-    const students = await res.json();
-    if (!Array.isArray(students)) { el.innerHTML = '<div class="msg msg-error">조회 실패: ' + (students.error || '알 수 없는 오류') + '</div>'; return; }
+  /* 등록 링크 모달 */
+  .sd-modal {
+    display:none; position:fixed; inset:0; background:rgba(16,17,18,0.55);
+    z-index:100; align-items:center; justify-content:center; padding:20px;
+  }
+  .sd-modal.on { display:flex; }
+  .sd-modal-in {
+    background:#fff; border-radius:26px; padding:30px 26px; max-width:420px; width:100%;
+    text-align:center; box-shadow:0 18px 50px rgba(0,56,118,0.25);
+  }
+  `;
 
-  const total = students.length;
-  const bioOk = students.filter(s => s.has_credential).length;
-  const bioNo = total - bioOk;
-  const pushOk = students.filter(s => s.has_push).length;
+  const body =
+      '<section class="sn-section">'
+    +   '<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">'
+    +     '<div>'
+    +       '<h1 class="sd-h1">수강생 관리</h1>'
+    +       '<div class="sd-lead">명단 · 생체인증 · 퇴실 알림 구독</div>'
+    +     '</div>'
+    +     '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
+    +       '<button type="button" class="sn-btn sn-btn-secondary" style="height:44px;" id="btnRefresh">새로고침</button>'
+    +       '<button type="button" class="sn-btn sn-btn-primary" style="height:44px;" id="btnRegPrint">전체 등록링크 발급·인쇄</button>'
+    +     '</div>'
+    +   '</div>'
+    + '</section>'
 
-  let html = '<div class="stats">';
-  html += '<div class="stat"><div class="stat-num">' + total + '</div><div class="stat-label">전체</div></div>';
-  html += '<div class="stat"><div class="stat-num" style="color:#34c759;">' + bioOk + '</div><div class="stat-label">생체인증 등록</div></div>';
-  html += '<div class="stat"><div class="stat-num" style="color:#ff3b30;">' + bioNo + '</div><div class="stat-label">생체인증 미등록</div></div>';
-  html += '<div class="stat"><div class="stat-num" style="color:#1a73e8;">' + pushOk + '</div><div class="stat-label">푸시 구독</div></div>';
-  html += '</div>';
+    // ── 재등록 승인 대기 ──
+    + '<section class="sn-section" style="padding-top:18px;display:none;" id="pendingSection">'
+    +   '<div class="sn-card sd-warncard">'
+    +     '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+    +       '<div style="font-size:16px;font-weight:800;letter-spacing:-0.015em;">재등록 승인 대기</div>'
+    +       '<span class="sd-tag tg-wait" id="pendingCount">0건</span>'
+    +     '</div>'
+    +     '<div class="sd-mut" style="margin-top:6px;line-height:1.7;">이미 등록된 수강생이 다른 기기로 재등록을 시도했습니다. 본인 확인 후 승인하세요.</div>'
+    +     '<div id="pendingList" style="margin-top:12px;"></div>'
+    +   '</div>'
+    + '</section>'
 
-  html += '<div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">';
-  html += '<button class="btn btn-small" onclick="loadStudents()">🔄 새로고침</button>';
-  html += '<button class="btn btn-small" style="background:#ff9500;" onclick="openRegPrint()">🖨️ 전체 등록링크 발급·인쇄</button>';
-  html += '</div>';
+    // ── 수강생 조회 ──
+    + '<section class="sn-section" style="padding-top:18px;">'
+    +   '<div class="sn-card" style="padding:16px 18px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">'
+    +     '<div class="sd-field" style="min-width:280px;flex:1;">'
+    +       '<label for="courseSelect">교육과정</label>'
+    +       '<select class="sd-select" id="courseSelect"><option value="">-- 과정 선택 --</option>' + courseOptions + '</select>'
+    +     '</div>'
+    +   '</div>'
+    +   '<div id="studentArea"><div class="sd-empty" style="margin-top:14px;">먼저 교육과정을 선택하세요.</div></div>'
+    + '</section>'
 
-  html += '<div style="overflow-x:auto;"><table>';
-  html += '<tr><th>#</th><th>이름</th><th>전화번호</th><th>생체인증</th><th>마지막 인증</th><th>푸시</th><th>관리</th></tr>';
+    // ── 일괄 등록 ──
+    + '<section class="sn-section" style="padding-top:18px;">'
+    +   '<div class="sn-grid" style="grid-template-columns:repeat(auto-fit,minmax(340px,1fr));">'
+    +     '<div class="sn-card">'
+    +       '<div style="font-size:16px;font-weight:800;letter-spacing:-0.015em;">수강생 일괄 등록</div>'
+    +       '<div class="sd-info" style="margin-top:12px;">'
+    +         '형식: <strong>이름[탭 또는 공백]전화번호</strong> — 한 줄에 한 명<br>'
+    +         '예시: 홍길동 01012345678 &nbsp;/&nbsp; 홍길동 010-1234-5678<br>'
+    +         '엑셀에서 이름·전화번호 열을 복사해 그대로 붙여넣어도 됩니다.'
+    +       '</div>'
+    +       '<div class="sd-field" style="margin-top:14px;">'
+    +         '<label for="bulkCourseSelect">등록할 과정</label>'
+    +         '<select class="sd-select" id="bulkCourseSelect"><option value="">-- 등록할 과정 선택 --</option>' + courseOptions + '</select>'
+    +       '</div>'
+    +       '<textarea class="sd-area" id="bulkInput" style="margin-top:12px;" placeholder="홍길동 01012345678&#10;김철수 010-9876-5432"></textarea>'
+    +       '<div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;">'
+    +         '<button type="button" class="sn-btn sn-btn-primary" style="height:44px;" id="btnBulk">일괄 등록</button>'
+    +         '<span class="sd-mut" id="bulkPreview"></span>'
+    +       '</div>'
+    +     '</div>'
 
-  students.forEach((s, i) => {
-    const lastUsed = s.last_used_at ? new Date(s.last_used_at).toLocaleDateString('ko-KR', {timeZone:'Asia/Seoul'}) : '-';
-    html += '<tr>';
-    html += '<td>' + (i + 1) + '</td>';
-    html += '<td><b>' + s.name + '</b></td>';
-    html += '<td style="font-size:12px;">' + s.phone + '</td>';
-    html += '<td><span class="badge ' + (s.has_credential ? 'b-ok' : 'b-no') + '">' + (s.has_credential ? '등록(' + s.cred_count + ')' : '미등록') + '</span></td>';
-    html += '<td style="font-size:12px;color:#86868b;">' + lastUsed + '</td>';
-    html += '<td>' + (s.has_push ? '<span class="badge b-push">구독중</span>' : '<span style="color:#86868b;font-size:12px;">미구독</span>') + '</td>';
-    html += '<td>';
-    if (s.has_credential) {
-      html += '<button class="btn btn-small btn-outline" onclick="resetCred(\\'' + s.student_id + '\\', \\'' + s.name + '\\')">인증초기화</button> ';
+    +     '<div class="sn-card">'
+    +       '<div style="font-size:16px;font-weight:800;letter-spacing:-0.015em;">통합 관리 시트</div>'
+    +       '<div class="sd-info" style="margin-top:12px;">'
+    +         '전체 과정의 수강생 명단 + 생체인증 등록 여부 + 퇴실 알림 구독 여부를 하나의 구글시트로 내보냅니다.<br>'
+    +         '시트를 서비스 계정 이메일과 <strong>편집자</strong>로 공유해야 합니다.'
+    +       '</div>'
+    +       '<div class="sd-field" style="margin-top:14px;">'
+    +         '<label for="mgmtSheetId">통합 관리용 스프레드시트 ID</label>'
+    +         '<input class="sd-input" type="text" id="mgmtSheetId" placeholder="스프레드시트 ID 입력" autocomplete="off">'
+    +       '</div>'
+    +       '<button type="button" class="sn-btn sn-btn-secondary" style="height:44px;margin-top:12px;" id="btnMgmt">현황 시트 동기화</button>'
+
+    +       '<div style="border-top:1px solid var(--sn-line);margin-top:18px;padding-top:16px;">'
+    +         '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+    +           '<div style="font-size:14px;font-weight:800;">최근 등록 현황</div>'
+    +           '<span class="sd-mut">최근 24시간 · 5초마다 자동 갱신</span>'
+    +         '</div>'
+    +         '<div id="regLog" style="margin-top:10px;"></div>'
+    +       '</div>'
+    +     '</div>'
+    +   '</div>'
+    + '</section>'
+
+    // ── 등록 링크 모달 ──
+    + '<div class="sd-modal" id="regModal">'
+    +   '<div class="sd-modal-in">'
+    +     '<div style="font-size:19px;font-weight:800;letter-spacing:-0.02em;" id="regName"></div>'
+    +     '<div class="sd-mut" style="margin-top:5px;">24시간 유효 · 1회 사용 가능</div>'
+    +     '<canvas id="regQR" style="border-radius:14px;border:1px solid var(--sn-line);margin-top:16px;"></canvas>'
+    +     '<div style="margin-top:14px;display:flex;gap:8px;">'
+    +       '<input class="sd-input" id="regUrl" type="text" readonly style="flex:1;font-size:11.5px;background:var(--sn-bg);">'
+    +       '<button type="button" class="sn-btn sn-btn-primary" style="height:44px;" id="btnCopyUrl">복사</button>'
+    +     '</div>'
+    +     '<div class="sd-mut" style="margin-top:10px;line-height:1.7;">수강생이 이 QR을 스캔하거나 링크를 열면<br>본인 생체인증만 등록할 수 있습니다.</div>'
+    +     '<button type="button" class="sn-btn sn-btn-secondary" style="height:46px;width:100%;margin-top:16px;" id="btnCloseModal">닫기</button>'
+    +   '</div>'
+    + '</div>'
+
+    + '<div id="snToast" style="position:fixed;left:50%;bottom:28px;transform:translateX(-50%);'
+    +   'background:var(--sn-navy);color:#fff;font-size:13px;font-weight:700;padding:12px 20px;'
+    +   'border-radius:999px;box-shadow:0 8px 24px rgba(0,56,118,0.25);opacity:0;pointer-events:none;'
+    +   'transition:opacity .2s ease;z-index:120;max-width:88vw;text-align:center;"></div>';
+
+  const pageJs = `
+  var courseId = '';
+  var areaEl = document.getElementById('studentArea');
+  var selEl = document.getElementById('courseSelect');
+
+  /* ── 공통 ── */
+  var toastTimer = null;
+  function showToast(msg, bad) {
+    var t = document.getElementById('snToast');
+    if (!t) return;
+    t.textContent = msg;
+    t.style.background = bad ? '#D32F2F' : 'var(--sn-navy)';
+    t.style.opacity = '1';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function() { t.style.opacity = '0'; }, 2600);
+  }
+  function esc(v) {
+    return String(v === null || v === undefined ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function fmtDate(v) {
+    if (!v) return '—';
+    var d = new Date(v);
+    return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul' });
+  }
+  function fmtTime(v) {
+    if (!v) return '—';
+    var d = new Date(v);
+    return isNaN(d.getTime()) ? '—' : d.toLocaleTimeString('ko-KR',
+      { timeZone: 'Asia/Seoul', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  /* ── 수강생 목록 ── */
+  async function loadStudents() {
+    courseId = selEl.value;
+    if (!courseId) {
+      areaEl.innerHTML = '<div class="sd-empty" style="margin-top:14px;">먼저 교육과정을 선택하세요.</div>';
+      return;
     }
-    html += '<button class="btn btn-small" style="background:#34c759;color:#fff;" onclick="issueRegToken(\\'' + s.student_id + '\\', \\'' + s.name + '\\')">등록링크</button> ';
-    html += '<button class="btn btn-small btn-danger" onclick="deactivateStudent(\\'' + s.student_id + '\\', \\'' + s.name + '\\')">삭제</button>';
-    html += '</td>';
-    html += '</tr>';
+    areaEl.innerHTML = '<div class="sd-empty" style="margin-top:14px;">불러오는 중…</div>';
+    var students;
+    try {
+      var res = await fetch('/api/admin/students/' + courseId);
+      students = await res.json();
+    } catch (e) {
+      areaEl.innerHTML = '<div class="sd-empty" style="margin-top:14px;">수강생을 불러오지 못했습니다.</div>';
+      return;
+    }
+    if (!Array.isArray(students)) {
+      areaEl.innerHTML = '<div class="sd-empty" style="margin-top:14px;">조회 실패: ' + esc(students.error || '알 수 없는 오류') + '</div>';
+      return;
+    }
+    if (!students.length) {
+      areaEl.innerHTML = '<div class="sd-empty" style="margin-top:14px;">이 과정에 등록된 수강생이 없습니다.</div>';
+      return;
+    }
+
+    var total = students.length;
+    var bioOk = students.filter(function(s) { return s.has_credential; }).length;
+    var pushOk = students.filter(function(s) { return s.has_push; }).length;
+
+    function kpi(label, val, bg, lc, vc) {
+      return '<div class="sd-kpi" style="background:' + bg + ';">'
+        + '<div class="lb" style="color:' + lc + ';">' + label + '</div>'
+        + '<div class="vl" style="color:' + vc + ';">' + val + '</div></div>';
+    }
+    var kpiHtml = '<div class="sn-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-top:14px;">'
+      + kpi('전체', total, '#fff', 'var(--sn-gray)', 'var(--sn-ink)')
+      + kpi('생체인증 등록', bioOk, '#fff', 'var(--sn-gray)', 'var(--sn-navy)')
+      + kpi('미등록', total - bioOk, (total - bioOk) ? 'var(--sn-red-bg)' : '#fff',
+            (total - bioOk) ? '#a32020' : 'var(--sn-gray)', (total - bioOk) ? '#D32F2F' : 'var(--sn-ink)')
+      + kpi('퇴실 알림 구독', pushOk, '#fff', 'var(--sn-gray)', 'var(--sn-ink)')
+      + '</div>';
+
+    var rows = students.map(function(s, i) {
+      var bio = s.has_credential
+        ? '<span class="sd-tag tg-ok">등록 (' + esc(s.cred_count) + ')</span>'
+        : '<span class="sd-tag tg-no">미등록</span>';
+      var push = s.has_push
+        ? '<span class="sd-tag tg-push">구독중</span>'
+        : '<span class="sd-tag tg-off">미구독</span>';
+      var act = '';
+      if (s.has_credential) {
+        act += '<button type="button" class="sd-mini" data-act="resetcred" data-sid="' + esc(s.student_id) + '" data-name="' + esc(s.name) + '">인증 초기화</button> ';
+      }
+      act += '<button type="button" class="sd-mini green" data-act="regtoken" data-sid="' + esc(s.student_id) + '" data-name="' + esc(s.name) + '">등록링크</button> ';
+      act += '<button type="button" class="sd-mini red" data-act="remove" data-sid="' + esc(s.student_id) + '" data-name="' + esc(s.name) + '">삭제</button>';
+      return '<tr>'
+        + '<td class="sd-num sd-mut">' + (i + 1) + '</td>'
+        + '<td style="font-weight:700;">' + esc(s.name) + '</td>'
+        + '<td class="sd-num sd-mut">' + esc(s.phone) + '</td>'
+        + '<td>' + bio + '</td>'
+        + '<td class="sd-mut sd-num">' + fmtDate(s.last_used_at) + '</td>'
+        + '<td>' + push + '</td>'
+        + '<td style="white-space:nowrap;">' + act + '</td>'
+        + '</tr>';
+    }).join('');
+
+    areaEl.innerHTML = kpiHtml
+      + '<div class="sd-tablewrap"><table class="sd-table">'
+      +   '<thead><tr><th style="width:44px;">#</th><th>이름</th><th>전화번호</th><th>생체인증</th>'
+      +   '<th>마지막 인증</th><th>퇴실 알림</th><th style="width:280px;">관리</th></tr></thead>'
+      +   '<tbody>' + rows + '</tbody>'
+      + '</table></div>';
+  }
+  selEl.addEventListener('change', loadStudents);
+  document.getElementById('btnRefresh').addEventListener('click', function() {
+    if (!courseId) { showToast('과정을 먼저 선택하세요', true); return; }
+    loadStudents();
+  });
+  document.getElementById('btnRegPrint').addEventListener('click', function() {
+    if (!selEl.value) { showToast('과정을 먼저 선택하세요', true); return; }
+    window.open('/admin/reg-print/' + selEl.value, '_blank');
   });
 
-  html += '</table></div>';
-  el.innerHTML = html;
-  } catch (err) {
-    el.innerHTML = '<div class="msg msg-error">수강생 조회 오류: ' + err.message + '</div>';
-  }
-}
-
-// ─── 일괄 등록 ───────────────────────────────────────────
-async function bulkRegister() {
-  const courseId = document.getElementById('bulkCourseSelect').value;
-  const input = document.getElementById('bulkInput').value.trim();
-  const resultEl = document.getElementById('bulkResult');
-
-  if (!courseId) { resultEl.innerHTML = '<span style="color:#ff3b30;">과정을 선택하세요.</span>'; return; }
-  if (!input) { resultEl.innerHTML = '<span style="color:#ff3b30;">수강생 정보를 입력하세요.</span>'; return; }
-
-  const lines = input.split('\\n').filter(l => l.trim());
-  const students = [];
-  for (const line of lines) {
-    // 전화번호 패턴 감지: 010으로 시작하는 숫자(하이픈 포함)
-    const phoneMatch = line.match(/(01[016789][-\\s]?\\d{3,4}[-\\s]?\\d{4})/);
-    if (phoneMatch) {
-      const phone = phoneMatch[1].trim();
-      const name = line.replace(phone, '').replace(/[,\\t]/g, '').trim();
-      if (name) students.push({ name, phone });
-    } else {
-      // 전화번호 패턴 없으면 탭/쉼표/공백으로 분리 시도
-      const parts = line.split(/\\t|,|\\s+/);
-      if (parts.length >= 2) {
-        students.push({ name: parts[0].trim(), phone: parts.slice(1).join('').trim() });
-      }
-    }
-  }
-
-  if (students.length === 0) { resultEl.innerHTML = '<span style="color:#ff3b30;">파싱 가능한 데이터가 없습니다.</span>'; return; }
-
-  if (!confirm(students.length + '명을 등록하시겠습니까?')) return;
-
-  resultEl.innerHTML = '<span style="color:#1a73e8;">등록 중...</span>';
-
-  try {
-    const res = await fetch('/api/admin/students/bulk', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ courseId, students }),
-    });
-    const data = await res.json();
-    if (data.success) {
-      resultEl.innerHTML = '<span style="color:#34c759;">✅ ' + data.added + '명 등록 완료' + (data.skipped > 0 ? ' (' + data.skipped + '명 건너뜀)' : '') + '</span>';
-      document.getElementById('bulkInput').value = '';
-      // 같은 과정이 조회 중이면 자동 새로고침
-      if (document.getElementById('courseSelect').value === courseId) {
-        await loadStudents();
-      }
-    } else {
-      resultEl.innerHTML = '<span style="color:#ff3b30;">❌ ' + (data.error || '실패') + '</span>';
-    }
-  } catch (err) {
-    resultEl.innerHTML = '<span style="color:#ff3b30;">❌ ' + err.message + '</span>';
-  }
-}
-
-// ─── 생체인증 초기화 ─────────────────────────────────────
-async function resetCred(studentId, name) {
-  if (!confirm(name + '의 생체인증 등록을 초기화하시겠습니까?\\n(재등록 링크가 자동 발급됩니다)')) return;
-  try {
-    const res = await fetch('/api/admin/credentials/' + studentId, { method: 'DELETE' });
-    const data = await res.json();
-    if (data.success) {
-      alert('✅ 초기화 완료.\\n' + name + '님이 /register 에서 전화번호를 입력하면 바로 재등록할 수 있습니다. (24시간 유효)');
-    } else {
-      alert('초기화 실패: ' + (data.error || '알 수 없는 오류'));
-    }
-  } catch (err) { alert('초기화 오류: ' + err.message); }
-  await loadStudents();
-}
-
-// ─── 실시간 등록 로그 폴링 ───────────────────────────────────
-async function loadRegLog() {
-  try {
-    const res = await fetch('/api/admin/reg-log');
-    const rows = await res.json();
-    const el = document.getElementById('regLog');
-    if (!el) return;
-    if (!rows.length) { el.innerHTML = '<span style="color:#86868b;">최근 등록 내역이 없습니다.</span>'; return; }
-    let html = '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
-    html += '<tr><th style="text-align:left;padding:6px 8px;background:#f5f5f7;font-size:12px;">이름</th><th style="text-align:left;padding:6px 8px;background:#f5f5f7;font-size:12px;">전화번호</th><th style="text-align:left;padding:6px 8px;background:#f5f5f7;font-size:12px;">등록 시각</th><th style="text-align:left;padding:6px 8px;background:#f5f5f7;font-size:12px;">상태</th></tr>';
-    rows.forEach(function(r) {
-      const t = new Date(r.registered_at).toLocaleTimeString('ko-KR', { timeZone:'Asia/Seoul', hour:'2-digit', minute:'2-digit', second:'2-digit' });
-      const badge = r.type === 'pending'
-        ? '<span style="background:#fff3cd;color:#856404;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">⚠️ 승인대기</span>'
-        : '<span style="background:#e6f4ea;color:#137333;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">✅ 등록완료</span>';
-      html += '<tr style="border-top:1px solid #f0f0f0;"><td style="padding:7px 8px;font-weight:600;">' + r.name + '</td><td style="padding:7px 8px;color:#86868b;">' + r.phone + '</td><td style="padding:7px 8px;">' + t + '</td><td style="padding:7px 8px;">' + badge + '</td></tr>';
-    });
-    html += '</table>';
-    el.innerHTML = html;
-  } catch(e) {}
-}
-
-// ─── 보류 등록 목록 로드 ─────────────────────────────────────
-async function loadPending() {
-  try {
-    const res = await fetch('/api/admin/pending-creds');
-    const rows = await res.json();
-    const card = document.getElementById('pendingCard');
-    const el = document.getElementById('pendingList');
-    if (!card || !el) return;
-    if (!rows.length) { card.style.display = 'none'; return; }
-    card.style.display = 'block';
-    let html = '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
-    html += '<tr><th style="text-align:left;padding:6px 8px;background:#fff8e1;font-size:12px;">이름</th><th style="text-align:left;padding:6px 8px;background:#fff8e1;font-size:12px;">전화번호</th><th style="text-align:left;padding:6px 8px;background:#fff8e1;font-size:12px;">수강과정</th><th style="text-align:left;padding:6px 8px;background:#fff8e1;font-size:12px;">요청 시각</th><th style="padding:6px 8px;background:#fff8e1;font-size:12px;">처리</th></tr>';
-    rows.forEach(function(r) {
-      const t = new Date(r.requested_at).toLocaleTimeString('ko-KR', { timeZone:'Asia/Seoul', hour:'2-digit', minute:'2-digit' });
-      html += '<tr style="border-top:1px solid #f0f0f0;">';
-      html += '<td style="padding:7px 8px;font-weight:600;">' + r.name + '</td>';
-      html += '<td style="padding:7px 8px;color:#86868b;font-size:12px;">' + r.phone + '</td>';
-      html += '<td style="padding:7px 8px;font-size:12px;">' + (r.courses || '-') + '</td>';
-      html += '<td style="padding:7px 8px;">' + t + '</td>';
-      html += '<td style="padding:7px 8px;white-space:nowrap;">';
-      html += '<button class="btn btn-small" style="background:#34c759;margin-right:4px;" onclick="approvePending(\\'' + r.student_id + '\\', \\'' + r.name + '\\')">✅ 승인</button>';
-      html += '<button class="btn btn-small btn-danger" onclick="rejectPending(\\'' + r.student_id + '\\', \\'' + r.name + '\\')">❌ 거부</button>';
-      html += '</td></tr>';
-    });
-    html += '</table>';
-    el.innerHTML = html;
-  } catch(e) {}
-}
-
-async function approvePending(pendingId, name) {
-  if (!confirm(name + '님의 재등록을 승인하시겠습니까?\\n기존 기기 인증이 해제되고 새 기기로 변경됩니다.')) return;
-  const res = await fetch('/api/admin/pending-creds/' + pendingId + '/approve', { method: 'POST' });
-  const data = await res.json();
-  if (data.success) { alert('✅ ' + name + '님 재등록이 승인되었습니다.'); loadPending(); loadRegLog(); }
-  else alert('오류: ' + data.error);
-}
-
-async function rejectPending(pendingId, name) {
-  if (!confirm(name + '님의 재등록 요청을 거부하시겠습니까?\\n기존 등록이 유지됩니다.')) return;
-  const res = await fetch('/api/admin/pending-creds/' + pendingId + '/reject', { method: 'POST' });
-  const data = await res.json();
-  if (data.success) { alert('❌ ' + name + '님 재등록이 거부되었습니다.'); loadPending(); }
-  else alert('오류: ' + data.error);
-}
-
-// ─── 페이지 로드 시 폴링 시작 ────────────────────────────────
-loadRegLog();
-loadPending();
-setInterval(function() { loadRegLog(); loadPending(); }, 5000);
-
-
-// ─── 전체 등록링크 인쇄 페이지 열기 ─────────────────────────
-function openRegPrint() {
-  const courseId = document.getElementById('courseSelect').value;
-  if (!courseId) { alert('먼저 과정을 선택하세요.'); return; }
-  window.open('/admin/reg-print/' + courseId, '_blank');
-}
-
-// ─── 등록 링크 발급 ──────────────────────────────────────
-async function issueRegToken(studentId, name) {
-  try {
-    const res = await fetch('/api/admin/reg-token/' + studentId, { method: 'POST' });
-    const data = await res.json();
-    if (data.error) { alert('발급 실패: ' + data.error); return; }
-
-    const baseUrl = location.origin;
-    const regUrl = baseUrl + '/register?token=' + data.token;
-
-    // 모달 표시
-    document.getElementById('regTokenName').textContent = name + '님 등록 링크';
-    document.getElementById('regTokenUrl').value = regUrl;
-    document.getElementById('regTokenModal').style.display = 'flex';
-
-    // QR 코드 생성 (qrious 라이브러리 사용)
-    if (window.QRious) {
-      const qr = new QRious({ element: document.getElementById('regTokenQR'), value: regUrl, size: 200, level: 'M', background: '#fff', foreground: '#000' });
-    } else {
-      // qrious 없으면 동적 로드
-      const script = document.createElement('script');
-      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js';
-      script.onload = () => {
-        new QRious({ element: document.getElementById('regTokenQR'), value: regUrl, size: 200, level: 'M', background: '#fff', foreground: '#000' });
-      };
-      document.head.appendChild(script);
-    }
-  } catch (err) { alert('오류: ' + err.message); }
-}
-
-function copyRegUrl() {
-  const url = document.getElementById('regTokenUrl').value;
-  navigator.clipboard.writeText(url).then(() => {
-    const btn = document.getElementById('copyBtn');
-    btn.textContent = '✅ 복사됨';
-    setTimeout(() => { btn.textContent = '복사'; }, 2000);
+  /* ── 행 버튼 (이벤트 위임) ── */
+  areaEl.addEventListener('click', function(ev) {
+    var b = ev.target.closest('[data-act]');
+    if (!b) return;
+    var act = b.getAttribute('data-act');
+    var sid = b.getAttribute('data-sid');
+    var name = b.getAttribute('data-name');
+    if (act === 'resetcred') resetCred(sid, name);
+    else if (act === 'regtoken') issueRegToken(sid, name);
+    else if (act === 'remove') removeStudent(sid, name);
   });
-}
 
-// ─── 수강생 비활성화 ─────────────────────────────────────
-async function deactivateStudent(studentId, name) {
-  if (!confirm(name + '을(를) 이 과정에서 삭제하시겠습니까?')) return;
-  const courseId = document.getElementById('courseSelect').value;
-  if (!courseId) { alert('과정을 선택하세요.'); return; }
-  try {
-    const res = await fetch('/api/admin/students/' + studentId + '/' + courseId, { method: 'DELETE' });
-    const data = await res.json();
-    if (!data.success) { alert('삭제 실패: ' + (data.error || '')); }
-  } catch (err) { alert('삭제 오류: ' + err.message); }
-  await loadStudents();
-}
-
-// ─── 통합 관리 시트 동기화 ───────────────────────────────
-async function syncManagement() {
-  const sheetId = document.getElementById('mgmtSheetId').value.trim();
-  const resultEl = document.getElementById('mgmtResult');
-  if (!sheetId) { resultEl.innerHTML = '<span style="color:#ff3b30;">스프레드시트 ID를 입력하세요.</span>'; return; }
-
-  resultEl.innerHTML = '<span style="color:#1a73e8;">동기화 중...</span>';
-  try {
-    const res = await fetch('/api/admin/sync-management', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ spreadsheetId: sheetId }),
-    });
-    const data = await res.json();
-    if (data.success) {
-      resultEl.innerHTML = '<span style="color:#34c759;">✅ ' + data.count + '명 동기화 완료</span>';
-    } else {
-      resultEl.innerHTML = '<span style="color:#ff3b30;">❌ ' + (data.error || '실패') + '</span>';
-    }
-  } catch (err) {
-    resultEl.innerHTML = '<span style="color:#ff3b30;">❌ ' + err.message + '</span>';
+  async function resetCred(sid, name) {
+    if (!confirm(name + '의 생체인증 등록을 초기화합니다.\\n재등록 링크가 자동 발급됩니다.')) return;
+    try {
+      var res = await fetch('/api/admin/credentials/' + sid, { method: 'DELETE' });
+      var d = await res.json();
+      if (d.success) showToast(name + ' 인증을 초기화했습니다 · /register 에서 재등록 가능 (24시간)');
+      else showToast('초기화 실패: ' + (d.error || ''), true);
+    } catch (e) { showToast('초기화 실패: ' + e.message, true); }
+    loadStudents();
   }
-}
-</script>
 
-<!-- 등록 링크 모달 -->
-<div id="regTokenModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;">
-  <div style="background:#fff;border-radius:16px;padding:28px 24px;max-width:420px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.2);">
-    <div style="font-size:18px;font-weight:700;margin-bottom:4px;" id="regTokenName"></div>
-    <div style="font-size:13px;color:#86868b;margin-bottom:16px;">24시간 유효 · 1회 사용 가능</div>
-    <canvas id="regTokenQR" style="border-radius:8px;border:1px solid #e5e5e7;"></canvas>
-    <div style="margin-top:14px;display:flex;gap:8px;">
-      <input id="regTokenUrl" type="text" readonly style="flex:1;padding:10px;border:1px solid #d2d2d7;border-radius:8px;font-size:12px;color:#444;background:#f5f5f7;">
-      <button id="copyBtn" onclick="copyRegUrl()" style="padding:10px 16px;background:#1a73e8;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;">복사</button>
-    </div>
-    <div style="font-size:12px;color:#86868b;margin-top:10px;line-height:1.6;">
-      수강생이 이 QR을 스캔하거나 링크를 열면<br>본인 생체인증만 등록 가능합니다.
-    </div>
-    <button onclick="document.getElementById('regTokenModal').style.display='none'" style="margin-top:16px;width:100%;padding:12px;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:8px;font-size:14px;cursor:pointer;">닫기</button>
-  </div>
-</div>
-</body>
-</html>`;
+  async function removeStudent(sid, name) {
+    if (!courseId) { showToast('과정을 먼저 선택하세요', true); return; }
+    if (!confirm(name + '을(를) 이 과정에서 삭제할까요?')) return;
+    try {
+      var res = await fetch('/api/admin/students/' + sid + '/' + courseId, { method: 'DELETE' });
+      var d = await res.json();
+      if (d.success) showToast(name + '을(를) 삭제했습니다');
+      else showToast('삭제 실패: ' + (d.error || ''), true);
+    } catch (e) { showToast('삭제 실패: ' + e.message, true); }
+    loadStudents();
+  }
+
+  /* ── 등록 링크 모달 ── */
+  var modal = document.getElementById('regModal');
+  document.getElementById('btnCloseModal').addEventListener('click', function() { modal.classList.remove('on'); });
+  modal.addEventListener('click', function(ev) { if (ev.target === modal) modal.classList.remove('on'); });
+  document.addEventListener('keydown', function(ev) { if (ev.key === 'Escape') modal.classList.remove('on'); });
+
+  document.getElementById('btnCopyUrl').addEventListener('click', function() {
+    var el = document.getElementById('regUrl');
+    var text = el.value;
+    var btn = this;
+    function done() { btn.textContent = '복사됨'; setTimeout(function() { btn.textContent = '복사'; }, 1800); }
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(done).catch(fallback);
+    } else { fallback(); }
+    function fallback() {
+      el.removeAttribute('readonly'); el.select();
+      try { document.execCommand('copy'); done(); } catch (e) { showToast('복사에 실패했습니다', true); }
+      el.setAttribute('readonly', 'readonly');
+    }
+  });
+
+  function drawQR(url) {
+    var el = document.getElementById('regQR');
+    function make() { new QRious({ element: el, value: url, size: 200, level: 'M', background: '#fff', foreground: '#003876' }); }
+    if (window.QRious) { make(); return; }
+    var sc = document.createElement('script');
+    sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js';
+    sc.onload = make;
+    sc.onerror = function() { showToast('QR 라이브러리를 불러오지 못했습니다. 링크는 복사할 수 있습니다', true); };
+    document.head.appendChild(sc);
+  }
+
+  async function issueRegToken(sid, name) {
+    try {
+      var res = await fetch('/api/admin/reg-token/' + sid, { method: 'POST' });
+      var d = await res.json();
+      if (d.error) { showToast('발급 실패: ' + d.error, true); return; }
+      var url = location.origin + '/register?token=' + d.token;
+      document.getElementById('regName').textContent = name + '님 등록 링크';
+      document.getElementById('regUrl').value = url;
+      modal.classList.add('on');
+      drawQR(url);
+    } catch (e) { showToast('발급 실패: ' + e.message, true); }
+  }
+
+  /* ── 일괄 등록 ── */
+  function parseBulk(text) {
+    var out = [];
+    text.split('\\n').forEach(function(line) {
+      if (!line.trim()) return;
+      var m = line.match(/(01[016789][-\\s]?\\d{3,4}[-\\s]?\\d{4})/);
+      if (m) {
+        var phone = m[1].trim();
+        var name = line.replace(phone, '').replace(/[,\\t]/g, '').trim();
+        if (name) out.push({ name: name, phone: phone });
+      } else {
+        var p = line.split(/\\t|,|\\s+/);
+        if (p.length >= 2) out.push({ name: p[0].trim(), phone: p.slice(1).join('').trim() });
+      }
+    });
+    return out;
+  }
+
+  var bulkEl = document.getElementById('bulkInput');
+  bulkEl.addEventListener('input', function() {
+    var n = parseBulk(bulkEl.value).length;
+    document.getElementById('bulkPreview').textContent = n ? (n + '명 인식됨') : '';
+  });
+
+  document.getElementById('btnBulk').addEventListener('click', async function() {
+    var cid = document.getElementById('bulkCourseSelect').value;
+    if (!cid) { showToast('등록할 과정을 선택하세요', true); return; }
+    var list = parseBulk(bulkEl.value);
+    if (!list.length) { showToast('인식 가능한 수강생 정보가 없습니다', true); return; }
+    if (!confirm(list.length + '명을 등록할까요?')) return;
+    showToast('등록 중…');
+    try {
+      var res = await fetch('/api/admin/students/bulk', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ courseId: cid, students: list })
+      });
+      var d = await res.json();
+      if (d.success) {
+        showToast(d.added + '명 등록 완료' + (d.skipped > 0 ? ' · ' + d.skipped + '명 건너뜀' : ''));
+        bulkEl.value = '';
+        document.getElementById('bulkPreview').textContent = '';
+        if (selEl.value === cid) loadStudents();
+      } else {
+        showToast('등록 실패: ' + (d.error || ''), true);
+      }
+    } catch (e) { showToast('등록 실패: ' + e.message, true); }
+  });
+
+  /* ── 통합 관리 시트 ── */
+  document.getElementById('btnMgmt').addEventListener('click', async function() {
+    var id = document.getElementById('mgmtSheetId').value.trim();
+    if (!id) { showToast('스프레드시트 ID를 입력하세요', true); return; }
+    showToast('동기화 중…');
+    try {
+      var res = await fetch('/api/admin/sync-management', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ spreadsheetId: id })
+      });
+      var d = await res.json();
+      if (d.success) showToast(d.count + '명 동기화 완료');
+      else showToast('동기화 실패: ' + (d.error || ''), true);
+    } catch (e) { showToast('동기화 실패: ' + e.message, true); }
+  });
+
+  /* ── 최근 등록 현황 ── */
+  async function loadRegLog() {
+    try {
+      var res = await fetch('/api/admin/reg-log');
+      var rows = await res.json();
+      var el = document.getElementById('regLog');
+      if (!el) return;
+      if (!rows.length) {
+        el.innerHTML = '<div class="sd-mut" style="padding:8px 0;">최근 등록 내역이 없습니다.</div>';
+        return;
+      }
+      el.innerHTML = rows.map(function(r) {
+        var tag = r.type === 'pending'
+          ? '<span class="sd-tag tg-wait">승인대기</span>'
+          : '<span class="sd-tag tg-push">등록완료</span>';
+        return '<div style="display:flex;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--sn-line2);font-size:12.5px;">'
+          + '<span style="font-weight:700;min-width:70px;">' + esc(r.name) + '</span>'
+          + '<span class="sd-mut sd-num">' + esc(r.phone) + '</span>'
+          + '<span class="sd-mut sd-num" style="margin-left:auto;">' + fmtTime(r.registered_at) + '</span>'
+          + tag + '</div>';
+      }).join('');
+    } catch (e) { /* 무시 */ }
+  }
+
+  /* ── 재등록 승인 대기 ── */
+  async function loadPending() {
+    try {
+      var res = await fetch('/api/admin/pending-creds');
+      var rows = await res.json();
+      var sec = document.getElementById('pendingSection');
+      var el = document.getElementById('pendingList');
+      if (!sec || !el) return;
+      if (!rows.length) { sec.style.display = 'none'; return; }
+      sec.style.display = '';
+      document.getElementById('pendingCount').textContent = rows.length + '건';
+      el.innerHTML = rows.map(function(r) {
+        return '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:11px 0;border-bottom:1px solid var(--sn-line2);font-size:12.5px;">'
+          + '<span style="font-weight:800;min-width:70px;">' + esc(r.name) + '</span>'
+          + '<span class="sd-mut sd-num">' + esc(r.phone) + '</span>'
+          + '<span class="sd-mut">' + esc(r.courses || '-') + '</span>'
+          + '<span class="sd-mut sd-num">' + fmtTime(r.requested_at) + '</span>'
+          + '<span style="margin-left:auto;display:flex;gap:6px;">'
+          +   '<button type="button" class="sd-mini green" data-pact="approve" data-sid="' + esc(r.student_id) + '" data-name="' + esc(r.name) + '">승인</button>'
+          +   '<button type="button" class="sd-mini red" data-pact="reject" data-sid="' + esc(r.student_id) + '" data-name="' + esc(r.name) + '">거부</button>'
+          + '</span></div>';
+      }).join('');
+    } catch (e) { /* 무시 */ }
+  }
+
+  document.getElementById('pendingList').addEventListener('click', async function(ev) {
+    var b = ev.target.closest('[data-pact]');
+    if (!b) return;
+    var act = b.getAttribute('data-pact');
+    var sid = b.getAttribute('data-sid');
+    var name = b.getAttribute('data-name');
+    if (act === 'approve') {
+      if (!confirm(name + '님의 재등록을 승인할까요?\\n기존 기기 인증이 해제되고 새 기기로 변경됩니다.')) return;
+    } else {
+      if (!confirm(name + '님의 재등록 요청을 거부할까요?\\n기존 등록이 유지됩니다.')) return;
+    }
+    try {
+      var res = await fetch('/api/admin/pending-creds/' + sid + '/' + act, { method: 'POST' });
+      var d = await res.json();
+      if (d.success) showToast(name + '님 재등록을 ' + (act === 'approve' ? '승인' : '거부') + '했습니다');
+      else showToast('처리 실패: ' + (d.error || ''), true);
+    } catch (e) { showToast('처리 실패: ' + e.message, true); }
+    loadPending(); loadRegLog();
+    if (courseId) loadStudents();
+  });
+
+  loadRegLog();
+  loadPending();
+  setInterval(function() { loadRegLog(); loadPending(); }, 5000);
+  `;
+
+  return layout.renderShell({
+    active: 'students',
+    title: '수강생 관리',
+    body: body,
+    pageCss: pageCss,
+    pageJs: pageJs
+  });
 }
 
 // ═════════════════════════════════════════════════════════════
