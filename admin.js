@@ -1016,6 +1016,7 @@ function renderAttendancePage(courses) {
   .at-chip:hover { border-color:var(--sn-navy600); }
   .at-chip.on { background:var(--sn-navy); border-color:var(--sn-navy); color:#fff; }
   .at-chip .n { font-size:13px; font-weight:800; font-variant-numeric:tabular-nums; }
+  .at-today { color:#fdba30; }
   .at-chip .d { font-size:11px; font-weight:500; opacity:0.75; font-variant-numeric:tabular-nums; }
 
   .at-kpi { background:#fff; border-radius:16px; padding:16px; }
@@ -1200,7 +1201,7 @@ function renderAttendancePage(courses) {
     var chips = sessions.map(function(s) {
       var isToday = dateOnly(s.session_date) === today;
       return '<button type="button" class="at-chip" data-sess="' + esc(s.session_id) + '">'
-        + '<span class="n">' + esc(s.session_number) + '회' + (s.is_workshop ? ' ⛺' : '') + (isToday ? ' ●' : '') + '</span>'
+        + '<span class="n">' + esc(s.session_number) + '회' + (s.is_workshop ? ' ⛺' : '') + (isToday ? ' <span class="at-today">●</span>' : '') + '</span>'
         + '<span class="d">' + md(s.session_date) + '</span></button>';
     }).join('');
 
