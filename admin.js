@@ -2334,254 +2334,395 @@ async function deleteClassroom(id, name) {
 
 
 function renderSyncPage(courses) {
-  const rows = courses.map(c => `
-    <tr id="row-${c.course_id}">
-      <td><b>${c.course_name}</b><br><span style="font-size:11px;color:#86868b;">${c.course_type || ''} ${c.cohort || ''}</span></td>
-      <td><input type="text" class="sheet-input" id="sheet-${c.course_id}" value="${c.spreadsheet_id || ''}" placeholder="스프레드시트 ID 입력"></td>
-      <td>
-        <button class="btn btn-small" onclick="saveSheetId('${c.course_id}')">저장</button>
-        <button class="btn btn-small btn-sync" onclick="syncCourse('${c.course_id}')" ${c.spreadsheet_id ? '' : 'disabled'}>전체 동기화</button>
-        <button class="btn btn-small" onclick="showSessionPicker('${c.course_id}')" ${c.spreadsheet_id ? '' : 'disabled'} style="margin-left:2px;">회차 선택</button>
-      </td>
-      <td class="status-cell" id="status-${c.course_id}"></td>
-    </tr>
-  `).join('');
+  const esc = layout.esc;
 
-  return `<!DOCTYPE html>
-<html lang="ko">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>구글시트 동기화 - 관리자</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, 'Malgun Gothic', sans-serif; background: #f5f5f7; color: #1d1d1f; padding: 16px; }
-    .container { max-width: 1000px; margin: 0 auto; }
-    h1 { font-size: 22px; margin-bottom: 4px; }
-    .subtitle { color: #86868b; font-size: 13px; margin-bottom: 20px; }
-    .card { background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-    .card h2 { font-size: 16px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #e5e5e7; }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th { text-align: left; padding: 8px 10px; background: #f5f5f7; color: #86868b; font-weight: 500; font-size: 12px; }
-    td { padding: 10px 10px; border-top: 1px solid #f0f0f0; vertical-align: middle; }
-    .sheet-input { width: 100%; padding: 8px 10px; border: 1.5px solid #d2d2d7; border-radius: 8px; font-size: 13px; font-family: monospace; }
-    .sheet-input:focus { border-color: #1a73e8; outline: none; }
-    .btn { padding: 6px 12px; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; background: #1a73e8; color: #fff; }
-    .btn:hover { background: #1557b0; }
-    .btn:disabled { background: #d2d2d7; cursor: not-allowed; }
-    .btn-small { padding: 5px 10px; font-size: 11px; }
-    .btn-sync { background: #34c759; margin-left: 4px; }
-    .btn-sync:hover { background: #2da44e; }
-    .btn-all { background: #34c759; padding: 10px 20px; font-size: 14px; }
-    .btn-all:hover { background: #2da44e; }
-    .status-cell { font-size: 12px; min-width: 100px; }
-    .back-link { font-size: 13px; color: #1a73e8; text-decoration: none; }
-    .info-box { background: #e8f0fe; border-radius: 8px; padding: 14px 18px; margin-bottom: 16px; font-size: 13px; color: #1a73e8; line-height: 1.8; }
-    .step-box { background: #f5f5f7; border-radius: 8px; padding: 12px 16px; margin: 8px 0; font-size: 13px; line-height: 1.8; }
-    code { background: #e8e8e8; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
-  </style>
-</head>
-<body>
-  <div class="container"><div style="padding:14px 0 10px 0;"><img src="/logo.png" alt="연세대학교 상남경영원" style="height:52px;display:block;"></div>
+  // 과정 드롭다운 + 클라이언트에서 쓸 과정 데이터
+  const options = courses.map(function(c) {
+    const label = c.course_name
+      + (c.cohort ? ' ' + c.cohort + '기' : '')
+      + (c.course_type ? ' [' + c.course_type + ']' : '');
+    return '<option value="' + esc(c.course_id) + '">' + esc(label) + '</option>';
+  }).join('');
 
-  <a href="/admin" class="back-link">← 대시보드로 돌아가기</a>
-  <h1 style="margin-top:12px;">📤 구글시트 동기화</h1>
-  <p class="subtitle">과정별 출결 데이터를 구글시트로 내보내기</p>
+  const courseData = JSON.stringify(courses.map(function(c) {
+    return {
+      id: String(c.course_id),
+      name: c.course_name || '',
+      cohort: c.cohort || '',
+      type: c.course_type || '',
+      sheet: c.spreadsheet_id || ''
+    };
+  })).replace(/</g, '\\u003c');
 
-  <div class="card">
-    <h2>📋 사용법</h2>
-    <div class="step-box">
-      <b>1단계:</b> 과정별로 빈 구글 스프레드시트를 1개씩 만듭니다.<br>
-      <b>2단계:</b> 스프레드시트 주소에서 ID를 복사합니다.<br>
-      　　예: <code>https://docs.google.com/spreadsheets/d/<b style="color:#1a73e8;">여기가_ID</b>/edit</code><br>
-      <b>3단계:</b> 스프레드시트를 서비스 계정 이메일과 공유합니다. (편집 권한)<br>
-      <b>4단계:</b> 아래 표에서 ID를 붙여넣고 "저장" → "동기화" 클릭
-    </div>
-  </div>
+  const pageCss = `
+  .sy-h1 { margin:0; font-size:32px; font-weight:800; letter-spacing:-0.025em; line-height:1.1; }
+  .sy-lead { font-size:13px; font-weight:500; color:var(--sn-gray); margin-top:6px; }
+  .sy-note { font-size:11.5px; color:var(--sn-gray); margin-top:10px; line-height:1.7; }
+  .sy-note code { background:var(--sn-bg); padding:2px 6px; border-radius:6px; font-size:11px; }
 
-  <div class="card">
-    <h2>과정별 스프레드시트 설정</h2>
-    <div style="overflow-x:auto;">
-      <table>
-        <tr><th>과정</th><th>스프레드시트 ID</th><th>작업</th><th>상태</th></tr>
-        ${rows}
-      </table>
-    </div>
-    <div style="margin-top:16px; text-align:right;">
-      <button class="btn btn-all" onclick="syncAll()">🔄 전체 동기화</button>
-    </div>
-  </div>
+  .sy-field { display:flex; flex-direction:column; gap:6px; margin:0; }
+  .sy-field label { font-size:11.5px; font-weight:600; color:var(--sn-gray); }
+  .sy-input, .sy-select {
+    height:44px; width:100%; padding:0 14px;
+    border:1.5px solid var(--sn-line); border-radius:12px; background:#fff;
+    font-size:13px; font-weight:600; color:var(--sn-ink); outline:none;
+    transition:border-color .15s ease;
+  }
+  .sy-input:focus, .sy-select:focus { border-color:var(--sn-navy); }
+  .sy-input { font-size:12.5px; font-variant-numeric:tabular-nums; }
 
-  <!-- 회차 선택 모달 -->
-  <div id="sessionPickerCard" class="card" style="display:none;">
-    <h2 id="pickerTitle">회차 선택</h2>
-    <div id="pickerContent"></div>
-  </div>
-</div>
+  .sy-chip {
+    appearance:none; cursor:pointer; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:1px;
+    min-width:74px; padding:8px 12px; border-radius:14px;
+    border:1.5px solid var(--sn-line); background:#fff; color:var(--sn-ink);
+    transition:background .12s ease, border-color .12s ease, color .12s ease;
+  }
+  .sy-chip:hover { border-color:var(--sn-navy600); }
+  .sy-chip.on { background:var(--sn-navy); border-color:var(--sn-navy); color:#fff; }
+  .sy-chip .n { font-size:13px; font-weight:800; font-variant-numeric:tabular-nums; }
+  .sy-chip .d { font-size:11px; font-weight:500; opacity:0.75; font-variant-numeric:tabular-nums; }
 
-<script>
-  async function saveSheetId(courseId) {
-    const input = document.getElementById('sheet-' + courseId);
-    const statusEl = document.getElementById('status-' + courseId);
-    const val = input.value.trim();
+  .sy-btn-ghost {
+    height:38px; padding:0 14px; border:none; border-radius:999px;
+    background:#e8e8e8; color:#565656; font-size:12px; font-weight:700; cursor:pointer;
+  }
+  .sy-btn-ghost:hover { background:#dedede; }
 
-    const res = await fetch('/api/admin/course-sheet/' + courseId, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ spreadsheetId: val })
+  .sy-log-row {
+    display:flex; gap:14px; padding:12px 0;
+    border-bottom:1px solid var(--sn-line2); font-size:12.5px; align-items:flex-start;
+  }
+  .sy-log-row:last-child { border-bottom:none; }
+  .sy-log-at { color:var(--sn-gray); font-variant-numeric:tabular-nums; min-width:62px; font-weight:600; }
+  .sy-log-txt { font-weight:600; flex:1; }
+  .sy-log-txt.ok { color:var(--sn-ink); }
+  .sy-log-txt.bad { color:var(--sn-red); }
+  .sy-log-txt.wait { color:var(--sn-navy600); }
+
+  .sy-state { display:flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700; }
+  .sy-state .dot { width:7px; height:7px; border-radius:50%; background:var(--sn-line); }
+  .sy-state.set .dot { background:var(--sn-navy); }
+  .sy-mini {
+    display:flex; align-items:center; gap:8px; padding:9px 12px;
+    background:var(--sn-bg); border-radius:12px; cursor:pointer; border:none;
+    width:100%; text-align:left; transition:background .12s ease;
+  }
+  .sy-mini:hover { background:#eaebec; }
+  `;
+
+  const body =
+      '<section class="sn-section">'
+    +   '<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">'
+    +     '<div>'
+    +       '<h1 class="sy-h1">출석부 동기화</h1>'
+    +       '<div class="sy-lead">과정별 출결 데이터를 구글시트로 내보내기</div>'
+    +     '</div>'
+    +     '<button type="button" class="sn-btn sn-btn-primary" style="height:44px;" id="btnSyncAll">모든 과정 전체 회차</button>'
+    +   '</div>'
+
+    +   '<div class="sn-card" style="padding:16px 18px;margin-top:18px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">'
+    +     '<div class="sy-field" style="min-width:250px;flex:1;">'
+    +       '<label for="courseSel">교육과정</label>'
+    +       '<select class="sy-select" id="courseSel"><option value="">-- 과정 선택 --</option>' + options + '</select>'
+    +     '</div>'
+    +     '<div class="sy-field" style="min-width:300px;flex:2;">'
+    +       '<label for="sheetId">출석부 구글시트 ID</label>'
+    +       '<input class="sy-input" type="text" id="sheetId" placeholder="스프레드시트 ID 입력" autocomplete="off">'
+    +     '</div>'
+    +     '<button type="button" class="sn-btn sn-btn-secondary" style="height:44px;" id="btnSaveSheet">시트 ID 저장</button>'
+    +   '</div>'
+    +   '<div class="sy-note">'
+    +     '시트 주소의 <strong>/d/</strong> 와 <strong>/edit</strong> 사이 값이 시트 ID입니다. '
+    +     '<code>https://docs.google.com/spreadsheets/d/<strong>여기가_ID</strong>/edit</code><br>'
+    +     '최초 1회, 서비스 계정 이메일을 해당 시트의 <strong>편집자</strong>로 공유해야 동기화됩니다.'
+    +   '</div>'
+    + '</section>'
+
+    + '<section class="sn-section" style="padding-top:18px;">'
+    +   '<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px;flex-wrap:wrap;">'
+    +     '<h2 class="sn-h2" style="font-size:16px;">동기화할 회차 선택</h2>'
+    +     '<span class="sn-sub" id="pickCount">0개 선택</span>'
+    +     '<div style="display:flex;gap:8px;margin-left:auto;flex-wrap:wrap;">'
+    +       '<button type="button" class="sy-btn-ghost" id="btnSelAll">전체 선택</button>'
+    +       '<button type="button" class="sy-btn-ghost" id="btnSelNone">선택 해제</button>'
+    +       '<button type="button" class="sn-btn sn-btn-secondary" style="height:38px;font-size:12px;" id="btnSyncSel">선택 회차 동기화</button>'
+    +       '<button type="button" class="sn-btn sn-btn-primary" style="height:38px;font-size:12px;" id="btnSyncCourse">이 과정 전체</button>'
+    +     '</div>'
+    +   '</div>'
+    +   '<div class="sn-card" style="padding:16px 18px;">'
+    +     '<div id="chips" style="display:flex;flex-wrap:wrap;gap:8px;">'
+    +       '<div style="color:var(--sn-gray);font-size:13px;font-weight:600;padding:6px 2px;">위에서 과정을 먼저 선택하세요.</div>'
+    +     '</div>'
+    +     '<label style="display:inline-flex;align-items:center;gap:7px;margin-top:14px;font-size:12.5px;font-weight:600;color:var(--sn-gray);cursor:pointer;">'
+    +       '<input type="checkbox" id="incSummary" checked style="width:16px;height:16px;accent-color:#003876;">출결요약 시트 포함'
+    +     '</label>'
+    +   '</div>'
+    + '</section>'
+
+    + '<section class="sn-section" style="padding-top:18px;">'
+    +   '<div class="sn-grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr));">'
+    +     '<div class="sn-card">'
+    +       '<div style="display:flex;align-items:center;gap:8px;">'
+    +         '<div style="font-size:16px;font-weight:800;letter-spacing:-0.015em;">동기화 로그</div>'
+    +         '<button type="button" class="sy-btn-ghost" style="height:32px;margin-left:auto;" id="btnClearLog">지우기</button>'
+    +       '</div>'
+    +       '<div id="log" style="margin-top:12px;display:flex;flex-direction:column;">'
+    +         '<div style="color:var(--sn-gray);font-size:12.5px;font-weight:600;padding:8px 0;">아직 기록이 없습니다.</div>'
+    +       '</div>'
+    +     '</div>'
+    +     '<div class="sn-card">'
+    +       '<div style="font-size:16px;font-weight:800;letter-spacing:-0.015em;">과정별 시트 등록 현황</div>'
+    +       '<div class="sy-note" style="margin-top:6px;">항목을 누르면 위에서 해당 과정이 선택됩니다.</div>'
+    +       '<div id="sheetList" style="display:flex;flex-direction:column;gap:6px;margin-top:12px;"></div>'
+    +     '</div>'
+    +   '</div>'
+    + '</section>'
+
+    + '<div id="snToast" style="position:fixed;left:50%;bottom:28px;transform:translateX(-50%);'
+    +   'background:var(--sn-navy);color:#fff;font-size:13px;font-weight:700;padding:12px 20px;'
+    +   'border-radius:999px;box-shadow:0 8px 24px rgba(0,56,118,0.25);opacity:0;pointer-events:none;'
+    +   'transition:opacity .2s ease;z-index:50;max-width:88vw;text-align:center;"></div>';
+
+  const pageJs = `
+  var COURSES = ${courseData};
+  var picked = {};        // session_number -> true
+  var sessions = [];      // 현재 과정의 회차 목록
+
+  var selEl = document.getElementById('courseSel');
+  var sheetEl = document.getElementById('sheetId');
+  var chipsEl = document.getElementById('chips');
+  var logEl = document.getElementById('log');
+
+  /* ── 토스트 ── */
+  var toastTimer = null;
+  function showToast(msg, bad) {
+    var t = document.getElementById('snToast');
+    if (!t) return;
+    t.textContent = msg;
+    t.style.background = bad ? '#D32F2F' : 'var(--sn-navy)';
+    t.style.opacity = '1';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function() { t.style.opacity = '0'; }, 2600);
+  }
+
+  /* ── 로그 ── */
+  var logCount = 0;
+  function addLog(text, kind) {
+    if (logCount === 0) logEl.innerHTML = '';
+    logCount++;
+    var now = new Date();
+    var at = String(now.getHours()).padStart(2, '0') + ':'
+           + String(now.getMinutes()).padStart(2, '0') + ':'
+           + String(now.getSeconds()).padStart(2, '0');
+    var row = document.createElement('div');
+    row.className = 'sy-log-row';
+    var a = document.createElement('span'); a.className = 'sy-log-at'; a.textContent = at;
+    var b = document.createElement('span'); b.className = 'sy-log-txt ' + (kind || 'ok'); b.textContent = text;
+    row.appendChild(a); row.appendChild(b);
+    logEl.insertBefore(row, logEl.firstChild);
+    while (logEl.children.length > 40) logEl.removeChild(logEl.lastChild);
+  }
+  document.getElementById('btnClearLog').addEventListener('click', function() {
+    logCount = 0;
+    logEl.innerHTML = '<div style="color:var(--sn-gray);font-size:12.5px;font-weight:600;padding:8px 0;">아직 기록이 없습니다.</div>';
+  });
+
+  /* ── 과정별 시트 등록 현황 ── */
+  function renderSheetList() {
+    var wrap = document.getElementById('sheetList');
+    wrap.innerHTML = '';
+    COURSES.forEach(function(c) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'sy-mini';
+      var label = c.name + (c.cohort ? ' ' + c.cohort + '기' : '');
+      b.innerHTML = '<span style="font-size:12.5px;font-weight:700;">' + label.replace(/</g, '&lt;') + '</span>'
+        + '<span class="sy-state' + (c.sheet ? ' set' : '') + '" style="margin-left:auto;color:'
+        + (c.sheet ? 'var(--sn-navy)' : 'var(--sn-gray)') + ';"><span class="dot"></span>'
+        + (c.sheet ? '등록됨' : '미등록') + '</span>';
+      b.addEventListener('click', function() { selEl.value = c.id; onCourseChange(); });
+      wrap.appendChild(b);
     });
-
-    if (res.ok) {
-      statusEl.innerHTML = '<span style="color:#34c759;">✅ 저장됨</span>';
-      // 동기화 버튼 활성화
-      const syncBtn = document.querySelector('#row-' + courseId + ' .btn-sync');
-      if (syncBtn) syncBtn.disabled = !val;
-    } else {
-      statusEl.innerHTML = '<span style="color:#ff3b30;">❌ 저장 실패</span>';
-    }
   }
 
-  async function syncCourse(courseId) {
-    const statusEl = document.getElementById('status-' + courseId);
-    statusEl.innerHTML = '<span style="color:#1a73e8;">⏳ 동기화 중...</span>';
-
-    try {
-      const res = await fetch('/api/admin/sync/' + courseId, { method: 'POST' });
-      const data = await res.json();
-
-      if (data.success) {
-        statusEl.innerHTML = '<span style="color:#34c759;">✅ 완료 (' + data.studentsCount + '명, ' + data.sheetsUpdated + '탭)' + (data.formatResult && data.formatResult !== 'success' ? ' ⚠️색상: ' + data.formatResult : '') + '</span>';
-      } else {
-        statusEl.innerHTML = '<span style="color:#ff3b30;">❌ ' + (data.error || '실패') + '</span>';
-      }
-    } catch (err) {
-      statusEl.innerHTML = '<span style="color:#ff3b30;">❌ ' + err.message + '</span>';
-    }
+  function currentCourse() {
+    var id = selEl.value;
+    for (var i = 0; i < COURSES.length; i++) if (COURSES[i].id === id) return COURSES[i];
+    return null;
+  }
+  function courseLabel(c) {
+    return c ? (c.name + (c.cohort ? ' ' + c.cohort + '기' : '')) : '';
   }
 
-  async function syncAll() {
-    if (!confirm('전체 과정을 구글시트로 동기화하시겠습니까?')) return;
-
-    document.querySelectorAll('.status-cell').forEach(el => {
-      if (el.closest('tr').querySelector('.sheet-input').value.trim()) {
-        el.innerHTML = '<span style="color:#1a73e8;">⏳ 대기 중...</span>';
-      }
-    });
-
-    try {
-      const res = await fetch('/api/admin/sync-all', { method: 'POST' });
-      const results = await res.json();
-
-      for (const r of results) {
-        // 과정명으로 매칭 (간접)
-        const rows = document.querySelectorAll('tr[id^="row-"]');
-        for (const row of rows) {
-          if (row.querySelector('b').textContent === r.courseName) {
-            const statusEl = row.querySelector('.status-cell');
-            if (r.status === 'success') {
-              statusEl.innerHTML = '<span style="color:#34c759;">✅ 완료</span>';
-            } else {
-              statusEl.innerHTML = '<span style="color:#ff3b30;">❌ ' + r.error + '</span>';
-            }
-          }
-        }
-      }
-    } catch (err) {
-      alert('동기화 오류: ' + err.message);
-    }
+  /* ── 회차 칩 ── */
+  function updateCount() {
+    var n = Object.keys(picked).length;
+    document.getElementById('pickCount').textContent = n + '개 선택';
   }
-
-  // ─── 회차 선택 동기화 ──────────────────────────────────
-  async function showSessionPicker(courseId) {
-    const card = document.getElementById('sessionPickerCard');
-    const content = document.getElementById('pickerContent');
-    card.style.display = 'block';
-    content.innerHTML = '<div style="color:#86868b;text-align:center;padding:12px;">불러오는 중...</div>';
-    card.scrollIntoView({ behavior: 'smooth' });
-
-    try {
-      const res = await fetch('/api/admin/sessions/' + courseId);
-      const sessions = await res.json();
-
-      if (sessions.length === 0) {
-        content.innerHTML = '<div style="color:#86868b;">등록된 회차가 없습니다.</div>';
-        return;
-      }
-
-      let html = '<div style="margin-bottom:10px;">';
-      html += '<button class="btn btn-small" onclick="pickerSelectAll(true)" style="margin-right:4px;">전체 선택</button>';
-      html += '<button class="btn btn-small" style="background:#86868b;" onclick="pickerSelectAll(false)">선택 해제</button>';
-      html += '</div>';
-      html += '<div style="max-height:300px;overflow-y:auto;border:1px solid #e5e5e7;border-radius:8px;padding:8px;">';
-
-      for (const s of sessions) {
-        const date = s.session_date ? s.session_date.split('T')[0] : '-';
-        html += '<label style="display:flex;align-items:center;padding:6px 4px;cursor:pointer;border-bottom:1px solid #f5f5f7;">';
-        html += '<input type="checkbox" class="session-pick" value="' + s.session_number + '" style="margin-right:8px;">';
-        html += '<span style="font-weight:600;width:45px;">' + s.session_number + '회</span>';
-        html += '<span style="color:#86868b;font-size:12px;">' + date + '</span>';
-        html += '<span style="color:#1a73e8;font-size:12px;margin-left:auto;">' + s.attendance_count + '명</span>';
-        html += '</label>';
-      }
-
-      html += '</div>';
-      html += '<div style="margin-top:12px;display:flex;gap:8px;align-items:center;">';
-      html += '<label style="font-size:13px;cursor:pointer;"><input type="checkbox" id="pickSummary" checked style="margin-right:4px;">출결요약 포함</label>';
-      html += '<button class="btn btn-sync" onclick="syncSelected(\\''+courseId+'\\')" style="margin-left:auto;">선택 회차 동기화</button>';
-      html += '<button class="btn btn-small" style="background:#86868b;" onclick="document.getElementById(\\'sessionPickerCard\\').style.display=\\'none\\'">닫기</button>';
-      html += '</div>';
-      html += '<div id="pickerStatus" style="margin-top:8px;font-size:12px;"></div>';
-
-      document.getElementById('pickerTitle').textContent = '회차 선택 동기화';
-      content.innerHTML = html;
-    } catch (err) {
-      content.innerHTML = '<div style="color:#ff3b30;">로드 실패: ' + err.message + '</div>';
-    }
-  }
-
-  function pickerSelectAll(checked) {
-    document.querySelectorAll('.session-pick').forEach(function(cb) { cb.checked = checked; });
-  }
-
-  async function syncSelected(courseId) {
-    var selected = [];
-    document.querySelectorAll('.session-pick:checked').forEach(function(cb) { selected.push(parseInt(cb.value)); });
-    var includeSummary = document.getElementById('pickSummary').checked;
-
-    if (selected.length === 0 && !includeSummary) {
-      alert('동기화할 회차를 선택하거나 출결요약을 포함하세요.');
+  function renderChips() {
+    chipsEl.innerHTML = '';
+    if (!sessions.length) {
+      chipsEl.innerHTML = '<div style="color:var(--sn-gray);font-size:13px;font-weight:600;padding:6px 2px;">등록된 회차가 없습니다.</div>';
+      updateCount();
       return;
     }
-
-    var statusEl = document.getElementById('pickerStatus');
-    var mainStatus = document.getElementById('status-' + courseId);
-    var totalSheets = selected.length + (includeSummary ? 1 : 0);
-    statusEl.innerHTML = '<span style="color:#1a73e8;">⏳ 동기화 중... (' + totalSheets + '개 시트)</span>';
-    if (mainStatus) mainStatus.innerHTML = '<span style="color:#1a73e8;">⏳ 동기화 중...</span>';
-
-    try {
-      var res = await fetch('/api/admin/sync/' + courseId, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionNumbers: selected, includeSummary: includeSummary })
+    sessions.forEach(function(s) {
+      var n = s.session_number;
+      var d = s.session_date ? String(s.session_date).split('T')[0].slice(5).replace('-', '/') : '';
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'sy-chip' + (picked[n] ? ' on' : '');
+      b.innerHTML = '<span class="n">' + n + '회</span><span class="d">' + d + '</span>';
+      b.addEventListener('click', function() {
+        if (picked[n]) delete picked[n]; else picked[n] = true;
+        b.classList.toggle('on');
+        updateCount();
       });
-      var data = await res.json();
+      chipsEl.appendChild(b);
+    });
+    updateCount();
+  }
 
-      if (data.success) {
-        var msg = '✅ 완료 (' + data.sheetsUpdated + '탭)' + (data.formatResult && data.formatResult !== 'success' ? ' ⚠️색상: ' + data.formatResult : '');
-        statusEl.innerHTML = '<span style="color:#34c759;">' + msg + '</span>';
-        if (mainStatus) mainStatus.innerHTML = '<span style="color:#34c759;">' + msg + '</span>';
-      } else {
-        statusEl.innerHTML = '<span style="color:#ff3b30;">❌ ' + (data.error || '실패') + '</span>';
-        if (mainStatus) mainStatus.innerHTML = '<span style="color:#ff3b30;">❌ ' + (data.error || '실패') + '</span>';
-      }
-    } catch (err) {
-      statusEl.innerHTML = '<span style="color:#ff3b30;">❌ ' + err.message + '</span>';
+  async function loadSessions() {
+    var c = currentCourse();
+    picked = {};
+    if (!c) {
+      sessions = [];
+      chipsEl.innerHTML = '<div style="color:var(--sn-gray);font-size:13px;font-weight:600;padding:6px 2px;">위에서 과정을 먼저 선택하세요.</div>';
+      updateCount();
+      return;
+    }
+    chipsEl.innerHTML = '<div style="color:var(--sn-gray);font-size:13px;font-weight:600;padding:6px 2px;">불러오는 중…</div>';
+    try {
+      var res = await fetch('/api/admin/sessions/' + c.id);
+      sessions = await res.json();
+      renderChips();
+    } catch (e) {
+      sessions = [];
+      chipsEl.innerHTML = '<div style="color:var(--sn-red);font-size:13px;font-weight:600;padding:6px 2px;">회차를 불러오지 못했습니다.</div>';
+      updateCount();
     }
   }
-</script>
-</body>
-</html>`;
+
+  function onCourseChange() {
+    var c = currentCourse();
+    sheetEl.value = c ? c.sheet : '';
+    loadSessions();
+  }
+  selEl.addEventListener('change', onCourseChange);
+
+  document.getElementById('btnSelAll').addEventListener('click', function() {
+    sessions.forEach(function(s) { picked[s.session_number] = true; });
+    renderChips();
+  });
+  document.getElementById('btnSelNone').addEventListener('click', function() {
+    picked = {};
+    renderChips();
+  });
+
+  /* ── 시트 ID 저장 ── */
+  document.getElementById('btnSaveSheet').addEventListener('click', async function() {
+    var c = currentCourse();
+    if (!c) { showToast('과정을 먼저 선택하세요', true); return; }
+    var val = sheetEl.value.trim();
+    try {
+      var res = await fetch('/api/admin/course-sheet/' + c.id, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ spreadsheetId: val })
+      });
+      if (res.ok) {
+        c.sheet = val;
+        renderSheetList();
+        showToast(val ? '시트 ID 저장 완료' : '시트 ID를 비웠습니다');
+        addLog(courseLabel(c) + ' — 시트 ID ' + (val ? '저장' : '삭제'), 'ok');
+      } else {
+        showToast('시트 ID 저장 실패', true);
+        addLog(courseLabel(c) + ' — 시트 ID 저장 실패', 'bad');
+      }
+    } catch (e) {
+      showToast('저장 실패: ' + e.message, true);
+      addLog(courseLabel(c) + ' — 저장 오류: ' + e.message, 'bad');
+    }
+  });
+
+  /* ── 동기화 ── */
+  async function runSync(courseId, payload, label) {
+    addLog(label + ' — 동기화 중…', 'wait');
+    var opt = { method: 'POST' };
+    if (payload) {
+      opt.headers = { 'Content-Type': 'application/json' };
+      opt.body = JSON.stringify(payload);
+    }
+    try {
+      var res = await fetch('/api/admin/sync/' + courseId, opt);
+      var data = await res.json();
+      if (data.success) {
+        var msg = label + ' — 완료 (' + (data.sheetsUpdated || 0) + '개 시트'
+                + (data.studentsCount ? ', ' + data.studentsCount + '명' : '') + ')';
+        if (data.formatResult && data.formatResult !== 'success') msg += ' · 색상 적용 경고: ' + data.formatResult;
+        addLog(msg, 'ok');
+        showToast('동기화 완료');
+      } else {
+        addLog(label + ' — 실패: ' + (data.error || '알 수 없는 오류'), 'bad');
+        showToast('동기화 실패', true);
+      }
+    } catch (e) {
+      addLog(label + ' — 오류: ' + e.message, 'bad');
+      showToast('동기화 오류', true);
+    }
+  }
+
+  document.getElementById('btnSyncCourse').addEventListener('click', function() {
+    var c = currentCourse();
+    if (!c) { showToast('과정을 먼저 선택하세요', true); return; }
+    if (!c.sheet) { showToast('이 과정의 시트 ID가 없습니다', true); return; }
+    runSync(c.id, null, courseLabel(c) + ' 전체');
+  });
+
+  document.getElementById('btnSyncSel').addEventListener('click', function() {
+    var c = currentCourse();
+    if (!c) { showToast('과정을 먼저 선택하세요', true); return; }
+    if (!c.sheet) { showToast('이 과정의 시트 ID가 없습니다', true); return; }
+    var nums = Object.keys(picked).map(Number).sort(function(a, b) { return a - b; });
+    var inc = document.getElementById('incSummary').checked;
+    if (!nums.length && !inc) { showToast('회차를 선택하거나 출결요약을 포함하세요', true); return; }
+    runSync(c.id, { sessionNumbers: nums, includeSummary: inc },
+      courseLabel(c) + ' ' + nums.length + '개 회차' + (inc ? ' + 요약' : ''));
+  });
+
+  document.getElementById('btnSyncAll').addEventListener('click', async function() {
+    var withSheet = COURSES.filter(function(c) { return c.sheet; });
+    if (!withSheet.length) { showToast('시트 ID가 등록된 과정이 없습니다', true); return; }
+    if (!confirm('시트 ID가 등록된 ' + withSheet.length + '개 과정을 전체 동기화합니다. 진행할까요?')) return;
+    addLog('전체 동기화 시작 (' + withSheet.length + '개 과정)', 'wait');
+    try {
+      var res = await fetch('/api/admin/sync-all', { method: 'POST' });
+      var results = await res.json();
+      var ok = 0, bad = 0;
+      (results || []).forEach(function(r) {
+        if (r.status === 'success') { ok++; addLog(r.courseName + ' — 완료', 'ok'); }
+        else { bad++; addLog(r.courseName + ' — 실패: ' + (r.error || ''), 'bad'); }
+      });
+      addLog('전체 동기화 종료 · 성공 ' + ok + ' / 실패 ' + bad, bad ? 'bad' : 'ok');
+      showToast('전체 동기화 완료 (성공 ' + ok + ', 실패 ' + bad + ')', bad > 0);
+    } catch (e) {
+      addLog('전체 동기화 오류: ' + e.message, 'bad');
+      showToast('전체 동기화 오류', true);
+    }
+  });
+
+  renderSheetList();
+  `;
+
+  return layout.renderShell({
+    active: 'sync',
+    title: '출석부 동기화',
+    body: body,
+    pageCss: pageCss,
+    pageJs: pageJs
+  });
 }
 
 // ═════════════════════════════════════════════════════════════
