@@ -971,349 +971,487 @@ function renderSettingsPage() {
 // 관리자 출결 현황 페이지 HTML
 // ═════════════════════════════════════════════════════════════
 function renderAttendancePage(courses) {
-  const courseOptions = courses.map(c =>
-    `<option value="${c.course_id}">${c.course_name} ${c.cohort || ''} [${c.course_type || ''}]</option>`
-  ).join('');
+  const esc = layout.esc;
 
-  return `<!DOCTYPE html>
-<html lang="ko">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>출결 현황 - 관리자</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, 'Malgun Gothic', sans-serif; background: #f5f5f7; color: #1d1d1f; padding: 16px; }
-    .container { max-width: 1100px; margin: 0 auto; }
-    h1 { font-size: 22px; margin-bottom: 4px; }
-    .subtitle { color: #86868b; font-size: 13px; margin-bottom: 20px; }
-    .top-bar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
-    select { padding: 10px 14px; border: 1.5px solid #d2d2d7; border-radius: 10px; font-size: 14px; background: #fff; min-width: 200px; }
-    .tab-bar { display: flex; gap: 4px; margin-bottom: 16px; }
-    .tab { padding: 8px 16px; border-radius: 8px; font-size: 13px; cursor: pointer; border: none; background: #e5e5e7; color: #1d1d1f; }
-    .tab.active { background: #1a73e8; color: #fff; }
-    .card { background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-    .stats { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
-    .stat { background: #f5f5f7; border-radius: 8px; padding: 12px 16px; text-align: center; min-width: 80px; }
-    .stat-num { font-size: 24px; font-weight: 700; }
-    .stat-num.blue { color: #1a73e8; }
-    .stat-num.green { color: #34c759; }
-    .stat-num.orange { color: #ff9500; }
-    .stat-num.red { color: #ff3b30; }
-    .stat-label { font-size: 11px; color: #86868b; margin-top: 2px; }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th { text-align: left; padding: 8px 10px; background: #f5f5f7; color: #86868b; font-weight: 500; font-size: 12px; position: sticky; top: 0; }
-    td { padding: 8px 10px; border-top: 1px solid #f0f0f0; }
-    tr:hover { background: #fafafa; }
-    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
-    .b-출석 { background: #e6f4ea; color: #137333; }
-    .b-지각 { background: #fef3e0; color: #e37400; }
-    .b-조퇴 { background: #fce8e6; color: #c5221f; }
-    .b-결석 { background: #f1f3f4; color: #5f6368; }
-    .b-미체크 { background: #fff3e0; color: #e65100; }
-    .time { font-variant-numeric: tabular-nums; font-size: 12px; color: #555; }
-    .btn { padding: 6px 12px; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; }
-    .btn-primary { background: #1a73e8; color: #fff; }
-    .btn-primary:hover { background: #1557b0; }
-    .btn-small { padding: 4px 8px; font-size: 11px; }
-    .btn-outline { background: #fff; color: #1a73e8; border: 1px solid #1a73e8; }
-    .status-select { padding: 4px 8px; border: 1px solid #d2d2d7; border-radius: 6px; font-size: 12px; }
-    .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
-    .empty { text-align: center; padding: 40px; color: #86868b; }
-    .back-link { font-size: 13px; color: #1a73e8; text-decoration: none; }
-    .session-btn { padding: 8px 12px; border: 1px solid #e5e5e7; border-radius: 8px; background: #fff; cursor: pointer; text-align: left; font-size: 13px; display: block; width: 100%; margin-bottom: 6px; }
-    .session-btn:hover { border-color: #1a73e8; background: #f8faff; }
-    .session-btn.active { border-color: #1a73e8; background: #e8f0fe; }
-    .session-info { display: flex; justify-content: space-between; align-items: center; }
-    .session-num { font-weight: 600; }
-    .session-date { color: #86868b; font-size: 12px; }
-    .session-count { font-size: 12px; color: #1a73e8; }
-    .manual-tag { font-size: 10px; color: #ff9500; margin-left: 4px; }
-    .rate-bar { width: 60px; height: 6px; background: #e5e5e7; border-radius: 3px; display: inline-block; vertical-align: middle; margin-right: 6px; }
-    .rate-fill { height: 100%; border-radius: 3px; background: #34c759; }
-    #loading { text-align: center; padding: 20px; color: #86868b; }
-    .editable-time { cursor: pointer; border-bottom: 1px dashed #007AFF; display: inline-block; }
-    .editable-time:hover { background: #e8f4fd; border-radius: 4px; }
-  </style>
-</head>
-<body>
-  <div class="container"><div style="padding:14px 0 10px 0;"><img src="/logo.png" alt="연세대학교 상남경영원" style="height:52px;display:block;"></div>
+  const courseOptions = courses.map(function(c) {
+    const label = c.course_name
+      + (c.cohort ? ' ' + c.cohort + '기' : '')
+      + (c.course_type ? ' [' + c.course_type + ']' : '');
+    return '<option value="' + esc(c.course_id) + '">' + esc(label) + '</option>';
+  }).join('');
 
-  <a href="/admin" class="back-link">← 대시보드로 돌아가기</a>
-  <h1 style="margin-top:12px;">📊 출결 현황</h1>
-  <p class="subtitle">과정 선택 → 회차 선택 → 출결 조회/수정</p>
+  const pageCss = `
+  .at-h1 { margin:0; font-size:32px; font-weight:800; letter-spacing:-0.025em; line-height:1.1; }
+  .at-lead { font-size:13px; font-weight:500; color:var(--sn-gray); margin-top:6px; }
 
-  <div class="top-bar">
-    <select id="courseSelect" onchange="loadSessions()">
-      <option value="">-- 과정 선택 --</option>
-      ${courseOptions}
-    </select>
-    <button class="tab" id="tabDetail" onclick="switchTab('detail')">회차별 상세</button>
-    <button class="tab" id="tabSummary" onclick="switchTab('summary')">전체 요약</button>
-  </div>
+  .at-modebar { display:flex; gap:6px; background:#fff; padding:5px; border-radius:999px; }
+  .at-mode {
+    appearance:none; border:none; cursor:pointer; height:38px; padding:0 18px;
+    border-radius:999px; background:transparent; color:var(--sn-gray);
+    font-size:13px; font-weight:700; transition:background .12s ease, color .12s ease;
+  }
+  .at-mode.on { background:var(--sn-navy); color:#fff; }
 
-  <div id="content">
-    <div class="empty">왼쪽에서 과정을 선택하세요.</div>
-  </div>
-</div>
+  .at-field { display:flex; flex-direction:column; gap:6px; margin:0; }
+  .at-field label { font-size:11.5px; font-weight:600; color:var(--sn-gray); }
+  .at-select {
+    height:44px; width:100%; padding:0 14px;
+    border:1.5px solid var(--sn-line); border-radius:12px; background:#fff;
+    font-size:13px; font-weight:600; color:var(--sn-ink); outline:none;
+  }
+  .at-select:focus { border-color:var(--sn-navy); }
+  .at-danger {
+    height:44px; padding:0 20px; border:none; border-radius:999px;
+    background:var(--sn-red-bg); color:#c22525; font-size:13px; font-weight:800; cursor:pointer;
+  }
+  .at-danger:hover { background:#f7cdcb; }
 
-<script>
-let currentTab = 'detail';
-let currentCourseId = null;
-let currentSessionId = null;
+  .at-chip {
+    appearance:none; cursor:pointer; flex:0 0 auto; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:1px;
+    min-width:76px; padding:8px 12px; border-radius:14px;
+    border:1.5px solid var(--sn-line); background:#fff; color:var(--sn-ink);
+    transition:background .12s ease, border-color .12s ease, color .12s ease;
+  }
+  .at-chip:hover { border-color:var(--sn-navy600); }
+  .at-chip.on { background:var(--sn-navy); border-color:var(--sn-navy); color:#fff; }
+  .at-chip .n { font-size:13px; font-weight:800; font-variant-numeric:tabular-nums; }
+  .at-chip .d { font-size:11px; font-weight:500; opacity:0.75; font-variant-numeric:tabular-nums; }
 
-function switchTab(tab) {
-  currentTab = tab;
-  document.getElementById('tabDetail').className = 'tab' + (tab === 'detail' ? ' active' : '');
-  document.getElementById('tabSummary').className = 'tab' + (tab === 'summary' ? ' active' : '');
-  if (!currentCourseId) return;
-  if (tab === 'summary') loadSummary();
-  else loadSessions();
-}
+  .at-kpi { background:#fff; border-radius:16px; padding:16px; }
+  .at-kpi .lb { font-size:11.5px; font-weight:600; color:var(--sn-gray); }
+  .at-kpi .vl { font-size:28px; font-weight:800; line-height:1; margin-top:8px; letter-spacing:-0.03em; font-variant-numeric:tabular-nums; }
 
-// ─── 회차 목록 로드 ──────────────────────────────────────
-async function loadSessions() {
-  currentCourseId = document.getElementById('courseSelect').value;
-  if (!currentCourseId) { document.getElementById('content').innerHTML = '<div class="empty">과정을 선택하세요.</div>'; return; }
-  currentTab = 'detail';
-  document.getElementById('tabDetail').className = 'tab active';
-  document.getElementById('tabSummary').className = 'tab';
+  .at-tablewrap { background:#fff; border-radius:20px; padding:8px 20px 14px; overflow-x:auto; }
+  table.at-table { width:100%; min-width:900px; border-collapse:collapse; }
+  .at-table th {
+    text-align:left; padding:12px 10px; font-size:11.5px; font-weight:700;
+    color:var(--sn-gray); letter-spacing:0.04em; border-bottom:1px solid var(--sn-line);
+    white-space:nowrap;
+  }
+  .at-table td { padding:11px 10px; border-bottom:1px solid var(--sn-line2); font-size:13px; }
+  .at-table tbody tr:hover { background:#f9fafb; }
+  .at-num { font-variant-numeric:tabular-nums; }
+  .at-mut { color:var(--sn-gray); font-size:12.5px; }
 
-  document.getElementById('content').innerHTML = '<div id="loading">불러오는 중...</div>';
-  const res = await fetch('/api/admin/sessions/' + currentCourseId);
-  const sessions = await res.json();
+  .at-tag { display:inline-block; padding:3px 10px; border-radius:999px; font-size:11.5px; font-weight:700; white-space:nowrap; }
+  .tg-출석 { background:#dce8f5; color:#003876; }
+  .tg-지각 { background:#fbe4d5; color:#9a5200; }
+  .tg-조퇴 { background:#eae1f8; color:#5b21b6; }
+  .tg-결석 { background:#fadedd; color:#c22525; }
+  .tg-미체크 { background:#eceded; color:#656668; }
+  .at-manual { font-size:10.5px; font-weight:700; color:#9a5200; margin-left:5px; }
 
-  if (sessions.length === 0) {
-    document.getElementById('content').innerHTML = '<div class="empty">등록된 회차가 없습니다.</div>';
-    return;
+  .at-time { cursor:pointer; border-bottom:1px dashed var(--sn-line); }
+  .at-time:hover { color:var(--sn-navy); border-bottom-color:var(--sn-navy); }
+
+  .at-rowsel {
+    height:38px; min-width:104px; padding:0 10px; border:1.5px solid var(--sn-line);
+    border-radius:12px; background:#fff; font-size:12.5px; font-weight:600; outline:none;
+  }
+  .at-reset {
+    height:38px; padding:0 13px; border:none; border-radius:999px;
+    background:#fbe4d5; color:#9a5200; font-size:11.5px; font-weight:700;
+    cursor:pointer; white-space:nowrap;
+  }
+  .at-reset:hover { background:#f7d5bf; }
+
+  .at-bar { flex:1; height:8px; background:var(--sn-line); border-radius:999px; min-width:80px; overflow:hidden; }
+  .at-bar span { display:block; height:100%; border-radius:999px; }
+
+  .at-empty { background:#fff; border-radius:20px; padding:44px 20px; text-align:center; color:var(--sn-gray); font-size:13.5px; font-weight:600; }
+
+  /* 좁은 화면: 표 대신 카드 */
+  .at-cards { display:none; flex-direction:column; gap:12px; }
+  @media (max-width:820px) {
+    .at-tablewrap { display:none; }
+    .at-cards { display:flex; }
+    .at-h1 { font-size:26px; }
+  }
+  .at-card { background:#fff; border-radius:20px; padding:16px; }
+  .at-card .grid3 { display:grid; grid-template-columns:repeat(3,1fr); margin-top:12px; background:var(--sn-bg); border-radius:14px; padding:12px 14px; }
+  .at-card .grid3 .lb { font-size:11px; font-weight:600; color:var(--sn-gray); }
+  .at-card .grid3 .vl { font-size:16px; font-weight:800; font-variant-numeric:tabular-nums; margin-top:3px; }
+  `;
+
+  const body =
+      '<section class="sn-section">'
+    +   '<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">'
+    +     '<div>'
+    +       '<h1 class="at-h1">출결 현황</h1>'
+    +       '<div class="at-lead" id="metaLine">과정 선택 &rarr; 회차 선택 &rarr; 출결 조회·수정</div>'
+    +     '</div>'
+    +     '<div class="at-modebar">'
+    +       '<button type="button" class="at-mode on" id="modeDetail">회차별 상세</button>'
+    +       '<button type="button" class="at-mode" id="modeSummary">전체 요약</button>'
+    +     '</div>'
+    +   '</div>'
+    +   '<div class="sn-card" style="padding:16px 18px;margin-top:18px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">'
+    +     '<div class="at-field" style="min-width:280px;flex:1;">'
+    +       '<label for="courseSelect">교육과정</label>'
+    +       '<select class="at-select" id="courseSelect"><option value="">-- 과정 선택 --</option>' + courseOptions + '</select>'
+    +     '</div>'
+    +     '<button type="button" class="sn-btn sn-btn-secondary" style="height:44px;" id="btnRefresh">새로고침</button>'
+    +     '<button type="button" class="at-danger" id="btnMarkAbsent">미입실자 결석 일괄</button>'
+    +   '</div>'
+    + '</section>'
+
+    + '<div id="content"><section class="sn-section"><div class="at-empty">먼저 교육과정을 선택하세요.</div></section></div>'
+
+    + '<div id="snToast" style="position:fixed;left:50%;bottom:28px;transform:translateX(-50%);'
+    +   'background:var(--sn-navy);color:#fff;font-size:13px;font-weight:700;padding:12px 20px;'
+    +   'border-radius:999px;box-shadow:0 8px 24px rgba(0,56,118,0.25);opacity:0;pointer-events:none;'
+    +   'transition:opacity .2s ease;z-index:50;max-width:88vw;text-align:center;"></div>';
+
+  const pageJs = `
+  var mode = 'detail';
+  var courseId = '';
+  var sessionId = '';
+  var sessions = [];
+  var roster = [];
+  var sessionDate = '';   // 시각 수정 시 사용할 회차 날짜 (YYYY-MM-DD)
+
+  var contentEl = document.getElementById('content');
+  var selEl = document.getElementById('courseSelect');
+
+  /* ── 토스트 ── */
+  var toastTimer = null;
+  function showToast(msg, bad) {
+    var t = document.getElementById('snToast');
+    if (!t) return;
+    t.textContent = msg;
+    t.style.background = bad ? '#D32F2F' : 'var(--sn-navy)';
+    t.style.opacity = '1';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function() { t.style.opacity = '0'; }, 2400);
   }
 
-  const today = new Date().toISOString().split('T')[0];
-  let html = '<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">';
-  html += '<div style="min-width:220px;max-width:280px;">';
-  html += '<div class="card"><b>회차 선택</b><br><br>';
-  for (const s of sessions) {
-    const isToday = s.session_date && s.session_date.split('T')[0] === today;
-    html += '<button class="session-btn" id="sess-' + s.session_id + '" onclick="loadAttendance(\\'' + s.session_id + '\\')">';
-    html += '<div class="session-info">';
-    html += '<span class="session-num">' + s.session_number + '회' + (s.is_workshop ? ' 🏕️' : '') + (isToday ? ' 📌' : '') + '</span>';
-    html += '<span class="session-date">' + (s.session_date ? s.session_date.split('T')[0] : '-') + '</span>';
-    html += '</div>';
-    html += '<div class="session-info" style="margin-top:4px;">';
-    html += '<span style="font-size:11px;color:#86868b;">' + s.classroom_name + '</span>';
-    html += '<span class="session-count">' + s.attendance_count + '명 기록</span>';
-    html += '</div>';
-    html += '</button>';
+  function esc(v) {
+    return String(v === null || v === undefined ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
-  html += '</div></div>';
-  html += '<div style="flex:1;min-width:300px;" id="attendanceArea"><div class="empty">회차를 선택하세요.</div></div>';
-  html += '</div>';
+  function fmtTime(v) {
+    if (!v) return '—';
+    var d = new Date(v);
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false,
+      hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+  function dateOnly(v) { return v ? String(v).split('T')[0] : ''; }
+  function md(v) { var d = dateOnly(v); return d ? d.slice(5).replace('-', '/') : ''; }
 
-  document.getElementById('content').innerHTML = html;
-}
+  /* ── 모드 전환 ── */
+  function setMode(m) {
+    mode = m;
+    document.getElementById('modeDetail').classList.toggle('on', m === 'detail');
+    document.getElementById('modeSummary').classList.toggle('on', m === 'summary');
+    if (!courseId) return;
+    if (m === 'summary') loadSummary(); else loadSessions();
+  }
+  document.getElementById('modeDetail').addEventListener('click', function() { setMode('detail'); });
+  document.getElementById('modeSummary').addEventListener('click', function() { setMode('summary'); });
 
-// ─── 회차별 출결 상세 ────────────────────────────────────
-async function loadAttendance(sessionId) {
-  currentSessionId = sessionId;
-  document.querySelectorAll('.session-btn').forEach(b => b.classList.remove('active'));
-  const btn = document.getElementById('sess-' + sessionId);
-  if (btn) btn.classList.add('active');
-
-  const area = document.getElementById('attendanceArea');
-  area.innerHTML = '<div id="loading">불러오는 중...</div>';
-
-  const res = await fetch('/api/admin/attendance/' + sessionId);
-  const data = await res.json();
-  const { students, summary } = data;
-
-  let html = '<div class="card">';
-
-  // 요약
-  html += '<div class="stats">';
-  html += '<div class="stat"><div class="stat-num blue">' + summary.total + '</div><div class="stat-label">전체</div></div>';
-  html += '<div class="stat"><div class="stat-num green">' + summary.attended + '</div><div class="stat-label">출석</div></div>';
-  html += '<div class="stat"><div class="stat-num orange">' + summary.late + '</div><div class="stat-label">지각</div></div>';
-  html += '<div class="stat"><div class="stat-num orange">' + summary.earlyLeave + '</div><div class="stat-label">조퇴</div></div>';
-  html += '<div class="stat"><div class="stat-num red">' + summary.absent + '</div><div class="stat-label">결석/미체크</div></div>';
-  html += '</div>';
-
-  // 버튼
-  html += '<div class="actions">';
-  html += '<button class="btn btn-primary btn-small" onclick="loadAttendance(\\'' + sessionId + '\\')">🔄 새로고침</button>';
-  html += '<button class="btn btn-outline btn-small" onclick="markAbsent(\\'' + sessionId + '\\')">미입실자 결석 일괄 처리</button>';
-  html += '</div>';
-
-  // 테이블
-  html += '<div style="overflow-x:auto;"><table>';
-  html += '<tr><th>이름</th><th>전화번호</th><th>입실</th><th>퇴실</th><th>상태</th><th>변경</th></tr>';
-
-  for (const s of students) {
-    const checkIn = s.check_in_at ? new Date(s.check_in_at).toLocaleTimeString('ko-KR', {timeZone:'Asia/Seoul', hour:'2-digit', minute:'2-digit', second:'2-digit'}) : '-';
-    const checkOut = s.check_out_at ? new Date(s.check_out_at).toLocaleTimeString('ko-KR', {timeZone:'Asia/Seoul', hour:'2-digit', minute:'2-digit', second:'2-digit'}) : '-';
-    const status = s.status || '미체크';
-    const badgeClass = 'b-' + status;
-    const manual = s.is_manual_override ? '<span class="manual-tag">수동</span>' : '';
-
-    html += '<tr>';
-    html += '<td><b>' + s.name + '</b></td>';
-    html += '<td class="time">' + s.phone + '</td>';
-
-    if (s.attendance_id) {
-      const ciRaw = s.check_in_at || '';
-      const coRaw = s.check_out_at || '';
-      html += '<td class="time"><span class="editable-time" onclick="editTime(\\'' + s.attendance_id + '\\', \\'check_in_at\\', \\'' + ciRaw + '\\', \\'' + sessionId + '\\')" title="클릭하여 수정">' + checkIn + '</span></td>';
-      html += '<td class="time"><span class="editable-time" onclick="editTime(\\'' + s.attendance_id + '\\', \\'check_out_at\\', \\'' + coRaw + '\\', \\'' + sessionId + '\\')" title="클릭하여 수정">' + checkOut + '</span></td>';
-    } else {
-      html += '<td class="time">' + checkIn + '</td>';
-      html += '<td class="time">' + checkOut + '</td>';
+  /* ── 과정 선택 ── */
+  selEl.addEventListener('change', function() {
+    courseId = selEl.value;
+    sessionId = '';
+    if (!courseId) {
+      contentEl.innerHTML = '<section class="sn-section"><div class="at-empty">먼저 교육과정을 선택하세요.</div></section>';
+      document.getElementById('metaLine').textContent = '과정 선택 → 회차 선택 → 출결 조회·수정';
+      return;
     }
-    html += '<td><span class="badge ' + badgeClass + '">' + status + '</span>' + manual + '</td>';
-
-    if (s.attendance_id) {
-      html += '<td><select class="status-select" onchange="changeStatus(\\'' + s.attendance_id + '\\', this.value)">';
-      html += '<option value="">변경</option>';
-      ['출석','지각','조퇴','결석'].forEach(st => {
-        html += '<option value="' + st + '"' + (st === s.status ? ' disabled' : '') + '>' + st + '</option>';
-      });
-      html += '</select> <button style="background:none;border:none;cursor:pointer;font-size:12px;color:#ff3b30;" onclick="resetAttendance(\\'' + s.attendance_id + '\\', \\'' + s.name + '\\', \\'' + sessionId + '\\')" title="출결 초기화">🗑</button></td>';
-    } else {
-      html += '<td style="color:#86868b;font-size:12px;">기록 없음</td>';
-    }
-    html += '</tr>';
-  }
-
-  html += '</table></div></div>';
-  area.innerHTML = html;
-}
-
-// ─── 상태 수동 변경 ──────────────────────────────────────
-async function changeStatus(attendanceId, newStatus) {
-  if (!newStatus) return;
-  if (!confirm(newStatus + '(으)로 변경하시겠습니까?')) {
-    loadAttendance(currentSessionId);
-    return;
-  }
-  await fetch('/api/admin/attendance/' + attendanceId, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status: newStatus })
+    setMode(mode);
   });
-  loadAttendance(currentSessionId);
-}
 
-// ─── 미입실자 결석 일괄 처리 ─────────────────────────────
-async function markAbsent(sessionId) {
-  if (!confirm('입실 기록이 없는 수강생을 모두 결석 처리하시겠습니까?')) return;
-  const res = await fetch('/api/admin/mark-absent/' + sessionId, { method: 'POST' });
-  const data = await res.json();
-  alert(data.count + '명 결석 처리되었습니다.');
-  loadAttendance(sessionId);
-}
+  document.getElementById('btnRefresh').addEventListener('click', function() {
+    if (!courseId) { showToast('과정을 먼저 선택하세요', true); return; }
+    if (mode === 'summary') loadSummary();
+    else if (sessionId) loadAttendance(sessionId);
+    else loadSessions();
+  });
 
-// ─── 출결 기록 초기화 ────────────────────────────────────
-async function resetAttendance(attendanceId, name, sessionId) {
-  if (!confirm(name + '의 출결 기록을 초기화하시겠습니까?\\n(입실/퇴실 기록이 삭제되고 다시 QR 스캔으로 입실할 수 있습니다)')) return;
-  try {
-    const res = await fetch('/api/admin/attendance/' + attendanceId, { method: 'DELETE' });
-    const data = await res.json();
-    if (data.success) {
+  document.getElementById('btnMarkAbsent').addEventListener('click', async function() {
+    if (!sessionId) { showToast('회차를 먼저 선택하세요', true); return; }
+    if (!confirm('입실 기록이 없는 수강생을 모두 결석 처리합니다. 진행할까요?')) return;
+    try {
+      var res = await fetch('/api/admin/mark-absent/' + sessionId, { method: 'POST' });
+      var data = await res.json();
+      showToast((data.count || 0) + '명을 결석 처리했습니다');
       loadAttendance(sessionId);
-    } else {
-      alert('초기화 실패: ' + (data.error || ''));
-    }
-  } catch (err) {
-    alert('오류: ' + err.message);
-  }
-}
+    } catch (e) { showToast('처리 실패: ' + e.message, true); }
+  });
 
-// ─── 전체 요약 ───────────────────────────────────────────
-async function loadSummary() {
-  if (!currentCourseId) return;
-  document.getElementById('content').innerHTML = '<div id="loading">불러오는 중...</div>';
-
-  const res = await fetch('/api/admin/summary/' + currentCourseId);
-  const rows = await res.json();
-
-  let html = '<div class="card">';
-  html += '<b>전체 회차 출결 요약</b><br><br>';
-  html += '<div style="overflow-x:auto;"><table>';
-  html += '<tr><th>이름</th><th>전화번호</th><th>출석</th><th>지각</th><th>조퇴</th><th>결석</th><th>출석률</th></tr>';
-
-  for (const r of rows) {
-    const rate = r.attendance_rate;
-    const barColor = rate >= 80 ? '#34c759' : rate >= 50 ? '#ff9500' : '#ff3b30';
-    html += '<tr>';
-    html += '<td><b>' + r.name + '</b></td>';
-    html += '<td class="time">' + r.phone + '</td>';
-    html += '<td style="color:#137333;">' + r.attended + '</td>';
-    html += '<td style="color:#e37400;">' + r.late + '</td>';
-    html += '<td style="color:#c5221f;">' + r.early_leave + '</td>';
-    html += '<td style="color:#5f6368;">' + r.absent + '</td>';
-    html += '<td><div class="rate-bar"><div class="rate-fill" style="width:' + rate + '%;background:' + barColor + ';"></div></div>' + rate + '%</td>';
-    html += '</tr>';
-  }
-
-  html += '</table></div></div>';
-  document.getElementById('content').innerHTML = html;
-}
-
-// ─── 입실/퇴실 시각 수정 ────────────────────────────────────
-async function editTime(attendanceId, field, currentValue, sessionId) {
-  const fieldName = field === 'check_in_at' ? '입실 시각' : '퇴실 시각';
-
-  let defaultVal = '';
-  if (currentValue) {
-    const d = new Date(currentValue);
-    const hh = String(d.getHours()).padStart(2, '0');
-    const mm = String(d.getMinutes()).padStart(2, '0');
-    defaultVal = hh + ':' + mm;
-  }
-
-  const input = prompt(
-    fieldName + '을 수정합니다.\\n' +
-    '시각을 HH:MM 형식으로 입력하세요. (예: 09:30)\\n' +
-    '비워두면 시각이 삭제됩니다.',
-    defaultVal
-  );
-
-  if (input === null) return;
-
-  let value = '';
-  if (input.trim() !== '') {
-    const match = input.trim().match(/^(\\d{1,2}):(\\d{2})$/);
-    if (!match) {
-      alert('형식이 올바르지 않습니다. HH:MM (예: 09:30)');
+  /* ── 회차 목록 ── */
+  async function loadSessions() {
+    contentEl.innerHTML = '<section class="sn-section"><div class="at-empty">불러오는 중…</div></section>';
+    try {
+      var res = await fetch('/api/admin/sessions/' + courseId);
+      sessions = await res.json();
+    } catch (e) {
+      contentEl.innerHTML = '<section class="sn-section"><div class="at-empty">회차를 불러오지 못했습니다.</div></section>';
       return;
     }
-    const hh = parseInt(match[1]);
-    const mm = parseInt(match[2]);
-    if (hh < 0 || hh > 23 || mm < 0 || mm > 59) {
-      alert('유효하지 않은 시각입니다.');
+    if (!sessions.length) {
+      contentEl.innerHTML = '<section class="sn-section"><div class="at-empty">등록된 회차가 없습니다.</div></section>';
       return;
     }
-    const today = new Date().toISOString().split('T')[0];
-    value = today + ' ' + String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0') + ':00';
+    var today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
+    var chips = sessions.map(function(s) {
+      var isToday = dateOnly(s.session_date) === today;
+      return '<button type="button" class="at-chip" data-sess="' + esc(s.session_id) + '">'
+        + '<span class="n">' + esc(s.session_number) + '회' + (s.is_workshop ? ' ⛺' : '') + (isToday ? ' ●' : '') + '</span>'
+        + '<span class="d">' + md(s.session_date) + '</span></button>';
+    }).join('');
+
+    contentEl.innerHTML =
+        '<section class="sn-section" style="padding-top:18px;">'
+      +   '<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:10px;flex-wrap:wrap;">'
+      +     '<h2 class="sn-h2" style="font-size:15px;">회차 선택</h2>'
+      +     '<span class="sn-sub" id="sessTitle">' + sessions.length + '개 회차 · ●는 오늘</span>'
+      +   '</div>'
+      +   '<div style="display:flex;gap:8px;overflow-x:auto;padding:2px 0 6px;">' + chips + '</div>'
+      + '</section>'
+      + '<div id="attArea"><section class="sn-section" style="padding-top:14px;"><div class="at-empty">회차를 선택하세요.</div></section></div>';
+
+    // 오늘 회차가 있으면 자동 선택
+    var todayOne = sessions.filter(function(s) { return dateOnly(s.session_date) === today; })[0];
+    if (todayOne) loadAttendance(todayOne.session_id);
   }
 
-  try {
-    const res = await fetch('/api/admin/attendance/' + attendanceId + '/time', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ field: field, value: value }),
+  /* ── 회차별 출결 ── */
+  async function loadAttendance(sid) {
+    sessionId = sid;
+    document.querySelectorAll('.at-chip').forEach(function(b) {
+      b.classList.toggle('on', b.getAttribute('data-sess') === String(sid));
     });
-    const data = await res.json();
-    if (data.success) {
-      loadAttendance(sessionId);
-    } else {
-      alert('수정 실패: ' + (data.error || ''));
+    var area = document.getElementById('attArea');
+    if (!area) return;
+    area.innerHTML = '<section class="sn-section" style="padding-top:14px;"><div class="at-empty">불러오는 중…</div></section>';
+    var data;
+    try {
+      var res = await fetch('/api/admin/attendance/' + sid);
+      data = await res.json();
+    } catch (e) {
+      area.innerHTML = '<section class="sn-section" style="padding-top:14px;"><div class="at-empty">출결을 불러오지 못했습니다.</div></section>';
+      return;
     }
-  } catch (err) {
-    alert('네트워크 오류: ' + err.message);
+    roster = data.students || [];
+    var sm = data.summary || { total: 0, attended: 0, late: 0, earlyLeave: 0, absent: 0 };
+    sessionDate = roster.length ? dateOnly(roster[0].session_date) : '';
+
+    var sInfo = sessions.filter(function(s) { return String(s.session_id) === String(sid); })[0];
+    if (sInfo) {
+      document.getElementById('metaLine').textContent =
+        sInfo.session_number + '회차 · ' + (dateOnly(sInfo.session_date) || '-')
+        + ' · ' + (sInfo.classroom_name || '강의실 미지정');
+    }
+
+    var present = Number(sm.attended) || 0;
+    var rate = sm.total ? Math.round(((sm.total - sm.absent) / sm.total) * 100) : 0;
+
+    function kpi(label, val, bg, lc, vc) {
+      return '<div class="at-kpi" style="background:' + bg + ';">'
+        + '<div class="lb" style="color:' + lc + ';">' + label + '</div>'
+        + '<div class="vl" style="color:' + vc + ';">' + val + '</div></div>';
+    }
+    var kpiHtml = '<div class="sn-grid" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;">'
+      + kpi('전체', sm.total, '#fff', 'var(--sn-gray)', 'var(--sn-ink)')
+      + kpi('출석', present, '#fff', 'var(--sn-gray)', 'var(--sn-navy)')
+      + kpi('지각', sm.late, '#fff', 'var(--sn-gray)', 'var(--sn-ink)')
+      + kpi('조퇴', sm.earlyLeave, '#fff', 'var(--sn-gray)', 'var(--sn-ink)')
+      + kpi('결석 · 미체크', sm.absent, 'var(--sn-red-bg)', '#a32020', '#D32F2F')
+      + kpi('출석률', rate + '%', 'var(--sn-navy)', '#a9c3dd', '#fff')
+      + '</div>';
+
+    // 표(넓은 화면) + 카드(좁은 화면)
+    var rows = '', cards = '';
+    roster.forEach(function(s, i) {
+      var st = s.status || '미체크';
+      var aid = s.attendance_id || '';
+      var inTxt = fmtTime(s.check_in_at), outTxt = fmtTime(s.check_out_at);
+      var manual = s.is_manual_override ? '<span class="at-manual">수동</span>' : '';
+      var tag = '<span class="at-tag tg-' + esc(st) + '">' + esc(st) + '</span>' + manual;
+      var inCell = aid
+        ? '<span class="at-time" data-act="time" data-aid="' + esc(aid) + '" data-field="check_in_at" data-raw="' + esc(s.check_in_at || '') + '" title="클릭하여 수정">' + inTxt + '</span>'
+        : inTxt;
+      var outCell = aid
+        ? '<span class="at-time" data-act="time" data-aid="' + esc(aid) + '" data-field="check_out_at" data-raw="' + esc(s.check_out_at || '') + '" title="클릭하여 수정">' + outTxt + '</span>'
+        : outTxt;
+      var ctrl = aid
+        ? '<div style="display:flex;gap:6px;align-items:center;">'
+          + '<select class="at-rowsel" data-act="status" data-aid="' + esc(aid) + '">'
+          + '<option value="">상태 변경</option>'
+          + ['출석','지각','조퇴','결석'].map(function(v) {
+              return '<option value="' + v + '"' + (v === st ? ' disabled' : '') + '>' + v + '</option>'; }).join('')
+          + '</select>'
+          + '<button type="button" class="at-reset" data-act="reset" data-aid="' + esc(aid) + '" data-name="' + esc(s.name) + '">출결 초기화</button>'
+          + '</div>'
+        : '<span class="at-mut">기록 없음</span>';
+
+      rows += '<tr>'
+        + '<td class="at-num at-mut">' + (i + 1) + '</td>'
+        + '<td style="font-weight:700;">' + esc(s.name) + '</td>'
+        + '<td class="at-num at-mut">' + esc(s.phone) + '</td>'
+        + '<td class="at-num" style="font-weight:600;">' + inCell + '</td>'
+        + '<td class="at-num" style="font-weight:600;">' + outCell + '</td>'
+        + '<td class="at-mut">' + esc(s.exit_type || '—') + '</td>'
+        + '<td>' + tag + '</td>'
+        + '<td>' + ctrl + '</td>'
+        + '</tr>';
+
+      cards += '<div class="at-card">'
+        + '<div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;">'
+        +   '<span style="font-size:17px;font-weight:800;letter-spacing:-0.015em;">' + esc(s.name) + '</span>' + tag
+        + '</div>'
+        + '<div class="at-mut at-num" style="margin-top:3px;">' + esc(s.phone) + '</div>'
+        + '<div class="grid3">'
+        +   '<div><div class="lb">입실</div><div class="vl">' + inCell + '</div></div>'
+        +   '<div><div class="lb">퇴실</div><div class="vl">' + outCell + '</div></div>'
+        +   '<div><div class="lb">퇴실유형</div><div class="vl" style="font-size:12.5px;font-weight:700;margin-top:5px;">' + esc(s.exit_type || '—') + '</div></div>'
+        + '</div>'
+        + '<div style="margin-top:12px;">' + ctrl + '</div>'
+        + '</div>';
+    });
+
+    area.innerHTML =
+        '<section class="sn-section" style="padding-top:14px;">' + kpiHtml + '</section>'
+      + '<section class="sn-section" style="padding-top:18px;">'
+      +   '<div class="at-tablewrap"><table class="at-table">'
+      +     '<thead><tr><th style="width:44px;">#</th><th>이름</th><th>전화번호</th><th>입실</th><th>퇴실</th>'
+      +     '<th>퇴실유형</th><th>상태</th><th style="width:250px;">변경 · 초기화</th></tr></thead>'
+      +     '<tbody>' + (rows || '<tr><td colspan="8" class="at-mut" style="padding:30px;text-align:center;">등록된 수강생이 없습니다.</td></tr>') + '</tbody>'
+      +   '</table></div>'
+      +   '<div class="at-cards">' + (cards || '<div class="at-empty">등록된 수강생이 없습니다.</div>') + '</div>'
+      + '</section>';
   }
-}
-</script>
-</body>
-</html>`;
+
+  /* ── 전체 요약 (수강생별 누적) ── */
+  async function loadSummary() {
+    contentEl.innerHTML = '<section class="sn-section"><div class="at-empty">불러오는 중…</div></section>';
+    var rows;
+    try {
+      var res = await fetch('/api/admin/summary/' + courseId);
+      rows = await res.json();
+    } catch (e) {
+      contentEl.innerHTML = '<section class="sn-section"><div class="at-empty">요약을 불러오지 못했습니다.</div></section>';
+      return;
+    }
+    document.getElementById('metaLine').textContent = '수강생별 전체 회차 누적 출결';
+    var body = rows.map(function(r, i) {
+      var rate = Number(r.attendance_rate) || 0;
+      var color = rate >= 80 ? 'var(--sn-navy)' : (rate >= 50 ? '#2a63a8' : 'var(--sn-amber)');
+      return '<tr>'
+        + '<td class="at-num at-mut">' + (i + 1) + '</td>'
+        + '<td style="font-weight:700;">' + esc(r.name) + '</td>'
+        + '<td class="at-num at-mut">' + esc(r.phone) + '</td>'
+        + '<td class="at-num" style="font-weight:600;">' + esc(r.attended) + '</td>'
+        + '<td class="at-num" style="font-weight:600;">' + esc(r.late) + '</td>'
+        + '<td class="at-num" style="font-weight:600;">' + esc(r.early_leave) + '</td>'
+        + '<td class="at-num" style="font-weight:800;color:var(--sn-red);">' + esc(r.absent) + '</td>'
+        + '<td><div style="display:flex;align-items:center;gap:10px;">'
+        +   '<div class="at-bar"><span style="width:' + Math.min(100, rate) + '%;background:' + color + ';"></span></div>'
+        +   '<span class="at-num" style="font-size:12.5px;font-weight:800;min-width:42px;text-align:right;">' + rate + '%</span>'
+        + '</div></td>'
+        + '</tr>';
+    }).join('');
+
+    contentEl.innerHTML =
+        '<section class="sn-section" style="padding-top:18px;">'
+      +   '<div class="at-tablewrap"><table class="at-table" style="min-width:680px;">'
+      +     '<thead><tr><th style="width:44px;">#</th><th>이름</th><th>전화번호</th><th>출석</th><th>지각</th>'
+      +     '<th>조퇴</th><th>결석</th><th style="width:210px;">출석률</th></tr></thead>'
+      +     '<tbody>' + (body || '<tr><td colspan="8" class="at-mut" style="padding:30px;text-align:center;">수강생이 없습니다.</td></tr>') + '</tbody>'
+      +   '</table></div>'
+      + '</section>';
+  }
+
+  /* ── 이벤트 위임 ── */
+  contentEl.addEventListener('click', function(ev) {
+    var chip = ev.target.closest('.at-chip');
+    if (chip) { loadAttendance(chip.getAttribute('data-sess')); return; }
+
+    var el = ev.target.closest('[data-act]');
+    if (!el) return;
+    var act = el.getAttribute('data-act');
+    if (act === 'reset') resetAttendance(el.getAttribute('data-aid'), el.getAttribute('data-name'));
+    else if (act === 'time') editTime(el.getAttribute('data-aid'), el.getAttribute('data-field'), el.getAttribute('data-raw'));
+  });
+  contentEl.addEventListener('change', function(ev) {
+    var el = ev.target.closest('[data-act="status"]');
+    if (el) changeStatus(el.getAttribute('data-aid'), el.value);
+  });
+
+  /* ── 상태 변경 ── */
+  async function changeStatus(aid, newStatus) {
+    if (!newStatus) return;
+    if (!confirm(newStatus + '(으)로 변경할까요?')) { loadAttendance(sessionId); return; }
+    try {
+      var res = await fetch('/api/admin/attendance/' + aid, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+      var d = await res.json();
+      if (d.success) showToast(newStatus + '(으)로 변경했습니다');
+      else showToast('변경 실패: ' + (d.error || ''), true);
+    } catch (e) { showToast('변경 실패: ' + e.message, true); }
+    loadAttendance(sessionId);
+  }
+
+  /* ── 출결 초기화 ── */
+  async function resetAttendance(aid, name) {
+    if (!confirm(name + '의 출결 기록을 초기화합니다.\\n입·퇴실 기록이 삭제되고 다시 QR로 입실할 수 있습니다.')) return;
+    try {
+      var res = await fetch('/api/admin/attendance/' + aid, { method: 'DELETE' });
+      var d = await res.json();
+      if (d.success) { showToast(name + ' 출결을 초기화했습니다'); loadAttendance(sessionId); }
+      else showToast('초기화 실패: ' + (d.error || ''), true);
+    } catch (e) { showToast('초기화 실패: ' + e.message, true); }
+  }
+
+  /* ── 입·퇴실 시각 수정 ── */
+  async function editTime(aid, field, raw) {
+    var fieldName = field === 'check_in_at' ? '입실 시각' : '퇴실 시각';
+    var def = '';
+    if (raw) {
+      var d = new Date(raw);
+      if (!isNaN(d.getTime())) {
+        def = d.toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false, hour: '2-digit', minute: '2-digit' });
+      }
+    }
+    var input = prompt(
+      fieldName + '을 수정합니다.\\nHH:MM 형식으로 입력하세요. (예: 09:30)\\n비워두면 시각이 삭제됩니다.',
+      def
+    );
+    if (input === null) return;
+    var value = '';
+    if (input.trim() !== '') {
+      var m = input.trim().match(/^(\\d{1,2}):(\\d{2})$/);
+      if (!m) { showToast('형식이 올바르지 않습니다 (예: 09:30)', true); return; }
+      var hh = parseInt(m[1], 10), mm = parseInt(m[2], 10);
+      if (hh < 0 || hh > 23 || mm < 0 || mm > 59) { showToast('유효하지 않은 시각입니다', true); return; }
+      if (!sessionDate) { showToast('회차 날짜를 확인할 수 없습니다', true); return; }
+      value = sessionDate + ' ' + String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0') + ':00';
+    }
+    try {
+      var res = await fetch('/api/admin/attendance/' + aid + '/time', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ field: field, value: value })
+      });
+      var d2 = await res.json();
+      if (d2.success) { showToast(fieldName + '을 수정했습니다'); loadAttendance(sessionId); }
+      else showToast('수정 실패: ' + (d2.error || ''), true);
+    } catch (e) { showToast('수정 실패: ' + e.message, true); }
+  }
+  `;
+
+  return layout.renderShell({
+    active: 'attendance',
+    title: '출결 현황',
+    body: body,
+    pageCss: pageCss,
+    pageJs: pageJs
+  });
 }
 
 // ═════════════════════════════════════════════════════════════
