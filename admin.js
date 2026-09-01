@@ -658,7 +658,8 @@ function registerAdminRoutes(app) {
 
   // ═══ 시스템 설정 페이지 ═════════════════════════════════════
   app.get('/admin/settings', (req, res) => {
-    res.send(renderSettingsPage());
+    const baseUrl = req.protocol + '://' + req.get('host');
+    res.send(renderSettingsPage(baseUrl));
   });
 
   // ═══ API: 설정 조회 (공개) ═══════════════════════════════════
@@ -719,7 +720,10 @@ function registerAdminRoutes(app) {
 // ═════════════════════════════════════════════════════════════
 // 시스템 설정 페이지 HTML
 // ═════════════════════════════════════════════════════════════
-function renderSettingsPage() {
+function renderSettingsPage(baseUrl) {
+  const esc = layout.esc;
+  const base = baseUrl || '';
+
   const pageCss = `
   .st-h1 { margin:0; font-size:32px; font-weight:800; letter-spacing:-0.025em; line-height:1.1; }
   .st-lead { font-size:13px; font-weight:500; color:var(--sn-gray); margin-top:6px; }
@@ -769,12 +773,29 @@ function renderSettingsPage() {
     font-size:12px; color:#7a5a05; line-height:1.8;
   }
   .st-warn b { color:#4a3505; }
+
+  .st-urlname { font-size:13.5px; font-weight:800; }
+  .st-urlpath { font-size:12px; color:var(--sn-gray); margin-top:8px; word-break:break-all; line-height:1.6; }
+  .st-urldesc { font-size:11.5px; color:var(--sn-gray); margin-top:6px; line-height:1.6; }
+  .st-urlbtn { height:40px; font-size:12px; margin-top:14px; }
   `;
+
+  const urlCard = function(name, path, desc, mode, id) {
+    const btn = (mode === 'copy')
+      ? '<button type="button" class="sn-btn sn-btn-secondary st-urlbtn" data-copy="' + id + '">주소 복사</button>'
+      : '<a class="sn-btn sn-btn-secondary st-urlbtn" href="' + path + '" target="_blank" rel="noopener">열기</a>';
+    return '<div class="sn-card">'
+      + '<div class="st-urlname">' + name + '</div>'
+      + '<div class="st-urlpath" id="' + id + '">' + esc(base + path) + '</div>'
+      + '<div class="st-urldesc">' + desc + '</div>'
+      + btn
+      + '</div>';
+  };
 
   const body =
       '<section class="sn-section">'
     +   '<h1 class="st-h1">시스템 설정</h1>'
-    +   '<div class="st-lead">퇴실 위치 검증 · 퇴실 알림 타이밍</div>'
+    +   '<div class="st-lead">퇴실 위치 검증 · 퇴실 알림 타이밍 · 주소 관리</div>'
 
     // ── 1행: 위치 검증 + 반경 미리보기 ──
     +   '<div class="sn-grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr));margin-top:18px;">'
@@ -848,6 +869,32 @@ function renderSettingsPage() {
     +       '&middot; 발송 간격 &mdash; 알림 반복 발송 주기 (기본 2분)<br>'
     +       '&middot; 두 카드의 저장 버튼은 모두 <b>전체 설정</b>을 함께 저장합니다'
     +     '</div>'
+    +   '</div>'
+    + '</section>'
+
+    // ── 배포용 주소 ──
+    + '<section class="sn-section" style="padding-top:18px;">'
+    +   '<div class="sn-head-row"><h2 class="sn-h2">배포용 주소</h2>'
+    +     '<span class="sn-sub">수강생에게 안내하는 주소입니다</span></div>'
+    +   '<div class="sn-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));">'
+    +     urlCard('수강생용 앱 (홈 화면 추가)', '/app',
+              '생체인증 등록 후 홈 화면에 추가하도록 안내하세요.', 'copy', 'urlApp')
+    +     urlCard('생체인증 등록 페이지', '/register',
+              '수업 첫날 단체 등록 시 이 주소를 안내하세요.', 'copy', 'urlReg')
+    +   '</div>'
+    + '</section>'
+
+    // ── 앱 스토어 등록용 필수 주소 ──
+    + '<section class="sn-section" style="padding-top:18px;">'
+    +   '<div class="sn-head-row"><h2 class="sn-h2">앱 스토어 등록용 필수 주소</h2>'
+    +     '<span class="sn-sub">App Store · Google Play 심사 시 제출합니다</span></div>'
+    +   '<div class="sn-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));">'
+    +     urlCard('개인정보처리방침', '/privacy',
+              'App Store Connect &gt; 앱 정보의 개인정보처리방침 URL에 입력합니다.', 'open', 'urlPrivacy')
+    +     urlCard('계정 삭제 요청', '/delete-account',
+              '계정 삭제 경로 제공은 앱 심사 필수 요건입니다.', 'open', 'urlDelete')
+    +     urlCard('고객지원', '/support',
+              'App Store Connect &gt; App Store의 지원 URL에 입력합니다.', 'open', 'urlSupport')
     +   '</div>'
     + '</section>'
 
@@ -952,6 +999,30 @@ function renderSettingsPage() {
 
   document.querySelectorAll('[data-save]').forEach(function(b) {
     b.addEventListener('click', saveSettings);
+  });
+
+  /* ── 주소 복사 ── */
+  document.querySelectorAll('[data-copy]').forEach(function(b) {
+    b.addEventListener('click', function() {
+      var src = document.getElementById(b.getAttribute('data-copy'));
+      if (!src) return;
+      var text = src.textContent.trim();
+      function done() { showToast('주소를 복사했습니다'); }
+      function fallback() {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); done(); }
+        catch (e) { showToast('복사에 실패했습니다', true); }
+        document.body.removeChild(ta);
+      }
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(done).catch(fallback);
+      } else { fallback(); }
+    });
   });
 
   loadSettings();
