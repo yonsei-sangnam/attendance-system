@@ -357,7 +357,7 @@ app.get('/privacy', (req, res) => {
     + '<ul>'
     + '<li><strong>전화번호:</strong> 수강생 식별 및 로그인에 사용</li>'
     + '<li><strong>이름:</strong> 출결 기록 관리에 사용</li>'
-    + '<li><strong>위치 정보:</strong> 출결 확인 시 강의실 위치 검증에 사용 (대략적 위치)</li>'
+    + '<li><strong>위치 정보:</strong> 출결 확인 시 강의실 위치 검증에 사용 (정확한 위치, 퇴실 처리 시점에만 일시 수집하며 서버에 저장하지 않음)</li>'
     + '<li><strong>생체인식 정보:</strong> 본인 확인을 위한 FIDO2 공개키 (생체 데이터 자체는 기기에만 저장되며 서버로 전송되지 않음)</li>'
     + '<li><strong>기기 식별 토큰:</strong> 푸시 알림 발송에 사용 (FCM 토큰)</li>'
     + '</ul>'
@@ -448,7 +448,7 @@ app.get('/support', (req, res) => {
     + '  <div class="card">'
     + '    <h2>문의하기</h2>'
     + '    <div class="row"><div class="k">담당자</div><div class="v">상남경영원 출결관리시스템 담당자</div></div>'
-    + '    <div class="row"><div class="k">이메일</div><div class="v"><a href="mailto:soulstaryonsei@gmail.com">soulstaryonsei@gmail.com</a></div></div>'
+    + '    <div class="row"><div class="k">이메일</div><div class="v"><a href="mailto:담당자이메일@example.com">담당자이메일@example.com</a></div></div>'
     + '    <div class="row"><div class="k">운영시간</div><div class="v">평일 09:00 ~ 18:00</div></div>'
     + '  </div>'
 
@@ -2758,10 +2758,7 @@ function renderAdminPage(data) {
       + '</div>';
   }
 
-  // ── 2. 배포용 주소 · 강의실 QR ───────────────────────
-  const appUrl = data.baseUrl + '/app';
-  const regUrl = data.baseUrl + '/register';
-
+  // ── 2. 강의실 QR ─────────────────────────────────────
   const roomTiles = data.classrooms.map(function(c) {
     return '<div style="display:flex;align-items:center;gap:10px;background:var(--sn-bg);border-radius:14px;padding:12px 14px;">'
       + '<div>'
@@ -2822,22 +2819,10 @@ function renderAdminPage(data) {
     + '</section>'
 
     + '<section class="sn-section">'
-    +   '<div class="sn-head-row"><h2 class="sn-h2">배포용 주소 · 강의실 QR</h2></div>'
-    +   '<div class="sn-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));">'
-    +     '<div class="sn-card">'
-    +       '<div style="font-size:13.5px;font-weight:800;">수강생용 앱 (홈 화면 추가)</div>'
-    +       '<div style="font-size:12px;color:var(--sn-gray);margin-top:8px;word-break:break-all;line-height:1.6;" id="urlApp">' + esc(appUrl) + '</div>'
-    +       '<button type="button" class="sn-btn sn-btn-secondary" style="height:40px;font-size:12px;margin-top:14px;" data-copy="urlApp">주소 복사</button>'
-    +     '</div>'
-    +     '<div class="sn-card">'
-    +       '<div style="font-size:13.5px;font-weight:800;">생체인증 등록 페이지</div>'
-    +       '<div style="font-size:12px;color:var(--sn-gray);margin-top:8px;word-break:break-all;line-height:1.6;" id="urlReg">' + esc(regUrl) + '</div>'
-    +       '<button type="button" class="sn-btn sn-btn-secondary" style="height:40px;font-size:12px;margin-top:14px;" data-copy="urlReg">주소 복사</button>'
-    +     '</div>'
-    +   '</div>'
-    +   '<div class="sn-card" style="margin-top:14px;">'
+    +   '<div class="sn-head-row"><h2 class="sn-h2">강의실 QR</h2>'
+    +     '<span class="sn-sub">배포용 주소는 시스템 설정 탭에 있습니다</span></div>'
+    +   '<div class="sn-card">'
     +     '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
-    +       '<div style="font-size:15px;font-weight:800;letter-spacing:-0.015em;">강의실 QR</div>'
     +       '<span style="font-size:11px;font-weight:700;color:var(--sn-red);background:var(--sn-red-bg);padding:3px 9px;border-radius:999px;">주소 공유 금지</span>'
     +       '<span style="font-size:12px;color:var(--sn-gray);margin-left:auto;">각 강의실 태블릿·노트북에서 열어 두세요</span>'
     +     '</div>'
@@ -3098,44 +3083,6 @@ app.get('/api/push/subscriptions', async (req, res) => {
     `);
     res.json(r.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// ─── 개인정보처리방침 ───────────────────────────────────────
-app.get('/privacy', (req, res) => {
-  res.send(`<!DOCTYPE html>
-<html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>개인정보처리방침 - 상남경영원 출결관리</title>
-<style>body{font-family:-apple-system,sans-serif;max-width:700px;margin:0 auto;padding:20px 16px;line-height:1.8;color:#333}
-h1{font-size:22px;border-bottom:2px solid #003876;padding-bottom:10px}
-h2{font-size:17px;margin-top:30px;color:#003876}p{margin:8px 0}</style></head>
-<body>
-<h1>개인정보처리방침</h1>
-<p>상남경영원(이하 "기관")은 「개인정보 보호법」에 따라 수강생의 개인정보를 보호하고 관련 고충을 처리하기 위하여 다음과 같은 개인정보처리방침을 수립·공개합니다.</p>
-
-<h2>1. 수집하는 개인정보 항목</h2>
-<p>기관은 출결관리 서비스 제공을 위해 다음 정보를 수집합니다.</p>
-<p>- 이름, 전화번호<br>- 생체인증 공개키 (지문·얼굴 등 생체정보 자체는 기기에만 저장되며 서버에 전송되지 않습니다)<br>- 출결 기록 (입실·퇴실 시각)<br>- 푸시 알림 구독 정보</p>
-
-<h2>2. 개인정보의 수집 및 이용 목적</h2>
-<p>- 수강생 본인 확인 및 출결 관리<br>- 퇴실 알림 등 서비스 안내</p>
-
-<h2>3. 개인정보의 보유 및 이용 기간</h2>
-<p>수강 기간 종료 후 3개월 이내 파기합니다. 단, 관계 법령에 따라 보존이 필요한 경우 해당 기간 동안 보관합니다.</p>
-
-<h2>4. 개인정보의 제3자 제공</h2>
-<p>기관은 수강생의 개인정보를 제3자에게 제공하지 않습니다.</p>
-
-<h2>5. 개인정보의 안전성 확보 조치</h2>
-<p>- 데이터 전송 시 SSL/TLS 암호화 적용<br>- 생체인증은 FIDO2/WebAuthn 표준 사용 (생체정보 서버 미저장)<br>- 데이터베이스 접근 권한 제한</p>
-
-<h2>6. 정보주체의 권리</h2>
-<p>수강생은 언제든지 본인의 개인정보에 대한 열람, 정정, 삭제를 요청할 수 있습니다.</p>
-
-<h2>7. 개인정보 보호책임자</h2>
-<p>상남경영원 관리자<br>문의: 기관 사무실로 연락</p>
-
-<p style="margin-top:40px;color:#888;font-size:13px">시행일: 2026년 6월 8일</p>
-</body></html>`);
 });
 
 // ─── 계정 삭제 요청 페이지 ──────────────────────────────────
