@@ -406,6 +406,69 @@ app.get('/privacy', (req, res) => {
   res.send(html);
 });
 
+// ═══ 지원 페이지 (App Store 심사용 지원 URL) ═════════════════════
+app.get('/support', (req, res) => {
+  var html = '<!DOCTYPE html><html lang="ko"><head>'
+    + '<meta charset="UTF-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1.0">'
+    + '<title>고객지원 · 상남경영원 출결관리시스템</title>'
+    + '<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">'
+    + '<link rel="apple-touch-icon" href="/apple-touch-icon.png">'
+    + '<style>'
+    + '* { margin:0; padding:0; box-sizing:border-box; }'
+    + 'body { font-family:-apple-system,BlinkMacSystemFont,"Malgun Gothic",system-ui,sans-serif;'
+    + '  background:#f4f5f6; color:#202223; -webkit-font-smoothing:antialiased; }'
+    + '.wrap { max-width:640px; margin:0 auto; padding:56px 24px 80px; }'
+    + '.logo { height:56px; width:auto; display:block; margin-bottom:28px; }'
+    + 'h1 { font-size:28px; font-weight:800; letter-spacing:-0.02em; }'
+    + '.lead { font-size:14px; font-weight:500; color:#656668; margin-top:8px; line-height:1.7; }'
+    + '.card { background:#fff; border-radius:20px; padding:24px; margin-top:24px;'
+    + '  box-shadow:0 2px 12px rgba(0,0,0,0.05); }'
+    + '.card h2 { font-size:16px; font-weight:800; letter-spacing:-0.01em; }'
+    + '.card p, .card li { font-size:14px; line-height:1.8; color:#333; margin-top:10px; }'
+    + '.card ul { padding-left:20px; }'
+    + '.row { display:flex; gap:10px; align-items:flex-start; margin-top:14px; }'
+    + '.row .k { flex:0 0 88px; font-size:13px; font-weight:700; color:#656668; }'
+    + '.row .v { font-size:14px; font-weight:600; }'
+    + '.row a { color:#003876; text-decoration:none; font-weight:700; }'
+    + '.row a:hover { text-decoration:underline; }'
+    + '.foot { margin-top:32px; font-size:12px; color:#9a9b9d; text-align:center; }'
+    + '</style></head><body>'
+    + '<div class="wrap">'
+    + '  <img class="logo" src="/logo.png" alt="연세대학교 상남경영원">'
+    + '  <h1>고객지원</h1>'
+    + '  <div class="lead">상남경영원 출결 관리 앱 관련 문의 및 지원 안내입니다.</div>'
+
+    + '  <div class="card">'
+    + '    <h2>앱 소개</h2>'
+    + '    <p>본 앱은 연세대학교 상남경영원 교육과정 수강생을 위한 출결 관리 앱입니다. '
+    + 'QR코드와 생체인증(Face ID·지문)을 통해 입실·퇴실을 기록하며, 사전에 등록된 수강생만 이용할 수 있습니다.</p>'
+    + '  </div>'
+
+    + '  <div class="card">'
+    + '    <h2>문의하기</h2>'
+    + '    <div class="row"><div class="k">담당자</div><div class="v">상남경영원 출결관리시스템 담당자</div></div>'
+    + '    <div class="row"><div class="k">이메일</div><div class="v"><a href="mailto:담당자이메일@example.com">담당자이메일@example.com</a></div></div>'
+    + '    <div class="row"><div class="k">운영시간</div><div class="v">평일 09:00 ~ 18:00</div></div>'
+    + '  </div>'
+
+    + '  <div class="card">'
+    + '    <h2>자주 묻는 질문</h2>'
+    + '    <ul>'
+    + '      <li><strong>로그인이 안 돼요.</strong> 등록된 전화번호와 일치하는지 확인해 주세요. 문의처로 연락 주시면 확인해 드립니다.</li>'
+    + '      <li><strong>생체인증이 안 돼요.</strong> 설정 &gt; 얼굴 인식 및 암호(또는 Touch ID)에서 앱 권한이 허용되어 있는지 확인해 주세요.</li>'
+    + '      <li><strong>QR 인식이 안 돼요.</strong> 카메라 권한이 허용되어 있는지, QR코드가 화면에 선명하게 보이는지 확인해 주세요.</li>'
+    + '      <li><strong>퇴실 처리가 안 돼요.</strong> 지정된 강의실 반경 안에 있는지 확인해 주세요. 위치 권한이 꺼져 있으면 설정에서 허용해 주세요.</li>'
+    + '    </ul>'
+    + '  </div>'
+
+    + '  <div class="foot">연세대학교 상남경영원 &middot; Sangnam Institute of Management, Yonsei University</div>'
+    + '</div>'
+    + '</body></html>';
+
+  res.send(html);
+});
+
 // ═══ 루트: 수강생 앱으로 안내 ═════════════════════════════════
 app.get('/', (req, res) => {
   res.redirect('/app');
