@@ -448,7 +448,7 @@ app.get('/support', (req, res) => {
     + '  <div class="card">'
     + '    <h2>문의하기</h2>'
     + '    <div class="row"><div class="k">담당자</div><div class="v">상남경영원 출결관리시스템 담당자</div></div>'
-    + '    <div class="row"><div class="k">이메일</div><div class="v"><a href="mailto:담당자이메일@example.com">담당자이메일@example.com</a></div></div>'
+    + '    <div class="row"><div class="k">이메일</div><div class="v"><a href="mailto:soulstaryonsei@gmail.com">soulstaryonsei@gmail.com</a></div></div>'
     + '    <div class="row"><div class="k">운영시간</div><div class="v">평일 09:00 ~ 18:00</div></div>'
     + '  </div>'
 
