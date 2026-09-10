@@ -232,9 +232,10 @@ function registerAdminRoutes(app) {
           SELECT student_id, COUNT(*) AS sub_count
           FROM push_subscriptions GROUP BY student_id
         ) ps ON ps.student_id = s.student_id
-        WHERE e.course_id = $1 AND s.status = 'active'
-        ORDER BY s.name
-      `, [req.params.courseId]);
+        WHERE e.course_id = $1
+          AND ($2 = '1' OR s.status = 'active')
+        ORDER BY CASE WHEN s.status = 'active' THEN 0 ELSE 1 END, s.name
+      `, [req.params.courseId, req.query.includeInactive === '1' ? '1' : '0']);
       res.json(r.rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
@@ -311,6 +312,95 @@ function registerAdminRoutes(app) {
       await db.query('DELETE FROM enrollments WHERE student_id = $1 AND course_id = $2', [req.params.studentId, req.params.courseId]);
       res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ═══ API: 수강생 일괄 과정 이동 ═══════════════════════════════
+  app.post('/api/admin/students/bulk-move', async (req, res) => {
+    const client = await db.connect();
+    try {
+      const { studentIds, fromCourseId, toCourseId } = req.body;
+
+      if (!Array.isArray(studentIds) || studentIds.length === 0) {
+        return res.status(400).json({ error: '이동할 수강생을 선택하세요.' });
+      }
+      if (!fromCourseId || !toCourseId) {
+        return res.status(400).json({ error: '원본 과정과 대상 과정이 필요합니다.' });
+      }
+      if (String(fromCourseId) === String(toCourseId)) {
+        return res.status(400).json({ error: '같은 과정으로는 이동할 수 없습니다.' });
+      }
+
+      const ids = studentIds.map(function (v) { return String(v); });
+      const fromId = String(fromCourseId);
+      const toId = String(toCourseId);
+
+      await client.query('BEGIN');
+
+      // 1) 대상 과정에 등록 (원본 과정에 실제 등록된 수강생만 / 중복은 건너뜀)
+      const ins = await client.query(`
+        INSERT INTO enrollments (student_id, course_id)
+        SELECT e.student_id, c2.course_id
+        FROM enrollments e
+        JOIN courses c1 ON c1.course_id = e.course_id AND c1.course_id::text = $2
+        CROSS JOIN courses c2
+        WHERE c2.course_id::text = $3
+          AND e.student_id::text = ANY($1::text[])
+        ON CONFLICT (student_id, course_id) DO NOTHING
+      `, [ids, fromId, toId]);
+
+      // 2) 원본 과정에서 등록 해제
+      const del = await client.query(`
+        DELETE FROM enrollments e
+        USING courses c1
+        WHERE c1.course_id::text = $2
+          AND e.course_id = c1.course_id
+          AND e.student_id::text = ANY($1::text[])
+      `, [ids, fromId]);
+
+      await client.query('COMMIT');
+
+      res.json({
+        success: true,
+        moved: del.rowCount,
+        added: ins.rowCount,
+        alreadyEnrolled: Math.max(0, del.rowCount - ins.rowCount)
+      });
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch (e) { /* 무시 */ }
+      console.error('[Admin] 일괄 과정 이동 오류:', err);
+      res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
+    }
+  });
+
+  // ═══ API: 수강생 일괄 비활성화 / 복구 ═════════════════════════
+  app.post('/api/admin/students/bulk-status', async (req, res) => {
+    try {
+      const { studentIds, status } = req.body;
+
+      if (!Array.isArray(studentIds) || studentIds.length === 0) {
+        return res.status(400).json({ error: '대상 수강생을 선택하세요.' });
+      }
+      if (status !== 'active' && status !== 'inactive') {
+        return res.status(400).json({ error: '유효하지 않은 상태값입니다.' });
+      }
+
+      const ids = studentIds.map(function (v) { return String(v); });
+
+      const r = await db.query(
+        'UPDATE students SET status = $2 WHERE student_id::text = ANY($1::text[])',
+        [ids, status]
+      );
+
+      res.json({ success: true, count: r.rowCount, status: status });
+    } catch (err) {
+      console.error('[Admin] 일괄 상태 변경 오류:', err);
+      const msg = /invalid input value|violates check constraint/i.test(err.message || '')
+        ? "students.status 컬럼이 'inactive' 값을 허용하지 않습니다. DB 제약을 먼저 확인하세요."
+        : err.message;
+      res.status(500).json({ error: msg });
+    }
   });
 
   // ═══ API: 생체인증 초기화 ════════════════════════════════════
@@ -1600,6 +1690,30 @@ function renderStudentsPage(courses) {
   }
   .sd-warncard { border:1.5px solid #f0c36d; background:#fffaf0; }
 
+  /* 선택 + 일괄 작업 바 */
+  .sd-check { width:17px; height:17px; cursor:pointer; accent-color:var(--sn-navy); vertical-align:middle; margin:0; }
+  .sd-table tbody tr.sel { background:#eef4fb; }
+  .sd-table tbody tr.sel:hover { background:#e6eef8; }
+  .sd-table tbody tr.sd-row-off td { opacity:0.55; }
+  .sd-selhint { font-size:11.5px; font-weight:600; color:var(--sn-gray); margin-top:8px; }
+
+  .sd-bulkbar {
+    position:sticky; bottom:12px; z-index:60;
+    display:none; gap:10px; align-items:center; flex-wrap:wrap;
+    background:#fff; border:1.5px solid var(--sn-navy); border-radius:16px;
+    padding:12px 16px; margin-top:12px;
+    box-shadow:0 10px 30px rgba(0,56,118,0.18);
+  }
+  .sd-bulkbar.on { display:flex; }
+  .sd-bulkcount { font-size:13px; font-weight:800; color:var(--sn-navy); white-space:nowrap; }
+  .sd-bulkbar .sd-select { height:38px; width:auto; min-width:210px; font-size:12.5px; }
+  .sd-bulkspacer { flex:1; min-width:0; }
+
+  .sd-inclabel {
+    display:flex; align-items:center; gap:7px; white-space:nowrap;
+    font-size:12.5px; font-weight:700; color:var(--sn-gray); cursor:pointer; height:44px;
+  }
+
   /* 등록 링크 모달 */
   .sd-modal {
     display:none; position:fixed; inset:0; background:rgba(16,17,18,0.55);
@@ -1645,6 +1759,9 @@ function renderStudentsPage(courses) {
     +       '<label for="courseSelect">교육과정</label>'
     +       '<select class="sd-select" id="courseSelect"><option value="">-- 과정 선택 --</option>' + courseOptions + '</select>'
     +     '</div>'
+    +     '<label class="sd-inclabel" for="incInactive">'
+    +       '<input type="checkbox" class="sd-check" id="incInactive"> 비활성 수강생 포함'
+    +     '</label>'
     +   '</div>'
     +   '<div id="studentArea"><div class="sd-empty" style="margin-top:14px;">먼저 교육과정을 선택하세요.</div></div>'
     + '</section>'
@@ -1717,6 +1834,13 @@ function renderStudentsPage(courses) {
   var courseId = '';
   var areaEl = document.getElementById('studentArea');
   var selEl = document.getElementById('courseSelect');
+  var incEl = document.getElementById('incInactive');
+
+  /* 일괄 작업용 상태 */
+  var COURSE_OPTIONS = ${JSON.stringify(courseOptions)};
+  var curStudents = [];
+  var selected = {};
+  var lastIdx = -1;
 
   /* ── 공통 ── */
   var toastTimer = null;
@@ -1746,6 +1870,115 @@ function renderStudentsPage(courses) {
       { timeZone: 'Asia/Seoul', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
+  /* ── 선택(체크박스) 유틸 ── */
+  function isOff(s) { return !!(s && s.status && s.status !== 'active'); }
+
+  function selectedIds() {
+    return Object.keys(selected).filter(function(k) { return selected[k]; });
+  }
+
+  function updateBulkUI() {
+    var bar = document.getElementById('bulkBar');
+    if (!bar) return;
+    var ids = selectedIds();
+
+    if (ids.length) bar.classList.add('on'); else bar.classList.remove('on');
+
+    var cntEl = document.getElementById('bulkCount');
+    if (cntEl) cntEl.textContent = ids.length + '명 선택';
+
+    var trs = areaEl.querySelectorAll('tbody tr[data-sid]');
+    for (var i = 0; i < trs.length; i++) {
+      var sid = trs[i].getAttribute('data-sid');
+      var on = !!selected[sid];
+      if (on) trs[i].classList.add('sel'); else trs[i].classList.remove('sel');
+      var cb = trs[i].querySelector('[data-role="rowcheck"]');
+      if (cb) cb.checked = on;
+    }
+
+    var all = document.getElementById('chkAll');
+    if (all) {
+      all.checked = ids.length > 0 && ids.length === curStudents.length;
+      all.indeterminate = ids.length > 0 && ids.length < curStudents.length;
+    }
+
+    var hasOff = false;
+    for (var j = 0; j < curStudents.length; j++) {
+      if (selected[String(curStudents[j].student_id)] && isOff(curStudents[j])) { hasOff = true; break; }
+    }
+    var rb = document.getElementById('btnReactivate');
+    if (rb) rb.style.display = hasOff ? '' : 'none';
+  }
+
+  function clearSelection() {
+    selected = {};
+    lastIdx = -1;
+    updateBulkUI();
+  }
+
+  /* ── 일괄 작업: 과정 이동 ── */
+  async function bulkMove() {
+    var ids = selectedIds();
+    if (!ids.length) { showToast('선택된 수강생이 없습니다', true); return; }
+    if (!courseId) { showToast('과정을 먼저 선택하세요', true); return; }
+
+    var sel = document.getElementById('moveTarget');
+    var to = sel ? sel.value : '';
+    if (!to) { showToast('이동할 과정을 선택하세요', true); return; }
+    if (String(to) === String(courseId)) { showToast('같은 과정으로는 이동할 수 없습니다', true); return; }
+    var toName = sel.options[sel.selectedIndex].text;
+
+    if (!confirm('선택한 ' + ids.length + '명을 다른 과정으로 이동합니다.\\n\\n이동할 과정: ' + toName
+      + '\\n\\n현재 과정의 수강 등록은 해제되고 대상 과정에 등록됩니다.\\n이미 기록된 출결 데이터는 삭제되지 않습니다.')) return;
+
+    showToast('이동 중…');
+    try {
+      var res = await fetch('/api/admin/students/bulk-move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentIds: ids, fromCourseId: courseId, toCourseId: to })
+      });
+      var d = await res.json();
+      if (d.success) {
+        showToast(d.moved + '명 이동 완료'
+          + (d.alreadyEnrolled > 0 ? ' · ' + d.alreadyEnrolled + '명은 이미 대상 과정에 등록되어 있었습니다' : ''));
+      } else {
+        showToast('이동 실패: ' + (d.error || ''), true);
+      }
+    } catch (e) { showToast('이동 실패: ' + e.message, true); }
+    loadStudents();
+  }
+
+  /* ── 일괄 작업: 비활성화 / 복구 ── */
+  async function bulkStatus(status) {
+    var ids = selectedIds();
+    if (!ids.length) { showToast('선택된 수강생이 없습니다', true); return; }
+
+    var off = (status === 'inactive');
+    var msg = off
+      ? ('선택한 ' + ids.length + '명을 비활성화합니다.\\n\\n'
+        + '· 목록에서 숨겨지고 앱 로그인이 차단됩니다.\\n'
+        + '· 특정 과정이 아니라 모든 과정에 공통 적용됩니다.\\n'
+        + '· 출결 기록과 수강 등록은 삭제되지 않습니다.\\n'
+        + '· 상단 "비활성 수강생 포함"을 켜면 다시 복구할 수 있습니다.')
+      : ('선택한 ' + ids.length + '명을 활성 상태로 복구합니다.');
+    if (!confirm(msg)) return;
+    if (off && ids.length >= 10 && !confirm(ids.length + '명은 적지 않은 인원입니다.\\n정말 비활성화할까요?')) return;
+
+    showToast('처리 중…');
+    try {
+      var res = await fetch('/api/admin/students/bulk-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentIds: ids, status: status })
+      });
+      var d = await res.json();
+      if (d.success) showToast(d.count + '명을 ' + (off ? '비활성화' : '복구') + '했습니다');
+      else showToast('처리 실패: ' + (d.error || ''), true);
+    } catch (e) { showToast('처리 실패: ' + e.message, true); }
+    loadStudents();
+  }
+
   /* ── 수강생 목록 ── */
   async function loadStudents() {
     courseId = selEl.value;
@@ -1754,9 +1987,13 @@ function renderStudentsPage(courses) {
       return;
     }
     areaEl.innerHTML = '<div class="sd-empty" style="margin-top:14px;">불러오는 중…</div>';
+    curStudents = [];
+    selected = {};
+    lastIdx = -1;
     var students;
     try {
-      var res = await fetch('/api/admin/students/' + courseId);
+      var qs = (incEl && incEl.checked) ? '?includeInactive=1' : '';
+      var res = await fetch('/api/admin/students/' + courseId + qs);
       students = await res.json();
     } catch (e) {
       areaEl.innerHTML = '<div class="sd-empty" style="margin-top:14px;">수강생을 불러오지 못했습니다.</div>';
@@ -1771,9 +2008,12 @@ function renderStudentsPage(courses) {
       return;
     }
 
+    curStudents = students;
+
     var total = students.length;
     var bioOk = students.filter(function(s) { return s.has_credential; }).length;
     var pushOk = students.filter(function(s) { return s.has_push; }).length;
+    var offCnt = students.filter(function(s) { return isOff(s); }).length;
 
     function kpi(label, val, bg, lc, vc) {
       return '<div class="sd-kpi" style="background:' + bg + ';">'
@@ -1786,6 +2026,7 @@ function renderStudentsPage(courses) {
       + kpi('미등록', total - bioOk, (total - bioOk) ? 'var(--sn-red-bg)' : '#fff',
             (total - bioOk) ? '#a32020' : 'var(--sn-gray)', (total - bioOk) ? '#D32F2F' : 'var(--sn-ink)')
       + kpi('퇴실 알림 구독', pushOk, '#fff', 'var(--sn-gray)', 'var(--sn-ink)')
+      + (offCnt ? kpi('비활성', offCnt, '#eceded', '#656668', '#656668') : '')
       + '</div>';
 
     var rows = students.map(function(s, i) {
@@ -1801,9 +2042,12 @@ function renderStudentsPage(courses) {
       }
       act += '<button type="button" class="sd-mini green" data-act="regtoken" data-sid="' + esc(s.student_id) + '" data-name="' + esc(s.name) + '">등록링크</button> ';
       act += '<button type="button" class="sd-mini red" data-act="remove" data-sid="' + esc(s.student_id) + '" data-name="' + esc(s.name) + '">삭제</button>';
-      return '<tr>'
+      var off = isOff(s);
+      return '<tr data-sid="' + esc(s.student_id) + '" data-idx="' + i + '"' + (off ? ' class="sd-row-off"' : '') + '>'
+        + '<td><input type="checkbox" class="sd-check" data-role="rowcheck" data-sid="' + esc(s.student_id) + '" data-idx="' + i + '"></td>'
         + '<td class="sd-num sd-mut">' + (i + 1) + '</td>'
-        + '<td style="font-weight:700;">' + esc(s.name) + '</td>'
+        + '<td style="font-weight:700;">' + esc(s.name)
+        +   (off ? ' <span class="sd-tag tg-off">비활성</span>' : '') + '</td>'
         + '<td class="sd-num sd-mut">' + esc(s.phone) + '</td>'
         + '<td>' + bio + '</td>'
         + '<td class="sd-mut sd-num">' + fmtDate(s.last_used_at) + '</td>'
@@ -1814,10 +2058,26 @@ function renderStudentsPage(courses) {
 
     areaEl.innerHTML = kpiHtml
       + '<div class="sd-tablewrap"><table class="sd-table">'
-      +   '<thead><tr><th style="width:44px;">#</th><th>이름</th><th>전화번호</th><th>생체인증</th>'
-      +   '<th>마지막 인증</th><th>퇴실 알림</th><th style="width:280px;">관리</th></tr></thead>'
+      +   '<thead><tr>'
+      +     '<th style="width:40px;"><input type="checkbox" class="sd-check" id="chkAll" title="전체 선택"></th>'
+      +     '<th style="width:44px;">#</th><th>이름</th><th>전화번호</th><th>생체인증</th>'
+      +     '<th>마지막 인증</th><th>퇴실 알림</th><th style="width:280px;">관리</th>'
+      +   '</tr></thead>'
       +   '<tbody>' + rows + '</tbody>'
-      + '</table></div>';
+      + '</table>'
+      + '<div class="sd-selhint">체크박스를 클릭한 뒤 Shift + 클릭하면 두 지점 사이가 한 번에 선택됩니다.</div>'
+      + '</div>'
+      + '<div class="sd-bulkbar" id="bulkBar">'
+      +   '<span class="sd-bulkcount" id="bulkCount">0명 선택</span>'
+      +   '<select class="sd-select" id="moveTarget"><option value="">-- 이동할 과정 선택 --</option>' + COURSE_OPTIONS + '</select>'
+      +   '<button type="button" class="sn-btn sn-btn-primary" style="height:38px;" data-bulk="move">과정 이동</button>'
+      +   '<span class="sd-bulkspacer"></span>'
+      +   '<button type="button" class="sd-mini green" data-bulk="activate" id="btnReactivate" style="display:none;">선택 복구</button>'
+      +   '<button type="button" class="sd-mini red" data-bulk="deactivate">선택 비활성화</button>'
+      +   '<button type="button" class="sd-mini" data-bulk="clear">선택 해제</button>'
+      + '</div>';
+
+    updateBulkUI();
   }
   selEl.addEventListener('change', loadStudents);
   document.getElementById('btnRefresh').addEventListener('click', function() {
@@ -1829,8 +2089,55 @@ function renderStudentsPage(courses) {
     window.open('/admin/reg-print/' + selEl.value, '_blank');
   });
 
-  /* ── 행 버튼 (이벤트 위임) ── */
+  if (incEl) incEl.addEventListener('change', function() {
+    if (!courseId) return;
+    loadStudents();
+  });
+
+  /* ── 행 버튼 / 선택 (이벤트 위임) ── */
   areaEl.addEventListener('click', function(ev) {
+    /* 헤더 전체 선택 */
+    if (ev.target && ev.target.id === 'chkAll') {
+      var onAll = ev.target.checked;
+      selected = {};
+      if (onAll) {
+        for (var n = 0; n < curStudents.length; n++) selected[String(curStudents[n].student_id)] = true;
+      }
+      lastIdx = -1;
+      updateBulkUI();
+      return;
+    }
+
+    /* 개별 행 선택 (Shift + 클릭 = 범위 선택) */
+    var cb = ev.target.closest('[data-role="rowcheck"]');
+    if (cb) {
+      var idx = parseInt(cb.getAttribute('data-idx'), 10);
+      var on = cb.checked;
+      if (ev.shiftKey && lastIdx >= 0 && lastIdx !== idx) {
+        var lo = Math.min(lastIdx, idx);
+        var hi = Math.max(lastIdx, idx);
+        for (var k = lo; k <= hi; k++) {
+          if (curStudents[k]) selected[String(curStudents[k].student_id)] = on;
+        }
+      } else {
+        selected[cb.getAttribute('data-sid')] = on;
+      }
+      lastIdx = idx;
+      updateBulkUI();
+      return;
+    }
+
+    /* 일괄 작업 버튼 */
+    var bulkBtn = ev.target.closest('[data-bulk]');
+    if (bulkBtn) {
+      var bk = bulkBtn.getAttribute('data-bulk');
+      if (bk === 'clear') clearSelection();
+      else if (bk === 'move') bulkMove();
+      else if (bk === 'deactivate') bulkStatus('inactive');
+      else if (bk === 'activate') bulkStatus('active');
+      return;
+    }
+
     var b = ev.target.closest('[data-act]');
     if (!b) return;
     var act = b.getAttribute('data-act');
