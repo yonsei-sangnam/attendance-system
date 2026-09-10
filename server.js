@@ -320,7 +320,20 @@ app.get('/.well-known/apple-app-site-association', (req, res) => {
   });
 });
 
-app.get('/health', async (req, res) => {
+app.get('/health', (req, res) => {
+  // 주의: 의도적으로 DB를 조회하지 않습니다.
+  // UptimeRobot 등 외부 모니터가 5분 간격으로 이 엔드포인트를 호출하는데,
+  // 여기서 DB 쿼리를 실행하면 Neon 무료 플랜 컴퓨트가 5분 idle 조건에
+  // 도달하지 못해 24시간 깨어있는 상태로 유지되어 컴퓨트 사용량이 과다 소진됩니다.
+  // (2026-09-10 사용량 80% 초과 사고 원인 중 하나 — 상세 진단은 배포 기록 참고)
+  //
+  // Render 서버 자체 다운은 이 응답이 오지 않는 것으로 감지됩니다.
+  // DB 연결 상태를 직접 확인하려면 /health/db 를 수동으로 호출하세요.
+  res.json({ status: 'ok', time: new Date().toISOString() });
+});
+
+// 수동 점검 전용: DB 연결까지 확인. 자동 모니터링에 등록하지 마세요(위 /health 주석 참고).
+app.get('/health/db', async (req, res) => {
   try {
     await db.query('SELECT 1');
     res.json({ status: 'ok', db: 'connected', time: new Date().toISOString() });
