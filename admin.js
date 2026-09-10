@@ -403,6 +403,57 @@ function registerAdminRoutes(app) {
     }
   });
 
+  // ═══ API: 수강생 일괄 과정 제외 (해당 과정 수강등록만 해제) ═══
+  app.post('/api/admin/students/bulk-unenroll', async (req, res) => {
+    const client = await db.connect();
+    try {
+      const { studentIds, courseId } = req.body;
+
+      if (!Array.isArray(studentIds) || studentIds.length === 0) {
+        return res.status(400).json({ error: '제외할 수강생을 선택하세요.' });
+      }
+      if (!courseId) {
+        return res.status(400).json({ error: '과정 정보가 필요합니다.' });
+      }
+
+      const ids = studentIds.map(function (v) { return String(v); });
+      const cid = String(courseId);
+
+      await client.query('BEGIN');
+
+      // 해당 과정의 수강 등록만 삭제 (students 레코드와 다른 과정 등록은 그대로 유지)
+      const del = await client.query(`
+        DELETE FROM enrollments e
+        USING courses c
+        WHERE c.course_id::text = $2
+          AND e.course_id = c.course_id
+          AND e.student_id::text = ANY($1::text[])
+      `, [ids, cid]);
+
+      // 제외 결과 어느 과정에도 속하지 않게 된 수강생 수 (관리자 안내용)
+      const orphan = await client.query(`
+        SELECT COUNT(*)::int AS cnt
+        FROM students s
+        WHERE s.student_id::text = ANY($1::text[])
+          AND NOT EXISTS (SELECT 1 FROM enrollments e2 WHERE e2.student_id = s.student_id)
+      `, [ids]);
+
+      await client.query('COMMIT');
+
+      res.json({
+        success: true,
+        removed: del.rowCount,
+        orphaned: orphan.rows.length ? orphan.rows[0].cnt : 0
+      });
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch (e) { /* 무시 */ }
+      console.error('[Admin] 일괄 과정 제외 오류:', err);
+      res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
+    }
+  });
+
   // ═══ API: 생체인증 초기화 ════════════════════════════════════
   app.delete('/api/admin/credentials/:studentId', async (req, res) => {
     try {
@@ -1949,6 +2000,37 @@ function renderStudentsPage(courses) {
     loadStudents();
   }
 
+  /* ── 일괄 작업: 이 과정에서만 제외 ── */
+  async function bulkUnenroll() {
+    var ids = selectedIds();
+    if (!ids.length) { showToast('선택된 수강생이 없습니다', true); return; }
+    if (!courseId) { showToast('과정을 먼저 선택하세요', true); return; }
+
+    var courseName = selEl.options[selEl.selectedIndex].text;
+
+    if (!confirm('선택한 ' + ids.length + '명을 이 과정에서만 제외합니다.\\n\\n대상 과정: ' + courseName
+      + '\\n\\n· 다른 과정의 수강 등록은 그대로 유지됩니다.\\n'
+      + '· 수강생 계정 자체는 삭제되지 않고 활성 상태로 남습니다.\\n'
+      + '· 이 과정에서 이미 기록된 출결 데이터는 삭제되지 않습니다.')) return;
+
+    showToast('처리 중…');
+    try {
+      var res = await fetch('/api/admin/students/bulk-unenroll', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentIds: ids, courseId: courseId })
+      });
+      var d = await res.json();
+      if (d.success) {
+        showToast(d.removed + '명을 이 과정에서 제외했습니다'
+          + (d.orphaned > 0 ? ' · ' + d.orphaned + '명은 소속 과정이 없어졌습니다' : ''));
+      } else {
+        showToast('제외 실패: ' + (d.error || ''), true);
+      }
+    } catch (e) { showToast('제외 실패: ' + e.message, true); }
+    loadStudents();
+  }
+
   /* ── 일괄 작업: 비활성화 / 복구 ── */
   async function bulkStatus(status) {
     var ids = selectedIds();
@@ -1956,11 +2038,12 @@ function renderStudentsPage(courses) {
 
     var off = (status === 'inactive');
     var msg = off
-      ? ('선택한 ' + ids.length + '명을 비활성화합니다.\\n\\n'
-        + '· 목록에서 숨겨지고 앱 로그인이 차단됩니다.\\n'
+      ? ('선택한 ' + ids.length + '명의 계정을 비활성화합니다.\\n\\n'
         + '· 특정 과정이 아니라 모든 과정에 공통 적용됩니다.\\n'
+        + '· 목록에서 숨겨지고 앱 로그인이 차단됩니다.\\n'
         + '· 출결 기록과 수강 등록은 삭제되지 않습니다.\\n'
-        + '· 상단 "비활성 수강생 포함"을 켜면 다시 복구할 수 있습니다.')
+        + '· 상단 "비활성 수강생 포함"을 켜면 다시 복구할 수 있습니다.\\n\\n'
+        + '특정 과정에서만 빼려면 [이 과정에서 제외]를 사용하세요.')
       : ('선택한 ' + ids.length + '명을 활성 상태로 복구합니다.');
     if (!confirm(msg)) return;
     if (off && ids.length >= 10 && !confirm(ids.length + '명은 적지 않은 인원입니다.\\n정말 비활성화할까요?')) return;
@@ -2073,7 +2156,8 @@ function renderStudentsPage(courses) {
       +   '<button type="button" class="sn-btn sn-btn-primary" style="height:38px;" data-bulk="move">과정 이동</button>'
       +   '<span class="sd-bulkspacer"></span>'
       +   '<button type="button" class="sd-mini green" data-bulk="activate" id="btnReactivate" style="display:none;">선택 복구</button>'
-      +   '<button type="button" class="sd-mini red" data-bulk="deactivate">선택 비활성화</button>'
+      +   '<button type="button" class="sd-mini red" data-bulk="unenroll">이 과정에서 제외</button>'
+      +   '<button type="button" class="sd-mini red" data-bulk="deactivate">계정 비활성화</button>'
       +   '<button type="button" class="sd-mini" data-bulk="clear">선택 해제</button>'
       + '</div>';
 
@@ -2133,6 +2217,7 @@ function renderStudentsPage(courses) {
       var bk = bulkBtn.getAttribute('data-bulk');
       if (bk === 'clear') clearSelection();
       else if (bk === 'move') bulkMove();
+      else if (bk === 'unenroll') bulkUnenroll();
       else if (bk === 'deactivate') bulkStatus('inactive');
       else if (bk === 'activate') bulkStatus('active');
       return;
