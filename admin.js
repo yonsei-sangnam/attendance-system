@@ -751,6 +751,81 @@ function registerAdminRoutes(app) {
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
 
+  // ═══ API: 회차 일괄 삭제 ════════════════════════════════════
+  app.post('/api/admin/sessions/bulk-delete', async (req, res) => {
+    const client = await db.connect();
+    try {
+      const { sessionIds } = req.body;
+      if (!Array.isArray(sessionIds) || sessionIds.length === 0) {
+        return res.status(400).json({ error: '삭제할 회차를 선택하세요.' });
+      }
+      const ids = sessionIds.map(function (v) { return String(v); });
+
+      await client.query('BEGIN');
+
+      const att = await client.query(
+        'DELETE FROM attendance WHERE session_id::text = ANY($1::text[])',
+        [ids]
+      );
+      const sess = await client.query(
+        'DELETE FROM course_sessions WHERE session_id::text = ANY($1::text[])',
+        [ids]
+      );
+
+      await client.query('COMMIT');
+      res.json({ success: true, deleted: sess.rowCount, attendanceDeleted: att.rowCount });
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch (e) { /* 무시 */ }
+      console.error('[Admin] 회차 일괄 삭제 오류:', err);
+      res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
+    }
+  });
+
+  // ═══ API: 회차 일괄 수정 (전달된 항목만 변경) ═══════════════
+  app.post('/api/admin/sessions/bulk-update', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const { sessionIds } = body;
+      if (!Array.isArray(sessionIds) || sessionIds.length === 0) {
+        return res.status(400).json({ error: '수정할 회차를 선택하세요.' });
+      }
+      const ids = sessionIds.map(function (v) { return String(v); });
+
+      // 값이 전달된 항목만 SET 절에 포함한다 (미전달 항목은 기존 값 유지)
+      const sets = [];
+      const params = [ids];
+
+      function addSet(column, value) {
+        params.push(value);
+        sets.push(column + ' = $' + params.length);
+      }
+
+      if (body.start_time) addSet('start_time', body.start_time);
+      if (body.end_time) addSet('end_time', body.end_time);
+      if (body.late_cutoff) addSet('late_cutoff', body.late_cutoff);
+      if (body.early_leave_cutoff) addSet('early_leave_cutoff', body.early_leave_cutoff);
+      if (body.is_workshop === true || body.is_workshop === false) addSet('is_workshop', body.is_workshop);
+      if (body.noteChange === true) addSet('note', body.note ? String(body.note) : null);
+
+      if (sets.length === 0) {
+        return res.status(400).json({ error: '변경할 항목이 없습니다.' });
+      }
+
+      const r = await db.query(
+        'UPDATE course_sessions SET ' + sets.join(', ') +
+        ' WHERE session_id::text = ANY($1::text[])',
+        params
+      );
+
+      res.json({ success: true, updated: r.rowCount, fields: sets.length });
+    } catch (err) {
+      console.error('[Admin] 회차 일괄 수정 오류:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ═══ API: 회차 삭제 ═════════════════════════════════════════
   app.delete('/api/admin/sessions/:sessionId', async (req, res) => {
     try {
@@ -2531,6 +2606,25 @@ function renderCoursesPage(classrooms) {
   }
   .cs-empty { background:#fff; border-radius:20px; padding:34px 20px; text-align:center; color:var(--sn-gray); font-size:13.5px; font-weight:600; }
   .cs-editbox { background:var(--sn-bg); border-radius:16px; padding:18px; margin-top:14px; }
+
+  /* 회차 선택 + 일괄 작업 */
+  .cs-check { width:17px; height:17px; cursor:pointer; accent-color:var(--sn-navy); vertical-align:middle; margin:0; }
+  .cs-table tbody tr.sel { background:#eef4fb; }
+  .cs-table tbody tr.sel:hover { background:#e6eef8; }
+  .cs-selhint { font-size:11.5px; font-weight:600; color:var(--sn-gray); margin-top:8px; }
+
+  .cs-bulkbar {
+    position:sticky; bottom:12px; z-index:60;
+    display:none; gap:10px; align-items:center; flex-wrap:wrap;
+    background:#fff; border:1.5px solid var(--sn-navy); border-radius:16px;
+    padding:12px 16px; margin-top:12px;
+    box-shadow:0 10px 30px rgba(0,56,118,0.18);
+  }
+  .cs-bulkbar.on { display:flex; }
+  .cs-bulkcount { font-size:13px; font-weight:800; color:var(--sn-navy); white-space:nowrap; }
+  .cs-bulkspacer { flex:1; min-width:0; }
+  .cs-bulkedit { display:none; margin-top:12px; }
+  .cs-bulkedit.on { display:block; }
   `;
 
   const typeOptions = '<option value="">선택</option>'
@@ -2662,6 +2756,9 @@ function renderCoursesPage(classrooms) {
   var allCourses = [];
   var allClassrooms = [];
   var sessionMap = {};
+  var curSessions = [];
+  var sessSelected = {};
+  var sessLastIdx = -1;
 
   var toastTimer = null;
   function showToast(msg, bad) {
@@ -2858,6 +2955,9 @@ function renderCoursesPage(classrooms) {
     var el = document.getElementById('sessionList');
     var addArea = document.getElementById('sessionAddArea');
     document.getElementById('editFormArea').innerHTML = '';
+    curSessions = [];
+    sessSelected = {};
+    sessLastIdx = -1;
     if (!courseId) {
       el.innerHTML = '';
       addArea.style.display = 'none';
@@ -2876,13 +2976,17 @@ function renderCoursesPage(classrooms) {
     }
     sessionMap = {};
     sessions.forEach(function(s) { sessionMap[s.session_id] = s; });
+    curSessions = sessions;
+    sessSelected = {};
+    sessLastIdx = -1;
     document.getElementById('sessionCount').textContent = sessions.length + '개 회차';
     if (!sessions.length) {
       el.innerHTML = '<div class="cs-empty">등록된 회차가 없습니다. 아래에서 추가하세요.</div>';
       return;
     }
-    var rows = sessions.map(function(s) {
-      return '<tr>'
+    var rows = sessions.map(function(s, i) {
+      return '<tr data-sessid="' + esc(s.session_id) + '" data-idx="' + i + '">'
+        + '<td><input type="checkbox" class="cs-check" data-role="sesscheck" data-sessid="' + esc(s.session_id) + '" data-idx="' + i + '"></td>'
         + '<td class="cs-num" style="font-weight:800;">' + esc(s.session_number) + '회</td>'
         + '<td class="cs-num">' + dOnly(s.session_date) + '</td>'
         + '<td class="cs-num">' + hhmm(s.start_time) + '~' + hhmm(s.end_time) + '</td>'
@@ -2896,13 +3000,229 @@ function renderCoursesPage(classrooms) {
         +   '<button type="button" class="cs-mini red" data-sact="del" data-id="' + esc(s.session_id) + '" data-num="' + esc(s.session_number) + '">삭제</button>'
         + '</td></tr>';
     }).join('');
-    el.innerHTML = '<div class="cs-tablewrap"><table class="cs-table" style="min-width:900px;">'
-      + '<thead><tr><th style="width:64px;">회차</th><th>날짜</th><th>수업시간</th><th>지각 기준</th>'
+    el.innerHTML = '<div class="cs-tablewrap"><table class="cs-table" style="min-width:940px;">'
+      + '<thead><tr><th style="width:40px;"><input type="checkbox" class="cs-check" id="sessChkAll" title="전체 선택"></th>'
+      + '<th style="width:64px;">회차</th><th>날짜</th><th>수업시간</th><th>지각 기준</th>'
       + '<th>조퇴 기준</th><th>워크샵</th><th>비고</th><th>출결</th><th style="width:150px;">관리</th></tr></thead>'
-      + '<tbody>' + rows + '</tbody></table></div>';
+      + '<tbody>' + rows + '</tbody></table>'
+      + '<div class="cs-selhint">체크박스를 클릭한 뒤 Shift + 클릭하면 두 지점 사이가 한 번에 선택됩니다.</div>'
+      + '</div>'
+      + '<div class="cs-bulkbar" id="sessBulkBar">'
+      +   '<span class="cs-bulkcount" id="sessBulkCount">0개 선택</span>'
+      +   '<button type="button" class="cs-mini" data-sbulk="toggleedit">일괄 수정</button>'
+      +   '<span class="cs-bulkspacer"></span>'
+      +   '<button type="button" class="cs-mini red" data-sbulk="delete">선택 삭제</button>'
+      +   '<button type="button" class="cs-mini" data-sbulk="clear">선택 해제</button>'
+      + '</div>'
+      + '<div class="cs-bulkedit" id="sessBulkEdit">'
+      +   '<div class="cs-editbox">'
+      +     '<div class="cs-title">선택 회차 일괄 수정</div>'
+      +     '<div class="cs-mut" style="margin-top:5px;line-height:1.7;">비워둔 항목은 <strong>변경하지 않습니다.</strong> 날짜는 회차마다 달라 일괄 수정에서 제외했습니다.</div>'
+      +     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-top:14px;">'
+      +       '<div class="cs-field"><label>시작</label><input class="cs-input" type="time" id="bk_start"></div>'
+      +       '<div class="cs-field"><label>종료</label><input class="cs-input" type="time" id="bk_end"></div>'
+      +       '<div class="cs-field"><label>지각 기준</label><input class="cs-input" type="time" id="bk_late"></div>'
+      +       '<div class="cs-field"><label>조퇴 기준</label><input class="cs-input" type="time" id="bk_early"></div>'
+      +       '<div class="cs-field"><label>워크샵</label><select class="cs-select" id="bk_ws">'
+      +         '<option value="">변경 안 함</option><option value="false">아니오</option><option value="true">예</option>'
+      +       '</select></div>'
+      +     '</div>'
+      +     '<div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:12px;">'
+      +       '<label class="cs-mut" style="display:flex;align-items:center;gap:7px;height:44px;cursor:pointer;white-space:nowrap;">'
+      +         '<input type="checkbox" class="cs-check" id="bk_notechg"> 비고 변경'
+      +       '</label>'
+      +       '<div class="cs-field" style="flex:1;min-width:220px;">'
+      +         '<label for="bk_note">비고 (비워두고 저장하면 기존 비고가 지워집니다)</label>'
+      +         '<input class="cs-input" type="text" id="bk_note" placeholder="공휴일, 단체식사, 외부행사 등" disabled>'
+      +       '</div>'
+      +     '</div>'
+      +     '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">'
+      +       '<button type="button" class="sn-btn sn-btn-primary" style="height:44px;" data-sbulk="applyedit">선택 회차에 적용</button>'
+      +       '<button type="button" class="sn-btn sn-btn-secondary" style="height:44px;" data-sbulk="canceledit">취소</button>'
+      +     '</div>'
+      +   '</div>'
+      + '</div>';
+
+    updateSessBulkUI();
   }
 
+  /* ── 회차 선택 유틸 ── */
+  function sessSelectedIds() {
+    return Object.keys(sessSelected).filter(function(k) { return sessSelected[k]; });
+  }
+
+  function updateSessBulkUI() {
+    var bar = document.getElementById('sessBulkBar');
+    if (!bar) return;
+    var ids = sessSelectedIds();
+
+    if (ids.length) bar.classList.add('on'); else bar.classList.remove('on');
+
+    var cnt = document.getElementById('sessBulkCount');
+    if (cnt) cnt.textContent = ids.length + '개 선택';
+
+    var listEl = document.getElementById('sessionList');
+    var trs = listEl.querySelectorAll('tbody tr[data-sessid]');
+    for (var i = 0; i < trs.length; i++) {
+      var sid = trs[i].getAttribute('data-sessid');
+      var on = !!sessSelected[sid];
+      if (on) trs[i].classList.add('sel'); else trs[i].classList.remove('sel');
+      var cb = trs[i].querySelector('[data-role="sesscheck"]');
+      if (cb) cb.checked = on;
+    }
+
+    var all = document.getElementById('sessChkAll');
+    if (all) {
+      all.checked = ids.length > 0 && ids.length === curSessions.length;
+      all.indeterminate = ids.length > 0 && ids.length < curSessions.length;
+    }
+
+    if (!ids.length) {
+      var box = document.getElementById('sessBulkEdit');
+      if (box) box.classList.remove('on');
+    }
+  }
+
+  function clearSessSelection() {
+    sessSelected = {};
+    sessLastIdx = -1;
+    updateSessBulkUI();
+  }
+
+  /* ── 회차 일괄 삭제 ── */
+  async function bulkDeleteSessions() {
+    var ids = sessSelectedIds();
+    if (!ids.length) { showToast('선택된 회차가 없습니다', true); return; }
+
+    var attTotal = 0;
+    var nums = [];
+    for (var i = 0; i < curSessions.length; i++) {
+      var s = curSessions[i];
+      if (sessSelected[String(s.session_id)]) {
+        attTotal += parseInt(s.attendance_count, 10) || 0;
+        nums.push(s.session_number + '회');
+      }
+    }
+    var preview = nums.slice(0, 12).join(', ') + (nums.length > 12 ? ' 외 ' + (nums.length - 12) + '개' : '');
+
+    if (!confirm('선택한 ' + ids.length + '개 회차를 삭제합니다.\\n\\n' + preview
+      + '\\n\\n해당 회차의 출결 기록 ' + attTotal + '건도 함께 삭제됩니다.\\n되돌릴 수 없습니다.')) return;
+    if (attTotal > 0 && !confirm('출결 기록 ' + attTotal + '건이 영구 삭제됩니다.\\n정말 진행할까요?')) return;
+
+    showToast('삭제 중…');
+    try {
+      var res = await fetch('/api/admin/sessions/bulk-delete', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionIds: ids })
+      });
+      var r = await res.json();
+      if (r.success) {
+        showToast(r.deleted + '개 회차를 삭제했습니다'
+          + (r.attendanceDeleted > 0 ? ' · 출결 ' + r.attendanceDeleted + '건 삭제' : ''));
+        loadSessionsForCourse(); loadCourses();
+      } else showToast('삭제 실패: ' + (r.error || ''), true);
+    } catch (e) { showToast('삭제 실패: ' + e.message, true); }
+  }
+
+  /* ── 회차 일괄 수정 ── */
+  async function bulkUpdateSessions() {
+    var ids = sessSelectedIds();
+    if (!ids.length) { showToast('선택된 회차가 없습니다', true); return; }
+
+    var payload = { sessionIds: ids };
+    var labels = [];
+
+    var v = document.getElementById('bk_start').value;
+    if (v) { payload.start_time = v; labels.push('시작 ' + v); }
+    v = document.getElementById('bk_end').value;
+    if (v) { payload.end_time = v; labels.push('종료 ' + v); }
+    v = document.getElementById('bk_late').value;
+    if (v) { payload.late_cutoff = v; labels.push('지각 기준 ' + v); }
+    v = document.getElementById('bk_early').value;
+    if (v) { payload.early_leave_cutoff = v; labels.push('조퇴 기준 ' + v); }
+    v = document.getElementById('bk_ws').value;
+    if (v === 'true' || v === 'false') {
+      payload.is_workshop = (v === 'true');
+      labels.push('워크샵 ' + (v === 'true' ? '예' : '아니오'));
+    }
+    if (document.getElementById('bk_notechg').checked) {
+      var note = document.getElementById('bk_note').value.trim();
+      payload.noteChange = true;
+      payload.note = note;
+      labels.push(note ? ('비고 "' + note + '"') : '비고 삭제');
+    }
+
+    if (!labels.length) { showToast('변경할 항목을 하나 이상 입력하세요', true); return; }
+
+    if (!confirm('선택한 ' + ids.length + '개 회차를 다음과 같이 변경합니다.\\n\\n'
+      + labels.join('\\n') + '\\n\\n입력하지 않은 항목은 그대로 유지됩니다.')) return;
+
+    showToast('수정 중…');
+    try {
+      var res = await fetch('/api/admin/sessions/bulk-update', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      var r = await res.json();
+      if (r.success) {
+        showToast(r.updated + '개 회차를 수정했습니다');
+        loadSessionsForCourse();
+      } else showToast('수정 실패: ' + (r.error || ''), true);
+    } catch (e) { showToast('수정 실패: ' + e.message, true); }
+  }
+
+  document.getElementById('sessionList').addEventListener('change', function(ev) {
+    if (ev.target && ev.target.id === 'bk_notechg') {
+      var noteInput = document.getElementById('bk_note');
+      if (noteInput) noteInput.disabled = !ev.target.checked;
+    }
+  });
+
   document.getElementById('sessionList').addEventListener('click', function(ev) {
+    /* 전체 선택 */
+    if (ev.target && ev.target.id === 'sessChkAll') {
+      var onAll = ev.target.checked;
+      sessSelected = {};
+      if (onAll) {
+        for (var n = 0; n < curSessions.length; n++) sessSelected[String(curSessions[n].session_id)] = true;
+      }
+      sessLastIdx = -1;
+      updateSessBulkUI();
+      return;
+    }
+
+    /* 개별 선택 (Shift + 클릭 = 범위 선택) */
+    var cb = ev.target.closest('[data-role="sesscheck"]');
+    if (cb) {
+      var idx = parseInt(cb.getAttribute('data-idx'), 10);
+      var on = cb.checked;
+      if (ev.shiftKey && sessLastIdx >= 0 && sessLastIdx !== idx) {
+        var lo = Math.min(sessLastIdx, idx);
+        var hi = Math.max(sessLastIdx, idx);
+        for (var k = lo; k <= hi; k++) {
+          if (curSessions[k]) sessSelected[String(curSessions[k].session_id)] = on;
+        }
+      } else {
+        sessSelected[cb.getAttribute('data-sessid')] = on;
+      }
+      sessLastIdx = idx;
+      updateSessBulkUI();
+      return;
+    }
+
+    /* 일괄 작업 버튼 */
+    var sb = ev.target.closest('[data-sbulk]');
+    if (sb) {
+      var act = sb.getAttribute('data-sbulk');
+      var box = document.getElementById('sessBulkEdit');
+      if (act === 'clear') clearSessSelection();
+      else if (act === 'toggleedit') { if (box) box.classList.toggle('on'); }
+      else if (act === 'canceledit') { if (box) box.classList.remove('on'); }
+      else if (act === 'delete') bulkDeleteSessions();
+      else if (act === 'applyedit') bulkUpdateSessions();
+      return;
+    }
+
     var b = ev.target.closest('[data-sact]');
     if (!b) return;
     if (b.getAttribute('data-sact') === 'edit') editSession(b.getAttribute('data-id'));
