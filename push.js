@@ -307,6 +307,7 @@ async function sendExitReminders(remindBeforeMin, autoCloseMin) {
       WHERE a.session_id = $1
         AND a.check_in_at IS NOT NULL
         AND a.check_out_at IS NULL
+        AND s.status = 'active'
     `, [session.session_id]);
 
     const nowKST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
@@ -347,7 +348,7 @@ async function sendExitReminders(remindBeforeMin, autoCloseMin) {
 // ─── 퇴실 미확인 자동 처리 ────────────────────────────────
 async function sendMissedExitAlerts(autoCloseMin) {
   const students = await db.query(`
-    SELECT a.attendance_id, a.student_id, s.name, 
+    SELECT a.attendance_id, a.student_id, s.name, s.status AS student_status,
            cs.session_id, cs.end_time, c.course_name
     FROM attendance a
     JOIN students s ON s.student_id = a.student_id
@@ -370,6 +371,9 @@ async function sendMissedExitAlerts(autoCloseMin) {
       FROM (SELECT session_date FROM course_sessions WHERE session_id = $3) sub
       WHERE attendance_id = $1
     `, [row.attendance_id, row.end_time, row.session_id]);
+
+    // 비활성 수강생은 자동 처리(데이터 정합성)만 하고 푸시는 보내지 않음
+    if (row.student_status && row.student_status !== 'active') continue;
 
     const payload = {
       title: '퇴실미확인 처리',
