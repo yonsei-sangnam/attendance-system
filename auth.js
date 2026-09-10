@@ -126,6 +126,13 @@ async function verifyRegistration(req, studentId, response, isReRegister = false
   await db.query('DELETE FROM credentials WHERE student_id = $1', [studentId]);
   await db.query('DELETE FROM push_subscriptions WHERE student_id = $1', [studentId]);
 
+  // 클라이언트가 getTransports()를 보내지 않으면 빈 배열이 저장되어
+  // 이후 인증 시 allowCredentials의 transports 힌트가 비게 된다.
+  // 등록은 authenticatorAttachment: 'platform' 고정이므로 internal로 보정한다.
+  const regTransports = (Array.isArray(response.response.transports) && response.response.transports.length)
+    ? response.response.transports
+    : ['internal'];
+
   await db.query(`
     INSERT INTO credentials (student_id, webauthn_cred_id, public_key, counter, transports, registered_at)
     VALUES ($1, $2, $3, $4, $5, NOW())
@@ -134,7 +141,7 @@ async function verifyRegistration(req, studentId, response, isReRegister = false
     credential.id,
     Buffer.from(credential.publicKey).toString('base64url'),
     credential.counter,
-    response.response.transports || [],
+    regTransports,
   ]);
 
   await db.query(
@@ -165,7 +172,11 @@ async function createAuthenticationOptions(req, studentId) {
   const allowCredentials = creds.rows.map(row => ({
     id: row.webauthn_cred_id,
     type: 'public-key',
-    transports: row.transports || [],
+    // 빈 배열([])은 JS에서 truthy이므로 `row.transports || [...]` 로는 걸러지지 않는다.
+    // 힌트가 비어 있으면 브라우저가 어떤 인증기를 쓸지 판단하지 못해
+    // 안드로이드 크롬에서 프롬프트가 뜨지 않는다. 등록은 platform 고정이므로 internal로 보정.
+    transports: (Array.isArray(row.transports) && row.transports.length)
+      ? row.transports : ['internal'],
   }));
 
   const options = await generateAuthenticationOptions({
@@ -268,7 +279,9 @@ async function createPasskeyAuthOptions(req, studentId, discoverable) {
     allowCredentials = creds.rows.map(row => ({
       id: row.webauthn_cred_id,
       type: 'public-key',
-      transports: row.transports || ['internal'],
+      // 빈 배열([])은 truthy라 기존 `|| ['internal']` 폴백이 동작하지 않았다.
+      transports: (Array.isArray(row.transports) && row.transports.length)
+        ? row.transports : ['internal'],
     }));
   } else if (studentId && discoverable) {
     // discoverable 모드에서도 크레덴셜 존재 확인
