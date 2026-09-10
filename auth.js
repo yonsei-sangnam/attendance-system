@@ -282,6 +282,8 @@ async function createPasskeyAuthOptions(req, studentId, discoverable) {
   const options = await generateAuthenticationOptions({
     rpID: rp.rpID,
     userVerification: 'preferred',
+    timeout: 60000,   // 명시적 지정. 미지정 시 라이브러리 기본값에 의존하게 되어
+                      // 안드로이드에서 프롬프트가 뜨지 않을 때 무한 대기로 보일 수 있음
     ...(allowCredentials ? { allowCredentials } : {}),
   });
 
