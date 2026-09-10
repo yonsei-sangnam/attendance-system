@@ -419,23 +419,30 @@ function startScheduler() {
     .join(', ');
   console.log(`[Scheduler] 퇴실 리마인더 스케줄러 시작 (${desc})`);
 
+  const IDLE_RECHECK_MIN = 15; // 운영 시간 밖에서 다음 확인까지 대기할 시간(분). DB 조회 없이 순수 시간 계산만 함.
+
   async function runCycle() {
+    // 운영 시간 밖이면 DB에 접속하지 않고 대기만 한다.
+    // (여기서 DB를 조회하면 Neon 컴퓨트가 5분 idle 조건에 도달하지 못해 계속 깨어있게 됨)
+    if (!isWithinScheduleHours()) {
+      setTimeout(runCycle, IDLE_RECHECK_MIN * 60 * 1000);
+      return;
+    }
+
     var ps = await getPushSettings();
 
-    if (isWithinScheduleHours()) {
-      try {
-        const reminders = await sendExitReminders(ps.remindBeforeMin, ps.autoCloseMin);
-        if (reminders.sent > 0) {
-          console.log(`[Scheduler] 퇴실 리마인더 ${reminders.sent}건 발송 (간격:${ps.intervalMin}분, 종료전:${ps.remindBeforeMin}분, 자동처리:${ps.autoCloseMin}분)`);
-        }
-
-        const missed = await sendMissedExitAlerts(ps.autoCloseMin);
-        if (missed.processed > 0) {
-          console.log(`[Scheduler] 퇴실미확인 ${missed.processed}건 자동 처리`);
-        }
-      } catch (err) {
-        console.error('[Scheduler] 오류:', err.message);
+    try {
+      const reminders = await sendExitReminders(ps.remindBeforeMin, ps.autoCloseMin);
+      if (reminders.sent > 0) {
+        console.log(`[Scheduler] 퇴실 리마인더 ${reminders.sent}건 발송 (간격:${ps.intervalMin}분, 종료전:${ps.remindBeforeMin}분, 자동처리:${ps.autoCloseMin}분)`);
       }
+
+      const missed = await sendMissedExitAlerts(ps.autoCloseMin);
+      if (missed.processed > 0) {
+        console.log(`[Scheduler] 퇴실미확인 ${missed.processed}건 자동 처리`);
+      }
+    } catch (err) {
+      console.error('[Scheduler] 오류:', err.message);
     }
 
     setTimeout(runCycle, ps.intervalMin * 60 * 1000);
