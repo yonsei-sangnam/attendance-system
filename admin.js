@@ -454,6 +454,30 @@ function registerAdminRoutes(app) {
     }
   });
 
+  // ═══ API: 수강생 출결 시도 이력 ═════════════════════════════
+  app.get('/api/admin/attempts/:studentId', async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit, 10) || 60, 200);
+      const r = await db.query(`
+        SELECT attempt_id, classroom_code, action, stage, result, reason, detail,
+               accuracy, distance_m, created_at
+        FROM attendance_attempts
+        WHERE student_id = $1
+        ORDER BY created_at DESC
+        LIMIT $2
+      `, [req.params.studentId, limit]);
+      res.json({ success: true, rows: r.rows });
+    } catch (err) {
+      // 테이블 미생성 시 안내 (배포 순서가 뒤바뀐 경우)
+      const missing = /relation .* does not exist/i.test(err.message || '');
+      res.status(500).json({
+        error: missing
+          ? '시도 로그 테이블(attendance_attempts)이 아직 생성되지 않았습니다.'
+          : err.message
+      });
+    }
+  });
+
   // ═══ API: 생체인증 초기화 ════════════════════════════════════
   app.delete('/api/admin/credentials/:studentId', async (req, res) => {
     try {
@@ -1951,6 +1975,16 @@ function renderStudentsPage(courses) {
     +   '</div>'
     + '</div>'
 
+    // ── 시도 이력 모달 ──
+    + '<div class="sd-modal" id="atModal">'
+    +   '<div class="sd-modal-in" style="max-width:760px;width:94vw;text-align:left;">'
+    +     '<div style="font-size:19px;font-weight:800;letter-spacing:-0.02em;" id="atName"></div>'
+    +     '<div class="sd-mut" style="margin-top:5px;">입·퇴실 시도 기록 (성공·실패 모두) · 최근 60건</div>'
+    +     '<div id="atBody" style="margin-top:14px;max-height:56vh;overflow:auto;"></div>'
+    +     '<button type="button" class="sn-btn sn-btn-secondary" style="height:46px;width:100%;margin-top:16px;" id="btnCloseAt">닫기</button>'
+    +   '</div>'
+    + '</div>'
+
     + '<div id="snToast" style="position:fixed;left:50%;bottom:28px;transform:translateX(-50%);'
     +   'background:var(--sn-navy);color:#fff;font-size:13px;font-weight:700;padding:12px 20px;'
     +   'border-radius:999px;box-shadow:0 8px 24px rgba(0,56,118,0.25);opacity:0;pointer-events:none;'
@@ -2137,6 +2171,90 @@ function renderStudentsPage(courses) {
     loadStudents();
   }
 
+  /* ── 시도 이력 ── */
+  var AT_REASON = {
+    accuracy: 'GPS 정확도 부족',
+    out_of_range: '건물 반경 밖',
+    geo_error: '위치 정보 실패',
+    timeout: '생체인증 창 안 열림',
+    cancelled: '사용자 취소',
+    bio_error: '생체인증 오류',
+    verify_fail: '서버 검증 실패',
+    net_error: '네트워크 오류'
+  };
+  var AT_STAGE = { location: '위치 확인', biometric: '생체인증', verify: '서버 검증' };
+  var AT_ACTION = { checkin: '입실', checkout: '퇴실', register: '등록', unknown: '-' };
+
+  function atTime(v) {
+    if (!v) return '-';
+    var d = new Date(v);
+    if (isNaN(d.getTime())) return '-';
+    function p(n) { return n < 10 ? '0' + n : String(n); }
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+
+  async function showAttempts(sid, name) {
+    document.getElementById('atName').textContent = name + ' · 시도 이력';
+    document.getElementById('atBody').innerHTML = '<div class="sd-empty">불러오는 중…</div>';
+    document.getElementById('atModal').classList.add('on');
+
+    var d;
+    try {
+      var res = await fetch('/api/admin/attempts/' + sid);
+      d = await res.json();
+    } catch (e) {
+      document.getElementById('atBody').innerHTML = '<div class="sd-empty">불러오지 못했습니다.</div>';
+      return;
+    }
+    if (!d || !d.success) {
+      document.getElementById('atBody').innerHTML =
+        '<div class="sd-empty">' + esc((d && d.error) || '불러오지 못했습니다.') + '</div>';
+      return;
+    }
+    if (!d.rows.length) {
+      document.getElementById('atBody').innerHTML =
+        '<div class="sd-empty">아직 기록된 시도가 없습니다.<br>기능 배포 이후의 시도부터 쌓입니다.</div>';
+      return;
+    }
+
+    var okCnt = d.rows.filter(function(r) { return r.result === 'success'; }).length;
+    var failCnt = d.rows.length - okCnt;
+
+    var rows = d.rows.map(function(r) {
+      var ok = r.result === 'success';
+      var badge = ok
+        ? '<span class="sd-tag tg-ok">성공</span>'
+        : '<span class="sd-tag tg-no">실패</span>';
+      var why = ok ? '<span class="sd-mut">—</span>'
+        : esc(AT_REASON[r.reason] || r.reason || '사유 미상');
+      var extra = [];
+      if (r.distance_m !== null && r.distance_m !== undefined) extra.push('거리 ' + esc(r.distance_m) + 'm');
+      if (r.accuracy !== null && r.accuracy !== undefined) extra.push('정확도 ' + esc(Math.round(r.accuracy)) + 'm');
+      return '<tr>'
+        + '<td class="sd-num sd-mut" style="white-space:nowrap;">' + atTime(r.created_at) + '</td>'
+        + '<td style="white-space:nowrap;">' + esc(AT_ACTION[r.action] || r.action || '-') + '</td>'
+        + '<td style="white-space:nowrap;">' + esc(AT_STAGE[r.stage] || r.stage || '-') + '</td>'
+        + '<td>' + badge + '</td>'
+        + '<td>' + why + '</td>'
+        + '<td class="sd-mut sd-num" style="white-space:nowrap;">' + (extra.length ? esc(extra.join(' · ')) : '—') + '</td>'
+        + '</tr>';
+    }).join('');
+
+    document.getElementById('atBody').innerHTML =
+        '<div class="sd-mut" style="margin-bottom:10px;">성공 ' + okCnt + '건 · 실패 ' + failCnt + '건</div>'
+      + '<div class="sd-tablewrap" style="padding:4px 12px 10px;"><table class="sd-table" style="min-width:620px;">'
+      +   '<thead><tr><th style="width:110px;">시각</th><th style="width:60px;">구분</th><th style="width:90px;">단계</th>'
+      +   '<th style="width:70px;">결과</th><th>사유</th><th style="width:170px;">참고</th></tr></thead>'
+      +   '<tbody>' + rows + '</tbody></table></div>';
+  }
+
+  document.getElementById('btnCloseAt').addEventListener('click', function() {
+    document.getElementById('atModal').classList.remove('on');
+  });
+  document.getElementById('atModal').addEventListener('click', function(ev) {
+    if (ev.target === this) this.classList.remove('on');
+  });
+
   /* ── 수강생 목록 ── */
   async function loadStudents() {
     courseId = selEl.value;
@@ -2199,6 +2317,7 @@ function renderStudentsPage(courses) {
         act += '<button type="button" class="sd-mini" data-act="resetcred" data-sid="' + esc(s.student_id) + '" data-name="' + esc(s.name) + '">인증 초기화</button> ';
       }
       act += '<button type="button" class="sd-mini green" data-act="regtoken" data-sid="' + esc(s.student_id) + '" data-name="' + esc(s.name) + '">등록링크</button> ';
+      act += '<button type="button" class="sd-mini" data-act="attempts" data-sid="' + esc(s.student_id) + '" data-name="' + esc(s.name) + '">시도 이력</button> ';
       act += '<button type="button" class="sd-mini red" data-act="remove" data-sid="' + esc(s.student_id) + '" data-name="' + esc(s.name) + '">삭제</button>';
       var off = isOff(s);
       return '<tr data-sid="' + esc(s.student_id) + '" data-idx="' + i + '"' + (off ? ' class="sd-row-off"' : '') + '>'
@@ -2305,6 +2424,7 @@ function renderStudentsPage(courses) {
     var name = b.getAttribute('data-name');
     if (act === 'resetcred') resetCred(sid, name);
     else if (act === 'regtoken') issueRegToken(sid, name);
+    else if (act === 'attempts') showAttempts(sid, name);
     else if (act === 'remove') removeStudent(sid, name);
   });
 
