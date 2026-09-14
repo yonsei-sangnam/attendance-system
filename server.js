@@ -9,6 +9,7 @@ const attend = require('./attendance');
 const admin = require('./admin');
 const sync = require('./sync');
 const push = require('./push');
+const cleanup = require('./cleanup');
 const layout = require('./layout');
 
 const app = express();
@@ -370,7 +371,11 @@ app.get('/privacy', (req, res) => {
     + '<ul>'
     + '<li><strong>전화번호:</strong> 수강생 식별 및 로그인에 사용</li>'
     + '<li><strong>이름:</strong> 출결 기록 관리에 사용</li>'
-    + '<li><strong>위치 정보:</strong> 출결 확인 시 강의실 위치 검증에 사용 (정확한 위치, 퇴실 처리 시점에만 일시 수집하며 서버에 저장하지 않음)</li>'
+    + '<li><strong>위치 정보:</strong> 출결 확인 시 강의실 위치 검증에 사용 '
+    +   '(정확한 위치를 입실·퇴실을 시도하는 시점에만 수집하며, 아래 &lsquo;출결 시도 기록&rsquo;에 포함하여 보관합니다. '
+    +   '상시 위치 추적은 하지 않습니다)</li>'
+    + '<li><strong>출결 시도 기록:</strong> 시도 일시, 구분(입실/퇴실), 진행 단계, 성공 또는 실패 여부와 실패 사유, '
+    +   '시도 당시의 위치 좌표와 GPS 정확도 및 강의 건물로부터의 거리, 접속 기기 및 브라우저 정보</li>'
     + '<li><strong>생체인식 정보:</strong> 본인 확인을 위한 FIDO2 공개키 (생체 데이터 자체는 기기에만 저장되며 서버로 전송되지 않음)</li>'
     + '<li><strong>기기 식별 토큰:</strong> 푸시 알림 발송에 사용 (FCM 토큰)</li>'
     + '</ul>'
@@ -381,11 +386,17 @@ app.get('/privacy', (req, res) => {
     + '<li>출결 현황 조회 제공</li>'
     + '<li>퇴실 알림 푸시 발송</li>'
     + '<li>부정 출결 방지를 위한 위치 및 생체 인증</li>'
+    + '<li>출결 관련 이의 제기 시 사실 확인 (예: 출결 체크를 시도하였으나 실패한 경우의 확인)</li>'
+    + '<li>시스템 오류 원인 분석 및 위치 검증 기준 개선</li>'
     + '</ul>'
     + ''
     + '<h2>3. 개인정보의 보유 및 이용 기간</h2>'
-    + '<p>수집된 개인정보는 해당 교육 과정 종료 후 지체 없이 파기합니다. '
-    + '단, 관련 법령에 의한 보존 의무가 있는 경우 해당 기간 동안 보관합니다.</p>'
+    + '<ul>'
+    + '<li><strong>출결 기록 및 수강생 정보:</strong> 해당 교육 과정 종료 후 지체 없이 파기합니다.</li>'
+    + '<li><strong>출결 시도 기록(위치 좌표 포함):</strong> 해당 교육 과정 종료 후 1개월이 경과한 시점에 '
+    +   '시스템이 자동으로 파기합니다. 이의 제기 기간을 고려한 최소한의 기간입니다.</li>'
+    + '</ul>'
+    + '<p>단, 관련 법령에 의한 보존 의무가 있는 경우 해당 기간 동안 보관합니다.</p>'
     + ''
     + '<h2>4. 개인정보의 제3자 제공</h2>'
     + '<p>기관은 이용자의 개인정보를 제3자에게 제공하지 않습니다. '
@@ -397,6 +408,7 @@ app.get('/privacy', (req, res) => {
     + '<li>생체인증은 FIDO2/WebAuthn 표준을 사용하여 생체 데이터가 서버에 저장되지 않음</li>'
     + '<li>비밀번호는 단방향 해시(bcrypt)로 암호화 저장</li>'
     + '<li>데이터베이스 접근 권한 제한</li>'
+    + '<li>출결 시도 기록은 관리자 인증을 거친 화면에서만 열람 가능</li>'
     + '</ul>'
     + ''
     + '<h2>6. 이용자의 권리</h2>'
@@ -413,7 +425,7 @@ app.get('/privacy', (req, res) => {
     + '<p>연세대학교 상남경영원<br>'
     + '문의: 상남경영원 행정팀</p>'
     + ''
-    + '<p class="updated">최종 수정일: 2026년 8월 11일</p>'
+    + '<p class="updated">최종 수정일: 2026년 9월 14일</p>'
     + '</body></html>';
 
   res.send(html);
@@ -776,6 +788,7 @@ app.get('/app-auth', async (req, res) => {
     + '      return false;'
     + '    }'
     + ''
+    + '    LAST_LOC = { lat: myLat, lng: myLng, accuracy: myAcc };'
     + '    logAttempt("location", "success", null,'
     + '      { lat: myLat, lng: myLng, accuracy: myAcc, distance: Math.round(dist) });'
     + '    return true;'
@@ -826,6 +839,7 @@ app.get('/app-auth', async (req, res) => {
     + '  } catch (e) { /* 로깅 실패는 무시 */ }'
     + '}'
     + ''
+    + 'var LAST_LOC = null;'
     + 'var BIO_TIMEOUT_MS = 45000;'
     + 'function makeCtrl() {'
     + '  try { return (typeof AbortController !== \"undefined\") ? new AbortController() : null; }'
@@ -986,12 +1000,12 @@ app.get('/app-auth', async (req, res) => {
     + '    if (ATTENDANCE_ID) {'
     + '      verRes = await fetch("/api/auth/checkout", {'
     + '        method:"POST", headers:{"Content-Type":"application/json"},'
-    + '        body: JSON.stringify({ response: response, studentId: STUDENT_ID, attendanceId: ATTENDANCE_ID })'
+    + '        body: JSON.stringify({ response: response, studentId: STUDENT_ID, attendanceId: ATTENDANCE_ID, loc: LAST_LOC })'
     + '      });'
     + '    } else if (CLASSROOM_CODE) {'
     + '      verRes = await fetch("/api/auth/passkey-verify", {'
     + '        method:"POST", headers:{"Content-Type":"application/json"},'
-    + '        body: JSON.stringify({ response: response, classroomCode: CLASSROOM_CODE })'
+    + '        body: JSON.stringify({ response: response, classroomCode: CLASSROOM_CODE, loc: LAST_LOC })'
     + '      });'
     + '    } else {'
     + '      showError("인증 파라미터 부족");'
@@ -1377,6 +1391,89 @@ app.post('/api/attendance/attempt', async (req, res) => {
   }
 });
 
+// ─── 서버 측 위치 검증 ───────────────────────────────────────
+// 기존에는 거리 판정이 브라우저에서만 이뤄져 우회가 가능했다.
+// 클라이언트가 인증 요청에 함께 실어 보낸 좌표를 서버가 다시 판정한다.
+// (추가 네트워크 왕복이나 사용자 동작은 발생하지 않는다)
+const MAX_GPS_ACCURACY_M = 500;
+
+function distanceMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const toRad = function (d) { return d * Math.PI / 180; };
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+async function verifyLocationOnServer(loc) {
+  try {
+    const s = await db.query(
+      "SELECT key, value FROM system_settings WHERE key IN " +
+      "('location_check_enabled','building_lat','building_lng','building_radius')"
+    );
+    const cfg = {};
+    s.rows.forEach(function (r) { cfg[r.key] = r.value; });
+
+    // 위치 검증이 꺼져 있으면 통과 (심사 기간 등)
+    if (String(cfg.location_check_enabled) !== 'true') return { ok: true, skipped: true };
+
+    const bLat = parseFloat(cfg.building_lat);
+    const bLng = parseFloat(cfg.building_lng);
+    const radius = parseFloat(cfg.building_radius) || 200;
+    if (!isFinite(bLat) || !isFinite(bLng)) return { ok: true, skipped: true };
+
+    if (!loc) return { ok: false, reason: 'no_location', message: '위치 정보가 확인되지 않았습니다. 앱을 최신 버전으로 업데이트해주세요.' };
+
+    const lat = parseFloat(loc.lat);
+    const lng = parseFloat(loc.lng);
+    const acc = parseFloat(loc.accuracy);
+    if (!isFinite(lat) || !isFinite(lng)) {
+      return { ok: false, reason: 'no_location', message: '위치 정보가 올바르지 않습니다.' };
+    }
+    if (isFinite(acc) && acc > MAX_GPS_ACCURACY_M) {
+      return { ok: false, reason: 'accuracy', accuracy: acc, message: '위치 정확도가 부족합니다. 정확한 위치를 켜고 다시 시도해주세요.' };
+    }
+
+    const dist = distanceMeters(lat, lng, bLat, bLng);
+    if (dist > radius) {
+      return {
+        ok: false, reason: 'out_of_range',
+        distance: Math.round(dist), accuracy: isFinite(acc) ? acc : null,
+        message: '강의실 근처에서 다시 시도해주세요.'
+      };
+    }
+    return { ok: true, distance: Math.round(dist), accuracy: isFinite(acc) ? acc : null };
+  } catch (err) {
+    // 설정 조회 실패로 출결을 막지는 않는다
+    console.error('[Location] 서버 검증 오류:', err.message);
+    return { ok: true, skipped: true };
+  }
+}
+
+// 서버 판정 결과를 시도 로그에 남긴다 (best-effort)
+async function logServerLocationReject(info, chk, loc) {
+  try {
+    await db.query(`
+      INSERT INTO attendance_attempts
+        (student_id, classroom_code, attendance_id, action, stage, result, reason, detail,
+         lat, lng, accuracy, distance_m)
+      VALUES ($1,$2,$3,$4,'location','fail',$5,'서버 검증에서 차단됨',$6,$7,$8,$9)
+    `, [
+      info.studentId || null,
+      info.classroomCode || null,
+      info.attendanceId || null,
+      info.action || 'unknown',
+      chk.reason || null,
+      loc && isFinite(parseFloat(loc.lat)) ? parseFloat(loc.lat) : null,
+      loc && isFinite(parseFloat(loc.lng)) ? parseFloat(loc.lng) : null,
+      chk.accuracy !== undefined && chk.accuracy !== null ? chk.accuracy : null,
+      chk.distance !== undefined ? chk.distance : null,
+    ]);
+  } catch (e) { /* 로그 실패는 무시 */ }
+}
+
 // ════════════════════════════════════════════════════════════
 // 생체인증 인증 (출결 체크 시)
 // ════════════════════════════════════════════════════════════
@@ -1395,7 +1492,7 @@ app.post('/api/auth/options', async (req, res) => {
 // ─── API: 인증 검증 + 출결 기록 ─────────────────────────────
 app.post('/api/auth/verify', async (req, res) => {
   try {
-    const { studentId, response, classroomCode } = req.body;
+    const { studentId, response, classroomCode, loc } = req.body;
     const result = await auth.verifyAuthentication(req, studentId, response);
 
     if (!result.verified) {
@@ -1404,6 +1501,12 @@ app.post('/api/auth/verify', async (req, res) => {
 
     // 생체인증 성공 → 출결 기록
     if (classroomCode) {
+      const chk = await verifyLocationOnServer(loc);
+      if (!chk.ok) {
+        await logServerLocationReject(
+          { studentId: studentId, classroomCode: classroomCode, action: 'checkin' }, chk, loc);
+        return res.json({ verified: true, attendance: { success: false, error: chk.message } });
+      }
       const attendResult = await attend.recordAttendance(studentId, classroomCode);
       return res.json({ verified: true, attendance: attendResult });
     }
@@ -1425,7 +1528,7 @@ app.post('/api/auth/passkey-start', async (req, res) => {
 
 app.post('/api/auth/passkey-verify', async (req, res) => {
   try {
-    const { response, classroomCode, attendanceId } = req.body;
+    const { response, classroomCode, attendanceId, loc } = req.body;
     const result = await auth.verifyPasskeyAuth(req, response);
 
     if (!result.verified) {
@@ -1434,12 +1537,27 @@ app.post('/api/auth/passkey-verify', async (req, res) => {
 
     // 출결 기록 (QR 스캔 입실용)
     if (classroomCode) {
+      const chk = await verifyLocationOnServer(loc);
+      if (!chk.ok) {
+        await logServerLocationReject(
+          { studentId: result.studentId, classroomCode: classroomCode, action: 'checkin' }, chk, loc);
+        return res.json({
+          verified: true, studentId: result.studentId, studentName: result.studentName,
+          attendance: { success: false, error: chk.message }
+        });
+      }
       const attendResult = await attend.recordAttendance(result.studentId, classroomCode);
       return res.json({ verified: true, studentId: result.studentId, studentName: result.studentName, attendance: attendResult });
     }
 
     // 퇴실 처리 (패스키 인증 + 퇴실 통합)
     if (attendanceId) {
+      const chk = await verifyLocationOnServer(loc);
+      if (!chk.ok) {
+        await logServerLocationReject(
+          { studentId: result.studentId, attendanceId: attendanceId, action: 'checkout' }, chk, loc);
+        return res.json({ verified: true, checkoutSuccess: false, error: chk.message });
+      }
       // attendanceId가 인증된 수강생의 것인지 확인
       const attCheck = await db.query(
         'SELECT attendance_id, student_id, check_out_at FROM attendance WHERE attendance_id = $1',
@@ -1480,7 +1598,7 @@ app.post('/api/auth/passkey-verify', async (req, res) => {
 // 패스키 검증 성공 시 서버에서 직접 퇴실 처리 (클라이언트가 별도 API 호출 불필요)
 app.post('/api/auth/checkout', async (req, res) => {
   try {
-    const { response, studentId, attendanceId } = req.body;
+    const { response, studentId, attendanceId, loc } = req.body;
     if (!response || !studentId || !attendanceId) {
       return res.json({ success: false, error: '필수 정보가 누락되었습니다.' });
     }
@@ -1494,6 +1612,14 @@ app.post('/api/auth/checkout', async (req, res) => {
     // 2. 인증된 수강생과 퇴실 대상 일치 확인
     if (authResult.studentId !== studentId) {
       return res.json({ success: false, error: '본인 기기로 인증해주세요.' });
+    }
+
+    // 2-1. 서버 측 위치 재검증 (클라이언트 판정 우회 방지)
+    const locChk = await verifyLocationOnServer(loc);
+    if (!locChk.ok) {
+      await logServerLocationReject(
+        { studentId: studentId, attendanceId: attendanceId, action: 'checkout' }, locChk, loc);
+      return res.json({ success: false, error: locChk.message });
     }
 
     // 3. 출결 기록 확인
@@ -1772,6 +1898,7 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
       }
 
       // ─── 위치 확인 (입실용) ───────────────────────────────
+      var LAST_LOC = null;
       async function checkLocationForCheckin(msgEl) {
         var buildingSettings = { enabled: false };
         try { var sRes = await fetch('/api/settings/building'); buildingSettings = await sRes.json(); } catch (e) {}
@@ -1793,6 +1920,7 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
             msgEl.innerHTML = '<div class="msg msg-error" style="text-align:center;"><div style="font-size:24px;margin-bottom:6px;">\ud83d\udeab</div><div style="font-weight:600;">건물 외부 감지</div><div style="font-size:13px;color:#86868b;margin-top:4px;">강의실 근처에서 다시 시도해주세요.</div></div>';
             return false;
           }
+          LAST_LOC = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy || null };
           msgEl.innerHTML = '';
           return true;
         } catch (locErr) {
@@ -1831,7 +1959,7 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
           const verifyRes = await fetch('/api/auth/passkey-verify', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ response: authResp, classroomCode: CLASSROOM_CODE })
+            body: JSON.stringify({ response: authResp, classroomCode: CLASSROOM_CODE, loc: LAST_LOC })
           });
           const verifyData = await verifyRes.json();
 
@@ -2006,7 +2134,7 @@ function renderScanAuthPage(classroomCode, classroomName, token) {
           const verifyRes = await fetch('/api/auth/verify', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ studentId: currentStudentId, response: authResp, classroomCode: CLASSROOM_CODE })
+            body: JSON.stringify({ studentId: currentStudentId, response: authResp, classroomCode: CLASSROOM_CODE, loc: LAST_LOC })
           });
           const verifyData = await verifyRes.json();
 
@@ -2694,6 +2822,8 @@ function renderAppPage() {
         var buildingSettings = { enabled: false };
         try { var sRes = await fetch('/api/settings/building'); buildingSettings = await sRes.json(); } catch (e) {}
 
+        var EXIT_LOC = null;
+
         // ── Step 2: 위치 검증 ──────────────────────────────────
       if (buildingSettings.enabled && buildingSettings.lat && buildingSettings.lng) {
         showMsg('<div style="font-size:16px;margin-bottom:8px;">📍</div><div style="font-size:14px;color:#1a73e8;">위치 확인 중...</div>');
@@ -2715,6 +2845,7 @@ function renderAppPage() {
             showMsg('<div style="font-size:24px;margin-bottom:8px;">🚫</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">건물 외부 감지</div><div style="font-size:13px;color:#86868b;margin-top:6px;">건물에서 너무 멀리 있습니다.</div>');
             return;
           }
+          EXIT_LOC = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy || null };
           locationPassed = true;
         } catch (locErr) {
           // [비활성화] 위치 실패 시 건너뛰기 버튼 - 부정출석 방지를 위해 비활성화
@@ -2761,7 +2892,7 @@ function renderAppPage() {
           // 패스키 검증 + 퇴실 처리를 한 번에 (attendanceId 전달)
           var verifyRes = await fetch('/api/auth/passkey-verify', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ response: authResp, attendanceId: attendanceId })
+            body: JSON.stringify({ response: authResp, attendanceId: attendanceId, loc: EXIT_LOC })
           });
           var verifyData = await verifyRes.json();
 
@@ -3293,5 +3424,6 @@ app.listen(PORT, () => {
   // 푸시 알림 초기화 + 스케줄러
   if (push.initPush()) {
     push.startScheduler();
+    cleanup.startCleanupScheduler();
   }
 });
