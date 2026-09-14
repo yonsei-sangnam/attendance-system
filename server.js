@@ -1475,6 +1475,318 @@ async function logServerLocationReject(info, chk, loc) {
 }
 
 // ════════════════════════════════════════════════════════════
+// 출결 소명 (수강생용)
+//  앱 수정 없이 브라우저로 접근한다. 본인 확인은 기존 discoverable
+//  패스키 인증을 그대로 재사용하므로 별도 로그인 수단이 필요 없다.
+// ════════════════════════════════════════════════════════════
+
+const CORRECTION_SESSION_MIN = 20;
+
+// 패스키 인증 성공 후 짧은 세션 토큰 발급
+async function issueCorrectionToken(studentId) {
+  const token = crypto.randomBytes(24).toString('base64url');
+  await db.query(`
+    INSERT INTO auth_challenges (student_id, challenge, type, expires_at)
+    VALUES ($1, $2, 'correction_session', NOW() + ($3 || ' minutes')::interval)
+    ON CONFLICT (student_id, type)
+    DO UPDATE SET challenge = $2, expires_at = NOW() + ($3 || ' minutes')::interval
+  `, [studentId, token, String(CORRECTION_SESSION_MIN)]);
+  return token;
+}
+
+async function studentFromCorrectionToken(token) {
+  if (!token) return null;
+  const r = await db.query(`
+    SELECT ac.student_id, s.name
+    FROM auth_challenges ac
+    JOIN students s ON s.student_id = ac.student_id
+    WHERE ac.challenge = $1 AND ac.type = 'correction_session'
+      AND ac.expires_at > NOW() AND s.status = 'active'
+  `, [token]);
+  return r.rows.length ? r.rows[0] : null;
+}
+
+// ─── API: 소명 로그인 (패스키 검증 → 세션 토큰) ─────────────
+app.post('/api/correction/login', async (req, res) => {
+  try {
+    const { response } = req.body || {};
+    const result = await auth.verifyPasskeyAuth(req, response);
+    if (!result.verified) {
+      return res.json({ success: false, error: result.message || '인증에 실패했습니다.' });
+    }
+    const token = await issueCorrectionToken(result.studentId);
+    res.json({ success: true, token: token, name: result.studentName });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── API: 소명 가능한 출결 기록 조회 ────────────────────────
+app.post('/api/correction/records', async (req, res) => {
+  try {
+    const me = await studentFromCorrectionToken(req.body && req.body.token);
+    if (!me) return res.json({ success: false, error: '세션이 만료되었습니다. 다시 인증해주세요.' });
+
+    const r = await db.query(`
+      SELECT a.attendance_id, a.session_id, a.status, a.exit_type,
+             a.check_in_at, a.check_out_at,
+             cs.session_number, cs.session_date, cs.start_time, cs.end_time,
+             c.course_name, c.cohort,
+             (SELECT ec.status FROM exit_corrections ec
+               WHERE ec.attendance_id = a.attendance_id
+               ORDER BY ec.submitted_at DESC LIMIT 1) AS correction_status
+      FROM attendance a
+      JOIN course_sessions cs ON cs.session_id = a.session_id
+      JOIN courses c ON c.course_id = cs.course_id
+      WHERE a.student_id = $1
+        AND cs.session_date >= CURRENT_DATE - INTERVAL '60 days'
+        AND (a.exit_type = '퇴실미확인' OR a.status IN ('지각', '결석', '조퇴'))
+      ORDER BY cs.session_date DESC, cs.session_number DESC
+      LIMIT 30
+    `, [me.student_id]);
+
+    res.json({ success: true, name: me.name, rows: r.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── API: 소명 제출 ─────────────────────────────────────────
+app.post('/api/correction/submit', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const me = await studentFromCorrectionToken(b.token);
+    if (!me) return res.json({ success: false, error: '세션이 만료되었습니다. 다시 인증해주세요.' });
+
+    const kind = (b.kind === 'checkin' || b.kind === 'checkout') ? b.kind : null;
+    const reason = b.reason ? String(b.reason).trim().slice(0, 500) : '';
+    const time = b.time ? String(b.time).slice(0, 8) : null;
+
+    if (!kind) return res.json({ success: false, error: '소명 구분이 올바르지 않습니다.' });
+    if (reason.length < 5) return res.json({ success: false, error: '사유를 5자 이상 입력해주세요.' });
+    if (!/^\d{2}:\d{2}(:\d{2})?$/.test(time || '')) {
+      return res.json({ success: false, error: '시각을 선택해주세요.' });
+    }
+
+    // 본인의 출결 기록인지 확인
+    const own = await db.query(
+      'SELECT attendance_id, session_id FROM attendance WHERE attendance_id = $1 AND student_id = $2',
+      [b.attendanceId, me.student_id]
+    );
+    if (own.rows.length === 0) {
+      return res.json({ success: false, error: '본인의 출결 기록이 아닙니다.' });
+    }
+
+    try {
+      await db.query(`
+        INSERT INTO exit_corrections
+          (attendance_id, student_id, session_id, kind, claimed_time, reason)
+        VALUES ($1, $2, $3, $4, $5, $6)
+      `, [own.rows[0].attendance_id, me.student_id, own.rows[0].session_id, kind, time, reason]);
+    } catch (e) {
+      if (/uq_corrections_pending|duplicate key/i.test(e.message || '')) {
+        return res.json({ success: false, error: '이미 검토 대기 중인 소명이 있습니다.' });
+      }
+      throw e;
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── 소명 페이지 ────────────────────────────────────────────
+app.get('/correction', (req, res) => {
+  var html = '<!DOCTYPE html><html lang="ko"><head>'
+    + '<meta charset="UTF-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
+    + '<title>출결 소명 · 상남경영원</title>'
+    + '<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">'
+    + '<script src="https://unpkg.com/@simplewebauthn/browser@11/dist/bundle/index.umd.min.js"></script>'
+    + '<style>'
+    + '*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}'
+    + 'body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;'
+    + '  background:#f2f4f7;color:#1d1d1f;padding:20px 16px 48px;line-height:1.6;}'
+    + '.wrap{max-width:560px;margin:0 auto;}'
+    + 'h1{font-size:21px;color:#003876;margin:6px 0 4px;letter-spacing:-0.02em;}'
+    + '.lead{font-size:13px;color:#6e6e73;margin-bottom:18px;}'
+    + '.card{background:#fff;border-radius:18px;padding:20px 18px;margin-bottom:14px;'
+    + '  box-shadow:0 2px 10px rgba(0,0,0,0.05);}'
+    + '.btn{display:block;width:100%;border:0;border-radius:14px;padding:16px;'
+    + '  font-size:16px;font-weight:800;cursor:pointer;font-family:inherit;}'
+    + '.btn-main{background:#003876;color:#fff;}'
+    + '.btn-sub{background:#eceef1;color:#1d1d1f;margin-top:10px;}'
+    + '.btn:disabled{opacity:.5;}'
+    + '.rec{border:1.5px solid #e3e6ea;border-radius:14px;padding:14px;margin-top:10px;cursor:pointer;}'
+    + '.rec.sel{border-color:#003876;background:#f4f8fd;}'
+    + '.rec .t{font-size:15px;font-weight:800;}'
+    + '.rec .s{font-size:12.5px;color:#6e6e73;margin-top:4px;}'
+    + '.tag{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:700;margin-right:5px;}'
+    + '.tag-bad{background:#fdecea;color:#c62828;}'
+    + '.tag-wait{background:#fff4e5;color:#b26a00;}'
+    + '.tag-ok{background:#eef6ee;color:#2e7d32;}'
+    + 'label{display:block;font-size:12.5px;font-weight:700;color:#6e6e73;margin:16px 0 6px;}'
+    + 'input[type=time],textarea{width:100%;border:1.5px solid #e3e6ea;border-radius:12px;'
+    + '  padding:13px;font-size:16px;font-family:inherit;background:#fff;}'
+    + 'textarea{min-height:110px;resize:vertical;}'
+    + '.msg{border-radius:12px;padding:13px;font-size:13.5px;font-weight:700;margin-top:12px;text-align:center;}'
+    + '.msg-err{background:#fdecea;color:#c62828;}'
+    + '.msg-ok{background:#eef6ee;color:#2e7d32;}'
+    + '.note{font-size:12px;color:#86868b;margin-top:14px;line-height:1.8;}'
+    + '.hide{display:none;}'
+    + '</style></head><body><div class="wrap">'
+    + '<h1>출결 소명</h1>'
+    + '<div class="lead">출결이 잘못 기록된 경우 사유를 제출하면 관리자가 검토합니다.</div>'
+
+    + '<div class="card" id="stepLogin">'
+    +   '<div style="font-size:14.5px;font-weight:700;">본인 확인</div>'
+    +   '<div class="note" style="margin-top:6px;">평소 출결 체크에 사용하는 생체인증으로 본인을 확인합니다.</div>'
+    +   '<button class="btn btn-main" style="margin-top:16px;" id="btnLogin">생체인증으로 시작하기</button>'
+    +   '<div id="loginMsg"></div>'
+    + '</div>'
+
+    + '<div class="card hide" id="stepList">'
+    +   '<div style="font-size:14.5px;font-weight:700;" id="hello"></div>'
+    +   '<div class="note" style="margin-top:6px;">소명할 회차를 선택하세요.</div>'
+    +   '<div id="listMsg"></div>'
+    +   '<div id="recList"></div>'
+    + '</div>'
+
+    + '<div class="card hide" id="stepForm">'
+    +   '<div style="font-size:14.5px;font-weight:700;" id="formTitle"></div>'
+    +   '<label for="fTime" id="timeLabel">실제 시각</label>'
+    +   '<input type="time" id="fTime">'
+    +   '<label for="fReason">사유 (5자 이상)</label>'
+    +   '<textarea id="fReason" placeholder="예) 종료 후 퇴실 버튼을 눌렀으나 위치 확인에서 계속 실패했습니다."></textarea>'
+    +   '<button class="btn btn-main" style="margin-top:16px;" id="btnSubmit">소명 제출</button>'
+    +   '<button class="btn btn-sub" id="btnBack">다른 회차 선택</button>'
+    +   '<div id="formMsg"></div>'
+    +   '<div class="note">허위로 제출한 내용은 제출 시각과 함께 기록으로 남습니다.</div>'
+    + '</div>'
+
+    + '<div class="note" id="footNote">'
+    +   '문의는 상남경영원 행정팀으로 연락해 주세요.'
+    + '</div>'
+
+    + '</div><script>'
+    + 'var TOKEN = null; var RECORDS = []; var PICK = null;'
+    + 'function $(id){ return document.getElementById(id); }'
+    + 'function esc(v){ return String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;")'
+    + '  .replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/\'/g,"&#39;"); }'
+    + 'function msg(el, text, ok){ el.innerHTML = "<div class=\\"msg " + (ok?"msg-ok":"msg-err") + "\\">" + text + "</div>"; }'
+    + 'function hhmm(v){ if(!v) return "—"; return String(v).slice(0,5); }'
+    + 'function dOnly(v){ if(!v) return ""; var d=String(v).split("T")[0].split("-"); return d[1]+"/"+d[2]; }'
+    + ''
+    + '$("btnLogin").addEventListener("click", async function(){'
+    + '  var b = $("btnLogin"); b.disabled = true; b.textContent = "인증 중...";'
+    + '  try {'
+    + '    var oRes = await fetch("/api/auth/passkey-start", {'
+    + '      method:"POST", headers:{"Content-Type":"application/json"},'
+    + '      body: JSON.stringify({ discoverable: true }) });'
+    + '    var options = await oRes.json();'
+    + '    if (options.error) throw new Error(options.error);'
+    + '    var authResp = await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON: options });'
+    + '    var lRes = await fetch("/api/correction/login", {'
+    + '      method:"POST", headers:{"Content-Type":"application/json"},'
+    + '      body: JSON.stringify({ response: authResp }) });'
+    + '    var d = await lRes.json();'
+    + '    if (!d.success) throw new Error(d.error || "인증 실패");'
+    + '    TOKEN = d.token;'
+    + '    $("stepLogin").classList.add("hide");'
+    + '    $("stepList").classList.remove("hide");'
+    + '    $("hello").textContent = d.name + "님";'
+    + '    await loadRecords();'
+    + '  } catch(e) {'
+    + '    msg($("loginMsg"), esc(e.message || "인증에 실패했습니다."));'
+    + '    b.disabled = false; b.textContent = "다시 시도";'
+    + '  }'
+    + '});'
+    + ''
+    + 'async function loadRecords(){'
+    + '  $("listMsg").innerHTML = "";'
+    + '  $("recList").innerHTML = "<div class=\\"note\\">불러오는 중...</div>";'
+    + '  try {'
+    + '    var r = await fetch("/api/correction/records", {'
+    + '      method:"POST", headers:{"Content-Type":"application/json"},'
+    + '      body: JSON.stringify({ token: TOKEN }) });'
+    + '    var d = await r.json();'
+    + '    if (!d.success) { $("recList").innerHTML = ""; msg($("listMsg"), esc(d.error)); return; }'
+    + '    RECORDS = d.rows || [];'
+    + '    if (!RECORDS.length) {'
+    + '      $("recList").innerHTML = "<div class=\\"note\\">소명이 필요한 출결 기록이 없습니다.<br>최근 60일 이내의 지각·결석·조퇴·퇴실미확인 기록만 표시됩니다.</div>";'
+    + '      return;'
+    + '    }'
+    + '    $("recList").innerHTML = RECORDS.map(function(x, i){'
+    + '      var tags = "";'
+    + '      if (x.exit_type === "퇴실미확인") tags += "<span class=\\"tag tag-bad\\">퇴실미확인</span>";'
+    + '      if (x.status && x.status !== "출석") tags += "<span class=\\"tag tag-bad\\">" + esc(x.status) + "</span>";'
+    + '      if (x.correction_status === "pending") tags += "<span class=\\"tag tag-wait\\">검토 대기</span>";'
+    + '      if (x.correction_status === "approved") tags += "<span class=\\"tag tag-ok\\">승인됨</span>";'
+    + '      if (x.correction_status === "rejected") tags += "<span class=\\"tag tag-bad\\">반려됨</span>";'
+    + '      return "<div class=\\"rec\\" data-i=\\"" + i + "\\">"'
+    + '        + "<div class=\\"t\\">" + esc(x.course_name) + " " + esc(x.session_number) + "회차</div>"'
+    + '        + "<div class=\\"s\\">" + dOnly(x.session_date) + " · 수업 " + hhmm(x.start_time) + "~" + hhmm(x.end_time)'
+    + '        + " · 입실 " + hhmm(x.check_in_at ? String(x.check_in_at).slice(11,16) : null)'
+    + '        + " / 퇴실 " + hhmm(x.check_out_at ? String(x.check_out_at).slice(11,16) : null) + "</div>"'
+    + '        + "<div style=\\"margin-top:8px;\\">" + tags + "</div></div>";'
+    + '    }).join("");'
+    + '  } catch(e) { $("recList").innerHTML = ""; msg($("listMsg"), "불러오지 못했습니다."); }'
+    + '}'
+    + ''
+    + '$("recList").addEventListener("click", function(ev){'
+    + '  var el = ev.target.closest(".rec"); if (!el) return;'
+    + '  var i = parseInt(el.getAttribute("data-i"), 10);'
+    + '  var x = RECORDS[i]; if (!x) return;'
+    + '  if (x.correction_status === "pending") { msg($("listMsg"), "이미 검토 대기 중인 소명이 있습니다. 결과를 기다려주세요."); return; }'
+    + '  $("listMsg").innerHTML = "";'
+    + '  PICK = x;'
+    + '  var isExit = (x.exit_type === "퇴실미확인" || x.status === "조퇴");'
+    + '  PICK._kind = isExit ? "checkout" : "checkin";'
+    + '  $("formTitle").textContent = x.course_name + " " + x.session_number + "회차 · "'
+    + '    + (isExit ? "퇴실 시각 소명" : "입실 시각 소명");'
+    + '  $("timeLabel").textContent = isExit ? "실제 퇴실한 시각" : "실제 입실한 시각";'
+    + '  $("fTime").value = isExit ? hhmm(x.end_time) : hhmm(x.start_time);'
+    + '  $("fReason").value = "";'
+    + '  $("formMsg").innerHTML = "";'
+    + '  $("stepList").classList.add("hide");'
+    + '  $("stepForm").classList.remove("hide");'
+    + '  window.scrollTo(0, 0);'
+    + '});'
+    + ''
+    + '$("btnBack").addEventListener("click", function(){'
+    + '  $("stepForm").classList.add("hide");'
+    + '  $("stepList").classList.remove("hide");'
+    + '});'
+    + ''
+    + '$("btnSubmit").addEventListener("click", async function(){'
+    + '  if (!PICK) return;'
+    + '  var time = $("fTime").value;'
+    + '  var reason = $("fReason").value.trim();'
+    + '  if (!time) { msg($("formMsg"), "시각을 선택해주세요."); return; }'
+    + '  if (reason.length < 5) { msg($("formMsg"), "사유를 5자 이상 입력해주세요."); return; }'
+    + '  var b = $("btnSubmit"); b.disabled = true; b.textContent = "제출 중...";'
+    + '  try {'
+    + '    var r = await fetch("/api/correction/submit", {'
+    + '      method:"POST", headers:{"Content-Type":"application/json"},'
+    + '      body: JSON.stringify({ token: TOKEN, attendanceId: PICK.attendance_id,'
+    + '        kind: PICK._kind, time: time, reason: reason }) });'
+    + '    var d = await r.json();'
+    + '    if (!d.success) throw new Error(d.error || "제출 실패");'
+    + '    msg($("formMsg"), "소명을 제출했습니다. 관리자 검토 후 반영됩니다.", true);'
+    + '    b.textContent = "제출 완료";'
+    + '    await loadRecords();'
+    + '  } catch(e) {'
+    + '    msg($("formMsg"), esc(e.message || "제출에 실패했습니다."));'
+    + '    b.disabled = false; b.textContent = "소명 제출";'
+    + '  }'
+    + '});'
+    + '</script></body></html>';
+
+  res.send(html);
+});
+
+// ════════════════════════════════════════════════════════════
 // 생체인증 인증 (출결 체크 시)
 // ════════════════════════════════════════════════════════════
 
