@@ -187,6 +187,77 @@ function registerAdminRoutes(app) {
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
 
+  // ═══ API: 수강생별 패턴 지표 ════════════════════════════════
+  // 개별 사건의 진위를 가리는 대신, 반복 패턴이 있는 수강생을 드러낸다.
+  app.get('/api/admin/patterns/:courseId', async (req, res) => {
+    try {
+      const cid = req.params.courseId;
+
+      // 시도 로그 테이블이 없을 수도 있으므로 분리해서 조회한다
+      const base = await db.query(`
+        SELECT
+          s.student_id, s.name, s.phone,
+          COUNT(CASE WHEN a.status = '지각' THEN 1 END)::int              AS late_count,
+          COUNT(CASE WHEN a.status = '조퇴' THEN 1 END)::int              AS early_count,
+          COUNT(CASE WHEN a.status = '결석' THEN 1 END)::int              AS absent_count,
+          COUNT(CASE WHEN a.exit_type = '퇴실미확인' THEN 1 END)::int      AS missed_exit_count,
+          COUNT(CASE WHEN a.check_in_at IS NOT NULL THEN 1 END)::int      AS present_count,
+          (SELECT COUNT(*) FROM course_sessions cs2 WHERE cs2.course_id = $1)::int AS total_sessions
+        FROM enrollments e
+        JOIN students s ON s.student_id = e.student_id AND s.status = 'active'
+        LEFT JOIN attendance a ON a.student_id = s.student_id
+          AND a.session_id IN (SELECT session_id FROM course_sessions WHERE course_id = $1)
+        WHERE e.course_id = $1
+        GROUP BY s.student_id, s.name, s.phone
+        ORDER BY s.name
+      `, [cid]);
+
+      let attemptMap = {};
+      let logAvailable = true;
+      try {
+        const at = await db.query(`
+          SELECT aa.student_id,
+                 COUNT(*) FILTER (WHERE aa.result = 'fail')::int AS fail_count,
+                 MAX(aa.created_at) FILTER (WHERE aa.result = 'fail') AS last_fail_at,
+                 (ARRAY_AGG(aa.reason ORDER BY aa.created_at DESC)
+                    FILTER (WHERE aa.result = 'fail'))[1] AS last_fail_reason
+          FROM attendance_attempts aa
+          WHERE aa.student_id IN (SELECT student_id FROM enrollments WHERE course_id = $1)
+          GROUP BY aa.student_id
+        `, [cid]);
+        at.rows.forEach(function (r) { attemptMap[r.student_id] = r; });
+      } catch (e) {
+        logAvailable = false;
+      }
+
+      const rows = base.rows.map(function (r) {
+        const a = attemptMap[r.student_id] || {};
+        const failCount = a.fail_count || 0;
+
+        // 주의 점수: 반복성이 드러나는 항목에 가중치
+        const score = (r.missed_exit_count * 3) + (r.late_count * 2) + (r.absent_count * 2) + failCount;
+        let level = 'ok';
+        if (score >= 10) level = 'high';
+        else if (score >= 5) level = 'mid';
+
+        return Object.assign({}, r, {
+          fail_count: failCount,
+          last_fail_at: a.last_fail_at || null,
+          last_fail_reason: a.last_fail_reason || null,
+          score: score,
+          level: level,
+        });
+      });
+
+      rows.sort(function (x, y) {
+        if (y.score !== x.score) return y.score - x.score;
+        return x.name < y.name ? -1 : 1;
+      });
+
+      res.json({ success: true, logAvailable: logAvailable, rows: rows });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
   // ═══ 구글시트 동기화 관리 페이지 ═══════════════════════════
   app.get('/admin/sync', async (req, res) => {
     try {
@@ -1579,6 +1650,7 @@ function renderAttendancePage(courses) {
     +     '<div class="at-modebar">'
     +       '<button type="button" class="at-mode on" id="modeDetail">회차별 상세</button>'
     +       '<button type="button" class="at-mode" id="modeSummary">전체 요약</button>'
+    +       '<button type="button" class="at-mode" id="modePattern">주의 관찰</button>'
     +     '</div>'
     +   '</div>'
     +   '<div class="sn-card" style="padding:16px 18px;margin-top:18px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">'
@@ -1641,11 +1713,15 @@ function renderAttendancePage(courses) {
     mode = m;
     document.getElementById('modeDetail').classList.toggle('on', m === 'detail');
     document.getElementById('modeSummary').classList.toggle('on', m === 'summary');
+    document.getElementById('modePattern').classList.toggle('on', m === 'pattern');
     if (!courseId) return;
-    if (m === 'summary') loadSummary(); else loadSessions();
+    if (m === 'summary') loadSummary();
+    else if (m === 'pattern') loadPatterns();
+    else loadSessions();
   }
   document.getElementById('modeDetail').addEventListener('click', function() { setMode('detail'); });
   document.getElementById('modeSummary').addEventListener('click', function() { setMode('summary'); });
+  document.getElementById('modePattern').addEventListener('click', function() { setMode('pattern'); });
 
   /* ── 과정 선택 ── */
   selEl.addEventListener('change', function() {
@@ -1662,6 +1738,7 @@ function renderAttendancePage(courses) {
   document.getElementById('btnRefresh').addEventListener('click', function() {
     if (!courseId) { showToast('과정을 먼저 선택하세요', true); return; }
     if (mode === 'summary') loadSummary();
+    else if (mode === 'pattern') loadPatterns();
     else if (sessionId) loadAttendance(sessionId);
     else loadSessions();
   });
@@ -1822,6 +1899,100 @@ function renderAttendancePage(courses) {
   }
 
   /* ── 전체 요약 (수강생별 누적) ── */
+  /* ── 주의 관찰 (패턴 지표) ── */
+  var PT_REASON = {
+    accuracy: 'GPS 정확도 부족', out_of_range: '건물 반경 밖', geo_error: '위치 정보 실패',
+    timeout: '생체인증 창 안 열림', cancelled: '사용자 취소', bio_error: '생체인증 오류',
+    verify_fail: '서버 검증 실패', net_error: '네트워크 오류', no_location: '위치 정보 없음'
+  };
+
+  function ptDay(v) {
+    if (!v) return '—';
+    var d = new Date(v);
+    if (isNaN(d.getTime())) return '—';
+    return (d.getMonth() + 1) + '/' + d.getDate();
+  }
+
+  async function loadPatterns() {
+    document.getElementById('metaLine').textContent = '반복 패턴이 있는 수강생을 위에서부터 표시합니다';
+    contentEl.innerHTML = '<section class="sn-section"><div class="at-empty">불러오는 중…</div></section>';
+
+    var d;
+    try {
+      var res = await fetch('/api/admin/patterns/' + courseId);
+      d = await res.json();
+    } catch (e) {
+      contentEl.innerHTML = '<section class="sn-section"><div class="at-empty">불러오지 못했습니다.</div></section>';
+      return;
+    }
+    if (!d || !d.success) {
+      contentEl.innerHTML = '<section class="sn-section"><div class="at-empty">'
+        + esc((d && d.error) || '불러오지 못했습니다.') + '</div></section>';
+      return;
+    }
+    if (!d.rows.length) {
+      contentEl.innerHTML = '<section class="sn-section"><div class="at-empty">이 과정에 수강생이 없습니다.</div></section>';
+      return;
+    }
+
+    var high = d.rows.filter(function(r) { return r.level === 'high'; }).length;
+    var mid = d.rows.filter(function(r) { return r.level === 'mid'; }).length;
+    var clean = d.rows.filter(function(r) { return r.score === 0; }).length;
+
+    var rows = d.rows.map(function(r) {
+      var lv = r.level === 'high'
+        ? '<span class="at-tag" style="background:#fdecea;color:#c62828;">주의</span>'
+        : (r.level === 'mid'
+          ? '<span class="at-tag" style="background:#fff4e5;color:#b26a00;">관찰</span>'
+          : '<span class="at-tag" style="background:#eef6ee;color:#2e7d32;">양호</span>');
+
+      function n(v, warnAt) {
+        var x = parseInt(v, 10) || 0;
+        if (x === 0) return '<span style="color:#9aa0a6;">0</span>';
+        if (warnAt && x >= warnAt) return '<strong style="color:#c62828;">' + x + '</strong>';
+        return '<strong>' + x + '</strong>';
+      }
+
+      var lastFail = r.fail_count > 0
+        ? (ptDay(r.last_fail_at) + ' · ' + esc(PT_REASON[r.last_fail_reason] || r.last_fail_reason || '사유 미상'))
+        : '<span style="color:#9aa0a6;">—</span>';
+
+      return '<tr>'
+        + '<td>' + lv + '</td>'
+        + '<td style="font-weight:700;">' + esc(r.name) + '</td>'
+        + '<td class="at-num">' + n(r.missed_exit_count, 3) + '</td>'
+        + '<td class="at-num">' + n(r.late_count, 3) + '</td>'
+        + '<td class="at-num">' + n(r.absent_count, 2) + '</td>'
+        + '<td class="at-num">' + n(r.early_count, 3) + '</td>'
+        + '<td class="at-num">' + n(r.fail_count, 3) + '</td>'
+        + '<td style="font-size:12px;">' + lastFail + '</td>'
+        + '<td class="at-num" style="color:#9aa0a6;">' + esc(r.present_count) + '/' + esc(r.total_sessions) + '</td>'
+        + '</tr>';
+    }).join('');
+
+    var note = d.logAvailable
+      ? '시도 실패는 기능 배포 이후 발생한 건만 집계됩니다.'
+      : '시도 로그 테이블이 없어 &lsquo;시도 실패&rsquo; 열은 0으로 표시됩니다.';
+
+    contentEl.innerHTML = '<section class="sn-section">'
+      + '<div class="sn-card" style="padding:16px 18px;">'
+      +   '<div style="font-size:15px;font-weight:800;color:var(--sn-navy);">주의 관찰 요약</div>'
+      +   '<div style="margin-top:8px;font-size:13px;font-weight:700;">'
+      +     '주의 ' + high + '명 · 관찰 ' + mid + '명 · 지표 없음 ' + clean + '명 (전체 ' + d.rows.length + '명)'
+      +   '</div>'
+      +   '<div style="margin-top:10px;font-size:12px;color:var(--sn-gray);line-height:1.8;">'
+      +     '개별 사건의 진위를 판정하는 기능이 아닙니다. 반복이 누적된 수강생을 먼저 확인하시라는 용도입니다.<br>'
+      +     '가중치 — 퇴실미확인 &times;3, 지각 &times;2, 결석 &times;2, 시도 실패 &times;1 / 합계 10 이상 주의, 5 이상 관찰.<br>'
+      +     note
+      +   '</div>'
+      + '</div>'
+      + '<div class="at-tablewrap" style="margin-top:14px;"><table class="at-table" style="min-width:860px;">'
+      +   '<thead><tr><th style="width:64px;">구분</th><th>이름</th><th>퇴실미확인</th><th>지각</th>'
+      +   '<th>결석</th><th>조퇴</th><th>시도 실패</th><th style="width:170px;">최근 실패</th><th>입실</th></tr></thead>'
+      +   '<tbody>' + rows + '</tbody></table></div>'
+      + '</section>';
+  }
+
   async function loadSummary() {
     contentEl.innerHTML = '<section class="sn-section"><div class="at-empty">불러오는 중…</div></section>';
     var rows;
