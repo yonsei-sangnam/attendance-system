@@ -297,6 +297,19 @@ function registerAdminRoutes(app) {
     }
   });
 
+  // ═══ API: 소명 대기 건수 (배지용, 가벼운 조회) ══════════════
+  app.get('/api/admin/corrections/pending-count', async (req, res) => {
+    try {
+      const r = await db.query(
+        "SELECT COUNT(*)::int AS cnt FROM exit_corrections WHERE status = 'pending'"
+      );
+      res.json({ success: true, count: r.rows[0].cnt });
+    } catch (err) {
+      // 테이블 미생성 등은 조용히 0으로 처리 (배지는 부가 기능)
+      res.json({ success: true, count: 0 });
+    }
+  });
+
   // ═══ API: 소명 승인 / 반려 ══════════════════════════════════
   app.post('/api/admin/corrections/:id/decide', async (req, res) => {
     const client = await db.connect();
@@ -1867,10 +1880,11 @@ function renderAttendancePage(courses) {
   });
 
   document.getElementById('btnRefresh').addEventListener('click', function() {
+    refreshCorBadge();
+    if (mode === 'correction') { loadCorrections(); return; }
     if (!courseId) { showToast('과정을 먼저 선택하세요', true); return; }
     if (mode === 'summary') loadSummary();
     else if (mode === 'pattern') loadPatterns();
-    else if (mode === 'correction') loadCorrections();
     else if (sessionId) loadAttendance(sessionId);
     else loadSessions();
   });
@@ -2058,6 +2072,22 @@ function renderAttendancePage(courses) {
   function hm(v) { return v ? String(v).slice(0, 5) : '—'; }
   function atHm(v) { return v ? String(v).slice(11, 16) : '—'; }
 
+  /* 배지는 어느 탭에 있든 항상 최신이어야 한다 */
+  function setCorBadge(count) {
+    var badge = document.getElementById('corBadge');
+    if (!badge) return;
+    badge.style.display = count > 0 ? 'inline-block' : 'none';
+    badge.textContent = count;
+  }
+
+  async function refreshCorBadge() {
+    try {
+      var res = await fetch('/api/admin/corrections/pending-count');
+      var d = await res.json();
+      setCorBadge((d && d.count) || 0);
+    } catch (e) { /* 배지 실패는 무시 */ }
+  }
+
   async function loadCorrections() {
     document.getElementById('metaLine').textContent = '수강생이 제출한 소명을 검토합니다 (과정 선택과 무관하게 전체 표시)';
     contentEl.innerHTML = '<section class="sn-section"><div class="at-empty">불러오는 중…</div></section>';
@@ -2079,11 +2109,7 @@ function renderAttendancePage(courses) {
     COR_ROWS = d.rows || [];
     var pending = COR_ROWS.filter(function(r) { return r.status === 'pending'; });
 
-    var badge = document.getElementById('corBadge');
-    if (badge) {
-      badge.style.display = pending.length ? 'inline-block' : 'none';
-      badge.textContent = pending.length;
-    }
+    setCorBadge(pending.length);
 
     if (!COR_ROWS.length) {
       contentEl.innerHTML = '<section class="sn-section"><div class="at-empty">'
@@ -2207,6 +2233,7 @@ function renderAttendancePage(courses) {
       else showToast('처리 실패: ' + (d.error || ''), true);
     } catch (e) { showToast('처리 실패: ' + e.message, true); }
     loadCorrections();
+    refreshCorBadge();
   });
 
   async function loadPatterns() {
@@ -2405,6 +2432,10 @@ function renderAttendancePage(courses) {
       else showToast('수정 실패: ' + (d2.error || ''), true);
     } catch (e) { showToast('수정 실패: ' + e.message, true); }
   }
+
+  /* 페이지 진입 시 배지 표시 + 60초마다 갱신 (탭을 열지 않아도 보이도록) */
+  refreshCorBadge();
+  setInterval(refreshCorBadge, 60000);
   `;
 
   return layout.renderShell({
