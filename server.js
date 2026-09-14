@@ -1694,7 +1694,9 @@ app.get('/correction', (req, res) => {
     + '.tag{display:inline-block;padding:3px 10px;border-radius:999px;'
     + '  font-size:11px;font-weight:700;margin-right:5px;}'
     + '.tag-bad{background:rgba(211,47,47,0.12);color:#D32F2F;}'
-    + '.tag-wait{background:rgba(212,118,10,0.14);color:#D4760A;}'
+    /* 검토 대기는 어떤 상태 카드 배경(파랑·주황·보라·빨강·회색) 위에서도
+       또렷해야 하므로 반투명이 아니라 진한 단색 칩으로 표시한다 */
+    + '.tag-wait{background:#101112;color:#fff;}'
     + '.tag-ok{background:rgba(0,56,118,0.12);color:#003876;}'
     + 'label{display:block;font-size:11px;font-weight:700;letter-spacing:0.8px;'
     + '  color:rgba(16,17,18,0.4);margin:18px 0 8px;}'
