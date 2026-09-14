@@ -222,7 +222,7 @@ function registerAdminRoutes(app) {
                  (ARRAY_AGG(aa.reason ORDER BY aa.created_at DESC)
                     FILTER (WHERE aa.result = 'fail'))[1] AS last_fail_reason
           FROM attendance_attempts aa
-          WHERE aa.student_id IN (SELECT student_id FROM enrollments WHERE course_id = $1)
+          WHERE aa.student_id IN (SELECT student_id::text FROM enrollments WHERE course_id = $1)
           GROUP BY aa.student_id
         `, [cid]);
         at.rows.forEach(function (r) { attemptMap[r.student_id] = r; });
@@ -275,11 +275,12 @@ function registerAdminRoutes(app) {
                a.status AS current_status, a.exit_type AS current_exit_type,
                a.check_in_at, a.check_out_at,
                (SELECT COUNT(*)::int FROM exit_corrections e2
-                 WHERE e2.student_id = ec.student_id) AS student_total_requests
+                 WHERE e2.student_id = ec.student_id) AS student_total_requests,
+               s.student_id::text AS student_id_text
         FROM exit_corrections ec
-        JOIN students s ON s.student_id = ec.student_id
-        LEFT JOIN attendance a ON a.attendance_id = ec.attendance_id
-        LEFT JOIN course_sessions cs ON cs.session_id = ec.session_id
+        JOIN students s ON s.student_id::text = ec.student_id
+        LEFT JOIN attendance a ON a.attendance_id::text = ec.attendance_id
+        LEFT JOIN course_sessions cs ON cs.session_id::text = ec.session_id
         LEFT JOIN courses c ON c.course_id = cs.course_id
         WHERE ($1::text IS NULL OR ec.status = $1)
         ORDER BY CASE WHEN ec.status = 'pending' THEN 0 ELSE 1 END,
@@ -345,7 +346,7 @@ function registerAdminRoutes(app) {
                 status = $3,
                 updated_at = NOW()
             FROM course_sessions cs
-            WHERE a.attendance_id = $1 AND cs.session_id = a.session_id
+            WHERE a.attendance_id::text = $1 AND cs.session_id = a.session_id
           `, [c.attendance_id, appliedTime, appliedStatus]);
         } else {
           await client.query(`
@@ -355,7 +356,7 @@ function registerAdminRoutes(app) {
                 status = $3,
                 updated_at = NOW()
             FROM course_sessions cs
-            WHERE a.attendance_id = $1 AND cs.session_id = a.session_id
+            WHERE a.attendance_id::text = $1 AND cs.session_id = a.session_id
           `, [c.attendance_id, appliedTime, appliedStatus]);
         }
       }
@@ -654,10 +655,10 @@ function registerAdminRoutes(app) {
         SELECT attempt_id, classroom_code, action, stage, result, reason, detail,
                accuracy, distance_m, created_at
         FROM attendance_attempts
-        WHERE student_id = $1
+        WHERE student_id = $1::text
         ORDER BY created_at DESC
         LIMIT $2
-      `, [req.params.studentId, limit]);
+      `, [String(req.params.studentId), limit]);
       res.json({ success: true, rows: r.rows });
     } catch (err) {
       // 테이블 미생성 시 안내 (배포 순서가 뒤바뀐 경우)
