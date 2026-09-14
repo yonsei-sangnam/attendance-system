@@ -1374,9 +1374,9 @@ app.post('/api/attendance/attempt', async (req, res) => {
          reason, detail, lat, lng, accuracy, distance_m, user_agent)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
     `, [
-      int(b.studentId),
+      str(b.studentId, 64),
       str(b.classroomCode, 40),
-      int(b.attendanceId),
+      str(b.attendanceId, 64),
       action,
       stage,
       result,
@@ -1467,9 +1467,9 @@ async function logServerLocationReject(info, chk, loc) {
          lat, lng, accuracy, distance_m)
       VALUES ($1,$2,$3,$4,'location','fail',$5,'서버 검증에서 차단됨',$6,$7,$8,$9)
     `, [
-      info.studentId || null,
-      info.classroomCode || null,
-      info.attendanceId || null,
+      info.studentId != null ? String(info.studentId) : null,
+      info.classroomCode != null ? String(info.classroomCode) : null,
+      info.attendanceId != null ? String(info.attendanceId) : null,
       info.action || 'unknown',
       chk.reason || null,
       loc && isFinite(parseFloat(loc.lat)) ? parseFloat(loc.lat) : null,
@@ -1527,6 +1527,39 @@ app.post('/api/correction/login', async (req, res) => {
   }
 });
 
+// ─── API: 전화번호로 본인 특정 (패스키 선택 실패 시 대체 경로) ──
+//  기기에 예전 패스키가 남아 있으면 discoverable 목록에 고아 항목이 섞여
+//  NOT_FOUND 가 발생한다. 이 경로는 전화번호로 수강생을 먼저 특정해
+//  allowCredentials 를 지정하므로 유효한 패스키만 선택지에 나온다.
+app.post('/api/correction/lookup', async (req, res) => {
+  try {
+    const digits = String((req.body && req.body.phone) || '').replace(/\D/g, '');
+    let normalized = '';
+    if (digits.length === 11) {
+      normalized = digits.slice(0, 3) + '-' + digits.slice(3, 7) + '-' + digits.slice(7);
+    } else if (digits.length === 8) {
+      normalized = '010-' + digits.slice(0, 4) + '-' + digits.slice(4);
+    } else {
+      return res.json({ success: false, error: '올바른 전화번호 형식이 아닙니다.' });
+    }
+
+    const r = await db.query(`
+      SELECT s.student_id, s.name,
+             (SELECT COUNT(*)::int FROM credentials c WHERE c.student_id = s.student_id) AS cred_count
+      FROM students s
+      WHERE s.phone = $1 AND s.status = 'active'
+    `, [normalized]);
+
+    if (r.rows.length === 0 || r.rows[0].cred_count === 0) {
+      return res.json({ success: false, error: '등록된 생체인증 정보를 찾을 수 없습니다. 담당자에게 문의해주세요.' });
+    }
+
+    res.json({ success: true, studentId: r.rows[0].student_id, name: r.rows[0].name });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ─── API: 소명 가능한 출결 기록 조회 ────────────────────────
 app.post('/api/correction/records', async (req, res) => {
   try {
@@ -1539,7 +1572,7 @@ app.post('/api/correction/records', async (req, res) => {
              cs.session_number, cs.session_date, cs.start_time, cs.end_time,
              c.course_name, c.cohort,
              (SELECT ec.status FROM exit_corrections ec
-               WHERE ec.attendance_id = a.attendance_id
+               WHERE ec.attendance_id = a.attendance_id::text
                ORDER BY ec.submitted_at DESC LIMIT 1) AS correction_status
       FROM attendance a
       JOIN course_sessions cs ON cs.session_id = a.session_id
@@ -1553,7 +1586,13 @@ app.post('/api/correction/records', async (req, res) => {
 
     res.json({ success: true, name: me.name, rows: r.rows });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    const missing = /relation .* does not exist/i.test(err.message || '');
+    res.status(500).json({
+      success: false,
+      error: missing
+        ? '소명 기능이 아직 준비되지 않았습니다. 담당자에게 문의해주세요.'
+        : err.message
+    });
   }
 });
 
@@ -1576,8 +1615,9 @@ app.post('/api/correction/submit', async (req, res) => {
 
     // 본인의 출결 기록인지 확인
     const own = await db.query(
-      'SELECT attendance_id, session_id FROM attendance WHERE attendance_id = $1 AND student_id = $2',
-      [b.attendanceId, me.student_id]
+      'SELECT attendance_id, session_id FROM attendance ' +
+      'WHERE attendance_id::text = $1 AND student_id::text = $2',
+      [String(b.attendanceId == null ? '' : b.attendanceId), String(me.student_id)]
     );
     if (own.rows.length === 0) {
       return res.json({ success: false, error: '본인의 출결 기록이 아닙니다.' });
@@ -1588,7 +1628,9 @@ app.post('/api/correction/submit', async (req, res) => {
         INSERT INTO exit_corrections
           (attendance_id, student_id, session_id, kind, claimed_time, reason)
         VALUES ($1, $2, $3, $4, $5, $6)
-      `, [own.rows[0].attendance_id, me.student_id, own.rows[0].session_id, kind, time, reason]);
+      `, [String(own.rows[0].attendance_id), String(me.student_id),
+          own.rows[0].session_id == null ? null : String(own.rows[0].session_id),
+          kind, time, reason]);
     } catch (e) {
       if (/uq_corrections_pending|duplicate key/i.test(e.message || '')) {
         return res.json({ success: false, error: '이미 검토 대기 중인 소명이 있습니다.' });
@@ -1656,6 +1698,12 @@ app.get('/correction', (req, res) => {
     +   '<div class="note" style="margin-top:6px;">평소 출결 체크에 사용하는 생체인증으로 본인을 확인합니다.</div>'
     +   '<button class="btn btn-main" style="margin-top:16px;" id="btnLogin">생체인증으로 시작하기</button>'
     +   '<div id="loginMsg"></div>'
+    +   '<div id="phoneBox" class="hide">'
+    +     '<label for="fPhone">전화번호</label>'
+    +     '<input type="tel" id="fPhone" inputmode="numeric" placeholder="010-1234-5678" '
+    +       'style="width:100%;border:1.5px solid #e3e6ea;border-radius:12px;padding:13px;font-size:16px;font-family:inherit;">'
+    +     '<button class="btn btn-main" style="margin-top:12px;" id="btnPhoneLogin">전화번호로 인증하기</button>'
+    +   '</div>'
     + '</div>'
 
     + '<div class="card hide" id="stepList">'
@@ -1690,29 +1738,57 @@ app.get('/correction', (req, res) => {
     + 'function hhmm(v){ if(!v) return "—"; return String(v).slice(0,5); }'
     + 'function dOnly(v){ if(!v) return ""; var d=String(v).split("T")[0].split("-"); return d[1]+"/"+d[2]; }'
     + ''
+    + 'var NOT_FOUND_MSG = "이 휴대폰에 남아 있는 예전 인증 정보를 선택하신 것 같습니다.<br>"'
+    + '  + "아래에 전화번호를 입력하고 다시 인증해주세요.";'
+    + ''
+    + 'async function doLogin(studentId){'
+    + '  var startBody = studentId ? { studentId: studentId } : { discoverable: true };'
+    + '  var oRes = await fetch("/api/auth/passkey-start", {'
+    + '    method:"POST", headers:{"Content-Type":"application/json"},'
+    + '    body: JSON.stringify(startBody) });'
+    + '  var options = await oRes.json();'
+    + '  if (options.error) throw new Error(options.error);'
+    + '  var authResp = await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON: options });'
+    + '  var lRes = await fetch("/api/correction/login", {'
+    + '    method:"POST", headers:{"Content-Type":"application/json"},'
+    + '    body: JSON.stringify({ response: authResp }) });'
+    + '  var d = await lRes.json();'
+    + '  if (!d.success) { var err = new Error(d.error || "인증 실패"); err.raw = d.error || ""; throw err; }'
+    + '  TOKEN = d.token;'
+    + '  $("stepLogin").classList.add("hide");'
+    + '  $("stepList").classList.remove("hide");'
+    + '  $("hello").textContent = d.name + "님";'
+    + '  await loadRecords();'
+    + '}'
+    + ''
+    + 'function handleLoginError(e, btn, label){'
+    + '  var raw = (e && (e.raw || e.message)) || "";'
+    + '  if (raw.indexOf("등록되지 않은 기기") >= 0 || raw.indexOf("NOT_FOUND") >= 0) {'
+    + '    msg($("loginMsg"), NOT_FOUND_MSG);'
+    + '    $("phoneBox").classList.remove("hide");'
+    + '  } else {'
+    + '    msg($("loginMsg"), esc(e.message || "인증에 실패했습니다."));'
+    + '  }'
+    + '  btn.disabled = false; btn.textContent = label;'
+    + '}'
+    + ''
     + '$("btnLogin").addEventListener("click", async function(){'
     + '  var b = $("btnLogin"); b.disabled = true; b.textContent = "인증 중...";'
+    + '  try { await doLogin(null); }'
+    + '  catch(e) { handleLoginError(e, b, "다시 시도"); }'
+    + '});'
+    + ''
+    + '$("btnPhoneLogin").addEventListener("click", async function(){'
+    + '  var b = $("btnPhoneLogin"); b.disabled = true; b.textContent = "확인 중...";'
     + '  try {'
-    + '    var oRes = await fetch("/api/auth/passkey-start", {'
+    + '    var pRes = await fetch("/api/correction/lookup", {'
     + '      method:"POST", headers:{"Content-Type":"application/json"},'
-    + '      body: JSON.stringify({ discoverable: true }) });'
-    + '    var options = await oRes.json();'
-    + '    if (options.error) throw new Error(options.error);'
-    + '    var authResp = await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON: options });'
-    + '    var lRes = await fetch("/api/correction/login", {'
-    + '      method:"POST", headers:{"Content-Type":"application/json"},'
-    + '      body: JSON.stringify({ response: authResp }) });'
-    + '    var d = await lRes.json();'
-    + '    if (!d.success) throw new Error(d.error || "인증 실패");'
-    + '    TOKEN = d.token;'
-    + '    $("stepLogin").classList.add("hide");'
-    + '    $("stepList").classList.remove("hide");'
-    + '    $("hello").textContent = d.name + "님";'
-    + '    await loadRecords();'
-    + '  } catch(e) {'
-    + '    msg($("loginMsg"), esc(e.message || "인증에 실패했습니다."));'
-    + '    b.disabled = false; b.textContent = "다시 시도";'
-    + '  }'
+    + '      body: JSON.stringify({ phone: $("fPhone").value }) });'
+    + '    var p = await pRes.json();'
+    + '    if (!p.success) throw new Error(p.error || "확인 실패");'
+    + '    b.textContent = "인증 중...";'
+    + '    await doLogin(p.studentId);'
+    + '  } catch(e) { handleLoginError(e, b, "전화번호로 인증하기"); }'
     + '});'
     + ''
     + 'async function loadRecords(){'
