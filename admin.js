@@ -258,6 +258,126 @@ function registerAdminRoutes(app) {
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
 
+  // ═══ API: 소명 요청 목록 ════════════════════════════════════
+  app.get('/api/admin/corrections', async (req, res) => {
+    try {
+      const status = ['pending', 'approved', 'rejected'].indexOf(req.query.status) >= 0
+        ? req.query.status : null;
+
+      const r = await db.query(`
+        SELECT ec.correction_id, ec.attendance_id, ec.kind, ec.claimed_time, ec.reason,
+               ec.status, ec.admin_note, ec.applied_status, ec.applied_time,
+               ec.submitted_at, ec.decided_at,
+               s.student_id, s.name, s.phone,
+               cs.session_number, cs.session_date, cs.start_time, cs.end_time,
+               cs.late_cutoff, cs.early_leave_cutoff,
+               c.course_name, c.cohort,
+               a.status AS current_status, a.exit_type AS current_exit_type,
+               a.check_in_at, a.check_out_at,
+               (SELECT COUNT(*)::int FROM exit_corrections e2
+                 WHERE e2.student_id = ec.student_id) AS student_total_requests
+        FROM exit_corrections ec
+        JOIN students s ON s.student_id = ec.student_id
+        LEFT JOIN attendance a ON a.attendance_id = ec.attendance_id
+        LEFT JOIN course_sessions cs ON cs.session_id = ec.session_id
+        LEFT JOIN courses c ON c.course_id = cs.course_id
+        WHERE ($1::text IS NULL OR ec.status = $1)
+        ORDER BY CASE WHEN ec.status = 'pending' THEN 0 ELSE 1 END,
+                 ec.submitted_at DESC
+        LIMIT 100
+      `, [status]);
+
+      res.json({ success: true, rows: r.rows });
+    } catch (err) {
+      const missing = /relation .* does not exist/i.test(err.message || '');
+      res.status(500).json({
+        error: missing ? '소명 테이블(exit_corrections)이 아직 생성되지 않았습니다.' : err.message
+      });
+    }
+  });
+
+  // ═══ API: 소명 승인 / 반려 ══════════════════════════════════
+  app.post('/api/admin/corrections/:id/decide', async (req, res) => {
+    const client = await db.connect();
+    try {
+      const b = req.body || {};
+      const decision = (b.decision === 'approved' || b.decision === 'rejected') ? b.decision : null;
+      if (!decision) return res.status(400).json({ error: '승인 또는 반려만 가능합니다.' });
+
+      const note = b.note ? String(b.note).trim().slice(0, 300) : null;
+
+      await client.query('BEGIN');
+
+      const cur = await client.query(
+        "SELECT * FROM exit_corrections WHERE correction_id = $1 AND status = 'pending' FOR UPDATE",
+        [req.params.id]
+      );
+      if (cur.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.json({ success: false, error: '이미 처리되었거나 존재하지 않는 요청입니다.' });
+      }
+      const c = cur.rows[0];
+
+      let appliedStatus = null;
+      let appliedTime = null;
+
+      if (decision === 'approved') {
+        // 관리자가 확정한 출결 상태와 시각을 그대로 반영한다.
+        // (자동 판정하지 않는 이유: 지각/조퇴 기준은 회차마다 다르고
+        //  최종 책임은 관리자에게 있으므로 화면에서 확인 후 확정하게 한다)
+        const ALLOWED = ['출석', '지각', '조퇴', '결석'];
+        appliedStatus = ALLOWED.indexOf(b.status) >= 0 ? b.status : null;
+        appliedTime = /^\d{2}:\d{2}(:\d{2})?$/.test(String(b.time || '')) ? String(b.time) : null;
+
+        if (!appliedStatus) {
+          await client.query('ROLLBACK');
+          return res.json({ success: false, error: '반영할 출결 상태를 선택하세요.' });
+        }
+        if (!appliedTime) {
+          await client.query('ROLLBACK');
+          return res.json({ success: false, error: '반영할 시각을 입력하세요.' });
+        }
+
+        if (c.kind === 'checkin') {
+          await client.query(`
+            UPDATE attendance a
+            SET check_in_at = (cs.session_date + $2::time),
+                status = $3,
+                updated_at = NOW()
+            FROM course_sessions cs
+            WHERE a.attendance_id = $1 AND cs.session_id = a.session_id
+          `, [c.attendance_id, appliedTime, appliedStatus]);
+        } else {
+          await client.query(`
+            UPDATE attendance a
+            SET check_out_at = (cs.session_date + $2::time),
+                exit_type = '정상',
+                status = $3,
+                updated_at = NOW()
+            FROM course_sessions cs
+            WHERE a.attendance_id = $1 AND cs.session_id = a.session_id
+          `, [c.attendance_id, appliedTime, appliedStatus]);
+        }
+      }
+
+      await client.query(`
+        UPDATE exit_corrections
+        SET status = $2, admin_note = $3, applied_status = $4, applied_time = $5,
+            decided_at = NOW(), decided_by = 'admin'
+        WHERE correction_id = $1
+      `, [req.params.id, decision, note, appliedStatus, appliedTime]);
+
+      await client.query('COMMIT');
+      res.json({ success: true, decision: decision });
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch (e) { /* 무시 */ }
+      console.error('[Admin] 소명 처리 오류:', err);
+      res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
+    }
+  });
+
   // ═══ 구글시트 동기화 관리 페이지 ═══════════════════════════
   app.get('/admin/sync', async (req, res) => {
     try {
@@ -1565,6 +1685,12 @@ function renderAttendancePage(courses) {
     font-size:13px; font-weight:600; color:var(--sn-ink); outline:none;
   }
   .at-select:focus { border-color:var(--sn-navy); }
+  .at-input {
+    height:44px; width:100%; padding:0 14px;
+    border:1.5px solid var(--sn-line); border-radius:12px; background:#fff;
+    font-size:13px; font-weight:600; color:var(--sn-ink); outline:none; font-family:inherit;
+  }
+  .at-input:focus { border-color:var(--sn-navy); }
   .at-danger {
     height:44px; padding:0 20px; border:none; border-radius:999px;
     background:var(--sn-red-bg); color:#c22525; font-size:13px; font-weight:800; cursor:pointer;
@@ -1651,6 +1777,7 @@ function renderAttendancePage(courses) {
     +       '<button type="button" class="at-mode on" id="modeDetail">회차별 상세</button>'
     +       '<button type="button" class="at-mode" id="modeSummary">전체 요약</button>'
     +       '<button type="button" class="at-mode" id="modePattern">주의 관찰</button>'
+    +       '<button type="button" class="at-mode" id="modeCorrection">소명 요청<span id="corBadge" style="display:none;margin-left:6px;background:#c62828;color:#fff;border-radius:999px;padding:1px 7px;font-size:11px;"></span></button>'
     +     '</div>'
     +   '</div>'
     +   '<div class="sn-card" style="padding:16px 18px;margin-top:18px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">'
@@ -1714,6 +1841,8 @@ function renderAttendancePage(courses) {
     document.getElementById('modeDetail').classList.toggle('on', m === 'detail');
     document.getElementById('modeSummary').classList.toggle('on', m === 'summary');
     document.getElementById('modePattern').classList.toggle('on', m === 'pattern');
+    document.getElementById('modeCorrection').classList.toggle('on', m === 'correction');
+    if (m === 'correction') { loadCorrections(); return; }
     if (!courseId) return;
     if (m === 'summary') loadSummary();
     else if (m === 'pattern') loadPatterns();
@@ -1722,6 +1851,7 @@ function renderAttendancePage(courses) {
   document.getElementById('modeDetail').addEventListener('click', function() { setMode('detail'); });
   document.getElementById('modeSummary').addEventListener('click', function() { setMode('summary'); });
   document.getElementById('modePattern').addEventListener('click', function() { setMode('pattern'); });
+  document.getElementById('modeCorrection').addEventListener('click', function() { setMode('correction'); });
 
   /* ── 과정 선택 ── */
   selEl.addEventListener('change', function() {
@@ -1739,6 +1869,7 @@ function renderAttendancePage(courses) {
     if (!courseId) { showToast('과정을 먼저 선택하세요', true); return; }
     if (mode === 'summary') loadSummary();
     else if (mode === 'pattern') loadPatterns();
+    else if (mode === 'correction') loadCorrections();
     else if (sessionId) loadAttendance(sessionId);
     else loadSessions();
   });
@@ -1912,6 +2043,170 @@ function renderAttendancePage(courses) {
     if (isNaN(d.getTime())) return '—';
     return (d.getMonth() + 1) + '/' + d.getDate();
   }
+
+  /* ── 소명 요청 검토 ── */
+  var COR_ROWS = [];
+
+  function corTime(v) {
+    if (!v) return '—';
+    var d = new Date(v);
+    if (isNaN(d.getTime())) return String(v).slice(0, 5);
+    function p(n) { return n < 10 ? '0' + n : String(n); }
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+  function hm(v) { return v ? String(v).slice(0, 5) : '—'; }
+  function atHm(v) { return v ? String(v).slice(11, 16) : '—'; }
+
+  async function loadCorrections() {
+    document.getElementById('metaLine').textContent = '수강생이 제출한 소명을 검토합니다 (과정 선택과 무관하게 전체 표시)';
+    contentEl.innerHTML = '<section class="sn-section"><div class="at-empty">불러오는 중…</div></section>';
+
+    var d;
+    try {
+      var res = await fetch('/api/admin/corrections');
+      d = await res.json();
+    } catch (e) {
+      contentEl.innerHTML = '<section class="sn-section"><div class="at-empty">불러오지 못했습니다.</div></section>';
+      return;
+    }
+    if (!d || !d.success) {
+      contentEl.innerHTML = '<section class="sn-section"><div class="at-empty">'
+        + esc((d && d.error) || '불러오지 못했습니다.') + '</div></section>';
+      return;
+    }
+
+    COR_ROWS = d.rows || [];
+    var pending = COR_ROWS.filter(function(r) { return r.status === 'pending'; });
+
+    var badge = document.getElementById('corBadge');
+    if (badge) {
+      badge.style.display = pending.length ? 'inline-block' : 'none';
+      badge.textContent = pending.length;
+    }
+
+    if (!COR_ROWS.length) {
+      contentEl.innerHTML = '<section class="sn-section"><div class="at-empty">'
+        + '제출된 소명이 없습니다.<br>수강생 안내 주소: ' + esc(location.origin) + '/correction'
+        + '</div></section>';
+      return;
+    }
+
+    var cards = COR_ROWS.map(function(r, i) {
+      var isPending = r.status === 'pending';
+      var head = r.status === 'approved'
+        ? '<span class="at-tag" style="background:#eef6ee;color:#2e7d32;">승인</span>'
+        : (r.status === 'rejected'
+          ? '<span class="at-tag" style="background:#fdecea;color:#c62828;">반려</span>'
+          : '<span class="at-tag" style="background:#fff4e5;color:#b26a00;">검토 대기</span>');
+
+      var kindLabel = r.kind === 'checkin' ? '입실 시각' : '퇴실 시각';
+      var repeat = (r.student_total_requests > 2)
+        ? '<span class="at-tag" style="background:#fff4e5;color:#b26a00;margin-left:6px;">소명 ' + esc(r.student_total_requests) + '회째</span>'
+        : '';
+
+      var form = '';
+      if (isPending) {
+        var defStatus = r.kind === 'checkin' ? '출석' : (r.current_status || '출석');
+        form = '<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--sn-line2);">'
+          + '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">'
+          +   '<div class="at-field" style="min-width:130px;"><label>반영할 시각</label>'
+          +     '<input class="at-input" type="time" data-cor="time" data-i="' + i + '" value="' + esc(hm(r.claimed_time)) + '"></div>'
+          +   '<div class="at-field" style="min-width:130px;"><label>반영할 출결</label>'
+          +     '<select class="at-select" data-cor="status" data-i="' + i + '">'
+          +       ['출석','지각','조퇴','결석'].map(function(v) {
+                    return '<option value="' + v + '"' + (v === defStatus ? ' selected' : '') + '>' + v + '</option>';
+                  }).join('')
+          +     '</select></div>'
+          +   '<div class="at-field" style="flex:1;min-width:200px;"><label>관리자 메모 (선택)</label>'
+          +     '<input class="at-input" type="text" data-cor="note" data-i="' + i + '" placeholder="반려 사유 등"></div>'
+          + '</div>'
+          + '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">'
+          +   '<button type="button" class="sn-btn sn-btn-primary" style="height:42px;" data-cordo="approved" data-i="' + i + '">승인하고 반영</button>'
+          +   '<button type="button" class="sn-btn sn-btn-secondary" style="height:42px;" data-cordo="rejected" data-i="' + i + '">반려</button>'
+          + '</div></div>';
+      } else {
+        form = '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--sn-line2);font-size:12.5px;color:var(--sn-gray);">'
+          + '처리 ' + corTime(r.decided_at)
+          + (r.applied_status ? ' · 반영 ' + esc(r.applied_status) + ' ' + esc(hm(r.applied_time)) : '')
+          + (r.admin_note ? ' · 메모: ' + esc(r.admin_note) : '')
+          + '</div>';
+      }
+
+      return '<div class="sn-card" style="padding:18px;margin-top:12px;">'
+        + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+        +   head
+        +   '<span style="font-size:15px;font-weight:800;">' + esc(r.name) + '</span>'
+        +   '<span style="font-size:12.5px;color:var(--sn-gray);">' + esc(r.course_name || '') + ' '
+        +     esc(r.session_number || '') + '회차 · ' + esc(String(r.session_date || '').split('T')[0]) + '</span>'
+        +   repeat
+        + '</div>'
+        + '<div style="margin-top:10px;font-size:13px;line-height:1.9;">'
+        +   '<div><b>현재 기록</b> · 입실 ' + atHm(r.check_in_at) + ' / 퇴실 ' + atHm(r.check_out_at)
+        +     ' · 상태 ' + esc(r.current_status || '—')
+        +     (r.current_exit_type ? ' (' + esc(r.current_exit_type) + ')' : '') + '</div>'
+        +   '<div><b>수업 시간</b> · ' + hm(r.start_time) + '~' + hm(r.end_time)
+        +     ' · 지각 기준 ' + hm(r.late_cutoff) + ' · 조퇴 기준 ' + hm(r.early_leave_cutoff) + '</div>'
+        +   '<div style="color:#003876;"><b>주장하는 ' + kindLabel + '</b> · ' + esc(hm(r.claimed_time)) + '</div>'
+        + '</div>'
+        + '<div style="margin-top:10px;background:var(--sn-bg);border-radius:12px;padding:12px;font-size:13px;white-space:pre-wrap;">'
+        +   esc(r.reason) + '</div>'
+        + '<div style="margin-top:8px;font-size:11.5px;color:var(--sn-gray);">제출 ' + corTime(r.submitted_at)
+        +   ' · <a href="/admin/students" style="color:var(--sn-navy);">수강생 관리에서 시도 이력 확인</a></div>'
+        + form
+        + '</div>';
+    }).join('');
+
+    contentEl.innerHTML = '<section class="sn-section">'
+      + '<div class="sn-card" style="padding:16px 18px;">'
+      +   '<div style="font-size:15px;font-weight:800;color:var(--sn-navy);">소명 요청</div>'
+      +   '<div style="margin-top:8px;font-size:13px;font-weight:700;">검토 대기 ' + pending.length + '건 · 전체 ' + COR_ROWS.length + '건</div>'
+      +   '<div style="margin-top:10px;font-size:12px;color:var(--sn-gray);line-height:1.8;">'
+      +     '승인하면 입력한 시각과 출결 상태가 실제 기록에 반영됩니다. 자동 판정하지 않으므로 '
+      +     '지각·조퇴 기준을 확인하고 확정하세요.<br>'
+      +     '수강생 안내 주소 · ' + esc(location.origin) + '/correction'
+      +   '</div>'
+      + '</div>'
+      + cards
+      + '</section>';
+  }
+
+  contentEl.addEventListener('click', async function(ev) {
+    var b = ev.target.closest('[data-cordo]');
+    if (!b) return;
+    var i = parseInt(b.getAttribute('data-i'), 10);
+    var r = COR_ROWS[i];
+    if (!r) return;
+
+    var decision = b.getAttribute('data-cordo');
+    var wrap = b.closest('.sn-card');
+    var timeEl = wrap.querySelector('[data-cor="time"]');
+    var statusEl = wrap.querySelector('[data-cor="status"]');
+    var noteEl = wrap.querySelector('[data-cor="note"]');
+
+    var payload = { decision: decision, note: noteEl ? noteEl.value : '' };
+
+    if (decision === 'approved') {
+      payload.time = timeEl ? timeEl.value : '';
+      payload.status = statusEl ? statusEl.value : '';
+      if (!payload.time) { showToast('반영할 시각을 입력하세요', true); return; }
+      if (!confirm(r.name + '님의 소명을 승인합니다.\\n\\n'
+        + (r.kind === 'checkin' ? '입실' : '퇴실') + ' 시각 → ' + payload.time + '\\n'
+        + '출결 상태 → ' + payload.status + '\\n\\n실제 출결 기록이 변경됩니다.')) return;
+    } else {
+      if (!confirm(r.name + '님의 소명을 반려합니다.\\n출결 기록은 변경되지 않습니다.')) return;
+    }
+
+    try {
+      var res = await fetch('/api/admin/corrections/' + r.correction_id + '/decide', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      var d = await res.json();
+      if (d.success) showToast(decision === 'approved' ? '승인 후 반영했습니다' : '반려했습니다');
+      else showToast('처리 실패: ' + (d.error || ''), true);
+    } catch (e) { showToast('처리 실패: ' + e.message, true); }
+    loadCorrections();
+  });
 
   async function loadPatterns() {
     document.getElementById('metaLine').textContent = '반복 패턴이 있는 수강생을 위에서부터 표시합니다';
