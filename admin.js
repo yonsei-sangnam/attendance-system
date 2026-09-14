@@ -1,5 +1,6 @@
 const db = require('./db');
 const layout = require('./layout');
+const cleanup = require('./cleanup');
 
 // ─── 라우트 등록 ─────────────────────────────────────────────
 function registerAdminRoutes(app) {
@@ -922,6 +923,68 @@ function registerAdminRoutes(app) {
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
 
+  // ═══ API: 로그 보관 설정 조회 ═══════════════════════════════
+  app.get('/api/admin/log-settings', async (req, res) => {
+    try {
+      const cfg = await cleanup.getCleanupSettings();
+      let stats = null;
+      try { stats = await cleanup.getLogStats(); } catch (e) { /* 테이블 미생성 */ }
+      res.json({ success: true, settings: cfg, stats: stats });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ═══ API: 로그 보관 설정 저장 ═══════════════════════════════
+  app.put('/api/admin/log-settings', async (req, res) => {
+    try {
+      const { retentionDays, hour, enabled } = req.body;
+
+      let d = parseInt(retentionDays, 10);
+      if (!isFinite(d) || d < 0) d = 30;
+      if (d > 3650) d = 3650;
+
+      let h = parseInt(hour, 10);
+      if (!isFinite(h) || h < 0 || h > 23) h = 4;
+
+      const upsert = async (key, value) => db.query(`
+        INSERT INTO system_settings (key, value, updated_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
+      `, [key, String(value)]);
+
+      await upsert('log_retention_days', d);
+      await upsert('log_cleanup_hour', h);
+      await upsert('log_cleanup_enabled', enabled ? 'true' : 'false');
+
+      // 변경된 시각으로 스케줄 재설정
+      await cleanup.restartCleanupScheduler();
+
+      res.json({ success: true, settings: { retentionDays: d, hour: h, enabled: !!enabled } });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ═══ API: 삭제 대상 미리보기 ════════════════════════════════
+  app.get('/api/admin/log-cleanup/preview', async (req, res) => {
+    try {
+      const cfg = await cleanup.getCleanupSettings();
+      const d = req.query.days != null ? parseInt(req.query.days, 10) : cfg.retentionDays;
+      const days = (isFinite(d) && d >= 0 && d <= 3650) ? d : cfg.retentionDays;
+      const count = await cleanup.previewCleanup(days);
+      res.json({ success: true, count: count, retentionDays: days });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ═══ API: 지금 파기 실행 ════════════════════════════════════
+  app.post('/api/admin/log-cleanup/run', async (req, res) => {
+    try {
+      const cfg = await cleanup.getCleanupSettings();
+      const d = req.body && req.body.days != null ? parseInt(req.body.days, 10) : cfg.retentionDays;
+      const days = (isFinite(d) && d >= 0 && d <= 3650) ? d : cfg.retentionDays;
+      const deleted = await cleanup.runCleanup(days);
+      console.log('[Cleanup] 관리자 수동 실행: ' + deleted + '건 파기 (보관기간 ' + days + '일)');
+      res.json({ success: true, deleted: deleted, retentionDays: days });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
   // ═══ API: 설정 저장 ═════════════════════════════════════════
   app.put('/api/admin/settings', async (req, res) => {
     try {
@@ -1110,6 +1173,37 @@ function renderSettingsPage(baseUrl) {
     +       '&middot; 두 카드의 저장 버튼은 모두 <b>전체 설정</b>을 함께 저장합니다'
     +     '</div>'
     +   '</div>'
+
+    // ── 출결 시도 로그 보관 ──
+    +   '<div class="sn-card" style="margin-top:14px;">'
+    +     '<div class="st-cardtitle">출결 시도 로그 보관</div>'
+    +     '<div class="st-note">'
+    +       '입·퇴실 시도 기록(위치 좌표 포함)을 언제까지 보관할지 정합니다.<br>'
+    +       '수강생이 수강한 <b>과정의 마지막 회차 날짜</b>를 기준으로 계산하며, '
+    +       '설정한 기간이 지나면 매일 지정한 시각에 자동으로 파기됩니다.'
+    +     '</div>'
+    +     '<div id="logStat" class="st-note" style="margin-top:12px;font-weight:700;">현황 불러오는 중…</div>'
+    +     '<div style="margin-top:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;">'
+    +       '<div class="st-field"><label for="logRetention">보관 기간 (과정 종료 후 일수)</label>'
+    +         '<input class="st-input" type="number" id="logRetention" min="0" max="3650" value="30"></div>'
+    +       '<div class="st-field"><label for="logHour">자동 파기 실행 시각 (0~23시)</label>'
+    +         '<input class="st-input" type="number" id="logHour" min="0" max="23" value="4"></div>'
+    +       '<div class="st-field"><label>자동 파기</label>'
+    +         '<button type="button" class="st-toggle" id="logToggle" aria-pressed="true">ON</button></div>'
+    +     '</div>'
+    +     '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">'
+    +       '<button type="button" class="sn-btn sn-btn-primary" style="height:44px;" id="btnSaveLog">저장</button>'
+    +       '<button type="button" class="sn-btn sn-btn-secondary" style="height:44px;" id="btnPreviewLog">삭제 대상 확인</button>'
+    +       '<button type="button" class="sn-btn sn-btn-secondary" style="height:44px;" id="btnRunLog">지금 파기 실행</button>'
+    +     '</div>'
+    +     '<div class="st-warn">'
+    +       '<b>주의</b><br>'
+    +       '&middot; 여기서 정한 기간은 <b>개인정보처리방침에 고지한 기간과 반드시 일치</b>해야 합니다. '
+    +         '현재 방침에는 &lsquo;과정 종료 후 1개월&rsquo;(30일)로 고지되어 있습니다.<br>'
+    +       '&middot; 파기된 로그는 복구할 수 없습니다. 실행 전 [삭제 대상 확인]으로 건수를 먼저 확인하세요.<br>'
+    +       '&middot; 이 카드의 저장 버튼은 <b>로그 설정만</b> 저장합니다 (위치·퇴실 알림 설정과 분리)'
+    +     '</div>'
+    +   '</div>'
     + '</section>'
 
     // ── 배포용 주소 ──
@@ -1178,6 +1272,94 @@ function renderSettingsPage(baseUrl) {
     badge.textContent = '반경 ' + r + 'm';
   }
   radiusInput.addEventListener('input', drawRadius);
+
+  /* ── 출결 시도 로그 보관 설정 ── */
+  var logOn = true;
+  var logToggle = document.getElementById('logToggle');
+  function setLogToggle(v) {
+    logOn = !!v;
+    logToggle.textContent = logOn ? 'ON' : 'OFF';
+    logToggle.classList.toggle('on', logOn);
+    logToggle.setAttribute('aria-pressed', logOn ? 'true' : 'false');
+  }
+  logToggle.addEventListener('click', function() { setLogToggle(!logOn); });
+
+  function fmtDay(v) {
+    if (!v) return '-';
+    var d = new Date(v);
+    if (isNaN(d.getTime())) return '-';
+    return d.getFullYear() + '.' + (d.getMonth() + 1) + '.' + d.getDate();
+  }
+
+  async function loadLogSettings() {
+    var el = document.getElementById('logStat');
+    try {
+      var res = await fetch('/api/admin/log-settings');
+      var d = await res.json();
+      if (!d.success) throw new Error(d.error || '');
+
+      document.getElementById('logRetention').value = d.settings.retentionDays;
+      document.getElementById('logHour').value = d.settings.hour;
+      setLogToggle(d.settings.enabled);
+
+      if (d.stats && d.stats.total !== null && d.stats.total !== undefined) {
+        el.textContent = '보관 중 ' + d.stats.total + '건 (실패 ' + (d.stats.fail_count || 0) + '건) · '
+          + '가장 오래된 기록 ' + fmtDay(d.stats.oldest);
+      } else {
+        el.textContent = '아직 기록이 없거나 로그 테이블이 생성되지 않았습니다.';
+      }
+    } catch (e) {
+      el.textContent = '현황을 불러오지 못했습니다.';
+    }
+  }
+
+  document.getElementById('btnSaveLog').addEventListener('click', async function() {
+    var days = parseInt(document.getElementById('logRetention').value, 10);
+    var hour = parseInt(document.getElementById('logHour').value, 10);
+    if (!isFinite(days) || days < 0) { showToast('보관 기간을 확인하세요', true); return; }
+    if (!isFinite(hour) || hour < 0 || hour > 23) { showToast('실행 시각은 0~23 사이여야 합니다', true); return; }
+
+    if (days !== 30 && !confirm('개인정보처리방침에는 "과정 종료 후 1개월(30일)"로 고지되어 있습니다.\\n\\n'
+      + days + '일로 변경하면 방침 문구도 함께 수정해야 합니다.\\n계속할까요?')) return;
+
+    try {
+      var res = await fetch('/api/admin/log-settings', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ retentionDays: days, hour: hour, enabled: logOn })
+      });
+      var d = await res.json();
+      if (d.success) showToast('로그 보관 설정을 저장했습니다');
+      else showToast('저장 실패: ' + (d.error || ''), true);
+    } catch (e) { showToast('저장 실패: ' + e.message, true); }
+    loadLogSettings();
+  });
+
+  document.getElementById('btnPreviewLog').addEventListener('click', async function() {
+    var days = parseInt(document.getElementById('logRetention').value, 10);
+    try {
+      var res = await fetch('/api/admin/log-cleanup/preview?days=' + (isFinite(days) ? days : ''));
+      var d = await res.json();
+      if (d.success) {
+        showToast('현재 기준(' + d.retentionDays + '일)으로 삭제 대상 ' + d.count + '건');
+      } else showToast('확인 실패: ' + (d.error || ''), true);
+    } catch (e) { showToast('확인 실패: ' + e.message, true); }
+  });
+
+  document.getElementById('btnRunLog').addEventListener('click', async function() {
+    var days = parseInt(document.getElementById('logRetention').value, 10);
+    if (!isFinite(days) || days < 0) { showToast('보관 기간을 확인하세요', true); return; }
+    if (!confirm('보관 기간(' + days + '일)이 지난 시도 로그를 지금 파기합니다.\\n\\n복구할 수 없습니다.\\n계속할까요?')) return;
+    try {
+      var res = await fetch('/api/admin/log-cleanup/run', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days: days })
+      });
+      var d = await res.json();
+      if (d.success) showToast(d.deleted + '건을 파기했습니다');
+      else showToast('파기 실패: ' + (d.error || ''), true);
+    } catch (e) { showToast('파기 실패: ' + e.message, true); }
+    loadLogSettings();
+  });
 
   async function loadSettings() {
     try {
@@ -1266,6 +1448,7 @@ function renderSettingsPage(baseUrl) {
   });
 
   loadSettings();
+  loadLogSettings();
   `;
 
   return layout.renderShell({
