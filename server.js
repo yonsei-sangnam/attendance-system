@@ -1566,6 +1566,13 @@ app.post('/api/correction/records', async (req, res) => {
     const me = await studentFromCorrectionToken(req.body && req.body.token);
     if (!me) return res.json({ success: false, error: '세션이 만료되었습니다. 다시 인증해주세요.' });
 
+    // 사용 중이면 세션을 연장한다 (목록을 보는 동안 만료되어 끊기지 않도록)
+    await db.query(
+      "UPDATE auth_challenges SET expires_at = NOW() + ($2 || ' minutes')::interval " +
+      "WHERE challenge = $1 AND type = 'correction_session'",
+      [req.body.token, String(CORRECTION_SESSION_MIN)]
+    );
+
     const r = await db.query(`
       SELECT a.attendance_id, a.session_id, a.status, a.exit_type,
              a.check_in_at, a.check_out_at,
@@ -1731,6 +1738,26 @@ app.get('/correction', (req, res) => {
 
     + '</div><script>'
     + 'var TOKEN = null; var RECORDS = []; var PICK = null;'
+    + 'var TOKEN_KEY = "sn_correction_session";'
+    + 'function saveToken(t, name){'
+    + '  TOKEN = t;'
+    + '  try { sessionStorage.setItem(TOKEN_KEY, JSON.stringify({ t: t, n: name || "" })); } catch (e) {}'
+    + '}'
+    + 'function clearToken(){'
+    + '  TOKEN = null;'
+    + '  try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) {}'
+    + '}'
+    + 'function readToken(){'
+    + '  try { return JSON.parse(sessionStorage.getItem(TOKEN_KEY) || "null"); } catch (e) { return null; }'
+    + '}'
+    + 'function backToLogin(reason){'
+    + '  clearToken();'
+    + '  $("stepList").classList.add("hide");'
+    + '  $("stepForm").classList.add("hide");'
+    + '  $("stepLogin").classList.remove("hide");'
+    + '  var lb = $("btnLogin"); lb.disabled = false; lb.textContent = "생체인증으로 시작하기";'
+    + '  if (reason) msg($("loginMsg"), esc(reason));'
+    + '}'
     + 'function $(id){ return document.getElementById(id); }'
     + 'function esc(v){ return String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;")'
     + '  .replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/\'/g,"&#39;"); }'
@@ -1754,7 +1781,7 @@ app.get('/correction', (req, res) => {
     + '    body: JSON.stringify({ response: authResp }) });'
     + '  var d = await lRes.json();'
     + '  if (!d.success) { var err = new Error(d.error || "인증 실패"); err.raw = d.error || ""; throw err; }'
-    + '  TOKEN = d.token;'
+    + '  saveToken(d.token, d.name);'
     + '  $("stepLogin").classList.add("hide");'
     + '  $("stepList").classList.remove("hide");'
     + '  $("hello").textContent = d.name + "님";'
@@ -1799,7 +1826,7 @@ app.get('/correction', (req, res) => {
     + '      method:"POST", headers:{"Content-Type":"application/json"},'
     + '      body: JSON.stringify({ token: TOKEN }) });'
     + '    var d = await r.json();'
-    + '    if (!d.success) { $("recList").innerHTML = ""; msg($("listMsg"), esc(d.error)); return; }'
+    + '    if (!d.success) { $("recList").innerHTML = ""; backToLogin(d.error); return; }'
     + '    RECORDS = d.rows || [];'
     + '    if (!RECORDS.length) {'
     + '      $("recList").innerHTML = "<div class=\\"note\\">소명이 필요한 출결 기록이 없습니다.<br>최근 60일 이내의 지각·결석·조퇴·퇴실미확인 기록만 표시됩니다.</div>";'
@@ -1837,6 +1864,7 @@ app.get('/correction', (req, res) => {
     + '  $("fTime").value = isExit ? hhmm(x.end_time) : hhmm(x.start_time);'
     + '  $("fReason").value = "";'
     + '  $("formMsg").innerHTML = "";'
+    + '  var sb = $("btnSubmit"); sb.disabled = false; sb.textContent = "소명 제출";'
     + '  $("stepList").classList.add("hide");'
     + '  $("stepForm").classList.remove("hide");'
     + '  window.scrollTo(0, 0);'
@@ -1861,10 +1889,17 @@ app.get('/correction', (req, res) => {
     + '        kind: PICK._kind, time: time, reason: reason }) });'
     + '    var d = await r.json();'
     + '    if (!d.success) throw new Error(d.error || "제출 실패");'
-    + '    msg($("formMsg"), "소명을 제출했습니다. 관리자 검토 후 반영됩니다.", true);'
     + '    b.textContent = "제출 완료";'
-    + '    showReturn();'
     + '    await loadRecords();'
+    + '    if (RETURN_URL) {'
+    + '      msg($("formMsg"), "소명을 제출했습니다. 관리자 검토 후 반영됩니다.", true);'
+    + '      showReturn();'
+    + '    } else {'
+    + '      $("stepForm").classList.add("hide");'
+    + '      $("stepList").classList.remove("hide");'
+    + '      msg($("listMsg"), "소명을 제출했습니다. 다른 회차도 이어서 신청할 수 있습니다.", true);'
+    + '      window.scrollTo(0, 0);'
+    + '    }'
     + '  } catch(e) {'
     + '    msg($("formMsg"), esc(e.message || "제출에 실패했습니다."));'
     + '    b.disabled = false; b.textContent = "소명 제출";'
@@ -1881,6 +1916,17 @@ app.get('/correction', (req, res) => {
     + '  b.onclick = function(){ location.href = RETURN_URL; };'
     + '  $("formMsg").appendChild(b);'
     + '}'
+    + ''
+    + 'async function restoreSession(){'
+    + '  var saved = readToken();'
+    + '  if (!saved || !saved.t) return;'
+    + '  TOKEN = saved.t;'
+    + '  $("stepLogin").classList.add("hide");'
+    + '  $("stepList").classList.remove("hide");'
+    + '  $("hello").textContent = (saved.n || "") + "님";'
+    + '  await loadRecords();'
+    + '}'
+    + 'restoreSession();'
     + '</script></body></html>';
 
   res.send(html);
