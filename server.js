@@ -735,10 +735,13 @@ app.get('/app-auth', async (req, res) => {
     + '      return true;'
     + '    }'
     + ''
-    + '    var myLat, myLng;'
+    + '    var myLat, myLng, myAcc = null;'
     + ''
     + '    if (APP_LAT !== "" && APP_LNG !== "") {'
+    + '      if (APP_ACC !== "") myAcc = parseFloat(APP_ACC);'
     + '      if (APP_ACC !== "" && parseFloat(APP_ACC) > MAX_ACCURACY) {'
+    + '        logAttempt("location", "fail", "accuracy",'
+    + '          { lat: parseFloat(APP_LAT), lng: parseFloat(APP_LNG), accuracy: myAcc });'
     + '        showLocationError("위치 정확도 부족", "설정에서 정확한 위치를 켜고 다시 시도해주세요.");'
     + '        return false;'
     + '      }'
@@ -761,17 +764,23 @@ app.get('/app-auth', async (req, res) => {
     + '      }'
     + '      myLat = pos.coords.latitude;'
     + '      myLng = pos.coords.longitude;'
+    + '      if (pos.coords && pos.coords.accuracy) myAcc = pos.coords.accuracy;'
     + '    }'
     + ''
     + '    var dist = getDistanceMeters(myLat, myLng, bldg.lat, bldg.lng);'
     + ''
     + '    if (dist > (bldg.radius || 200)) {'
+    + '      logAttempt("location", "fail", "out_of_range",'
+    + '        { lat: myLat, lng: myLng, accuracy: myAcc, distance: Math.round(dist) });'
     + '      showLocationError("건물 외부 감지", "강의실 근처에서 다시 시도해주세요.");'
     + '      return false;'
     + '    }'
     + ''
+    + '    logAttempt("location", "success", null,'
+    + '      { lat: myLat, lng: myLng, accuracy: myAcc, distance: Math.round(dist) });'
     + '    return true;'
     + '  } catch (locErr) {'
+    + '    logAttempt("location", "fail", "geo_error", { detail: (locErr && locErr.message) || "" });'
     + '    showLocationError("위치 확인 실패", "위치 정보를 가져올 수 없습니다. 담당자에게 문의하세요.");'
     + '    return false;'
     + '  }'
@@ -792,6 +801,29 @@ app.get('/app-auth', async (req, res) => {
     + '  var bytes = new Uint8Array(binary.length);'
     + '  for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);'
     + '  return bytes.buffer;'
+    + '}'
+    + ''
+    + 'var ATTEMPT_ACTION = CLASSROOM_CODE ? "checkin" : (ATTENDANCE_ID ? "checkout" : (ACTION === "register" ? "register" : "unknown"));'
+    + 'function logAttempt(stage, result, reason, extra) {'
+    + '  try {'
+    + '    var payload = {'
+    + '      studentId: STUDENT_ID || null,'
+    + '      classroomCode: CLASSROOM_CODE || null,'
+    + '      attendanceId: ATTENDANCE_ID || null,'
+    + '      action: ATTEMPT_ACTION,'
+    + '      stage: stage, result: result, reason: reason || null'
+    + '    };'
+    + '    if (extra) { for (var k in extra) { if (extra.hasOwnProperty(k)) payload[k] = extra[k]; } }'
+    + '    var body = JSON.stringify(payload);'
+    + '    if (navigator.sendBeacon) {'
+    + '      navigator.sendBeacon("/api/attendance/attempt", new Blob([body], { type: "application/json" }));'
+    + '    } else {'
+    + '      fetch("/api/attendance/attempt", {'
+    + '        method: "POST", headers: { "Content-Type": "application/json" },'
+    + '        body: body, keepalive: true'
+    + '      }).catch(function() {});'
+    + '    }'
+    + '  } catch (e) { /* 로깅 실패는 무시 */ }'
     + '}'
     + ''
     + 'var BIO_TIMEOUT_MS = 45000;'
@@ -969,16 +1001,22 @@ app.get('/app-auth', async (req, res) => {
     + '    var verResult = await verRes.json();'
     + ''
     + '    if (verResult.verified || verResult.success) {'
+    + '      logAttempt("verify", "success", null, null);'
     + '      showDone(verResult.message || "인증 완료!");'
     + '    } else {'
+    + '      logAttempt("verify", "fail", "verify_fail",'
+    + '        { detail: verResult.error || verResult.message || "" });'
     + '      showError(verResult.error || verResult.message || "인증 실패");'
     + '    }'
     + '  } catch(e) {'
     + '    if (e.name === "BioTimeoutError") {'
+    + '      logAttempt("biometric", "fail", "timeout", null);'
     + '      showError(BIO_TIMEOUT_MSG);'
     + '    } else if (e.name === "NotAllowedError" || e.name === "AbortError") {'
+    + '      logAttempt("biometric", "fail", "cancelled", { detail: e.name });'
     + '      showError("인증이 취소되었습니다.");'
     + '    } else {'
+    + '      logAttempt("biometric", "fail", "bio_error", { detail: (e && e.message) || e.name || "" });'
     + '      showError(e.message || "알 수 없는 오류");'
     + '    }'
     + '  }'
@@ -1277,6 +1315,67 @@ app.post('/api/register/verify', async (req, res) => {
   }
 });
 
+
+// ─── API: 출결 시도 로그 (성공/실패 모두) ───────────────────
+// 위치 검증과 생체인증은 클라이언트에서 끝나는 단계가 있어, 실패하면 서버에
+// 아무 기록도 남지 않았다. 이 엔드포인트는 그 공백을 메운다.
+// 로깅 실패가 출결 흐름을 막아서는 안 되므로 항상 200으로 응답한다.
+app.post('/api/attendance/attempt', async (req, res) => {
+  try {
+    const b = req.body || {};
+
+    const ALLOWED_ACTION = ['checkin', 'checkout', 'register', 'unknown'];
+    const ALLOWED_STAGE = ['location', 'biometric', 'verify'];
+    const ALLOWED_RESULT = ['success', 'fail'];
+
+    const action = ALLOWED_ACTION.indexOf(b.action) >= 0 ? b.action : 'unknown';
+    const stage = ALLOWED_STAGE.indexOf(b.stage) >= 0 ? b.stage : null;
+    const result = ALLOWED_RESULT.indexOf(b.result) >= 0 ? b.result : null;
+
+    if (!stage || !result) return res.json({ ok: false });
+
+    function num(v) {
+      const n = parseFloat(v);
+      return isFinite(n) ? n : null;
+    }
+    function int(v) {
+      const n = parseInt(v, 10);
+      return isFinite(n) ? n : null;
+    }
+    function str(v, max) {
+      if (v === null || v === undefined) return null;
+      const s = String(v).trim();
+      return s ? s.slice(0, max) : null;
+    }
+
+    await db.query(`
+      INSERT INTO attendance_attempts
+        (student_id, classroom_code, attendance_id, action, stage, result,
+         reason, detail, lat, lng, accuracy, distance_m, user_agent)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+    `, [
+      int(b.studentId),
+      str(b.classroomCode, 40),
+      int(b.attendanceId),
+      action,
+      stage,
+      result,
+      str(b.reason, 40),
+      str(b.detail, 300),
+      num(b.lat),
+      num(b.lng),
+      num(b.accuracy),
+      int(b.distance),
+      str(req.get('user-agent'), 300),
+    ]);
+
+    res.json({ ok: true });
+  } catch (err) {
+    // 테이블 미생성 등으로 실패해도 출결 흐름에는 영향을 주지 않는다
+    console.error('[Attempt] 로그 저장 실패:', err.message);
+    res.json({ ok: false });
+  }
+});
 
 // ════════════════════════════════════════════════════════════
 // 생체인증 인증 (출결 체크 시)
