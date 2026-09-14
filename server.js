@@ -377,6 +377,8 @@ app.get('/privacy', (req, res) => {
     + '<li><strong>출결 시도 기록:</strong> 시도 일시, 구분(입실/퇴실), 진행 단계, 성공 또는 실패 여부와 실패 사유, '
     +   '시도 당시의 위치 좌표와 GPS 정확도 및 강의 건물로부터의 거리, 접속 기기 및 브라우저 정보</li>'
     + '<li><strong>생체인식 정보:</strong> 본인 확인을 위한 FIDO2 공개키 (생체 데이터 자체는 기기에만 저장되며 서버로 전송되지 않음)</li>'
+    + '<li><strong>출결 소명 기록:</strong> 수강생이 출결 정정을 요청한 경우 '
+    +   '본인이 입력한 실제 시각과 사유, 제출 일시, 관리자의 처리 결과 및 메모</li>'
     + '<li><strong>기기 식별 토큰:</strong> 푸시 알림 발송에 사용 (FCM 토큰)</li>'
     + '</ul>'
     + ''
@@ -387,6 +389,7 @@ app.get('/privacy', (req, res) => {
     + '<li>퇴실 알림 푸시 발송</li>'
     + '<li>부정 출결 방지를 위한 위치 및 생체 인증</li>'
     + '<li>출결 관련 이의 제기 시 사실 확인 (예: 출결 체크를 시도하였으나 실패한 경우의 확인)</li>'
+    + '<li>출결 정정 요청의 접수·검토 및 처리 결과 기록</li>'
     + '<li>시스템 오류 원인 분석 및 위치 검증 기준 개선</li>'
     + '</ul>'
     + ''
@@ -395,6 +398,8 @@ app.get('/privacy', (req, res) => {
     + '<li><strong>출결 기록 및 수강생 정보:</strong> 해당 교육 과정 종료 후 지체 없이 파기합니다.</li>'
     + '<li><strong>출결 시도 기록(위치 좌표 포함):</strong> 해당 교육 과정 종료 후 1개월이 경과한 시점에 '
     +   '시스템이 자동으로 파기합니다. 이의 제기 기간을 고려한 최소한의 기간입니다.</li>'
+    + '<li><strong>출결 소명 기록:</strong> 출결 시도 기록과 동일하게 해당 교육 과정 종료 후 1개월이 '
+    +   '경과한 시점에 파기합니다.</li>'
     + '</ul>'
     + '<p>단, 관련 법령에 의한 보존 의무가 있는 경우 해당 기간 동안 보관합니다.</p>'
     + ''
@@ -408,7 +413,8 @@ app.get('/privacy', (req, res) => {
     + '<li>생체인증은 FIDO2/WebAuthn 표준을 사용하여 생체 데이터가 서버에 저장되지 않음</li>'
     + '<li>비밀번호는 단방향 해시(bcrypt)로 암호화 저장</li>'
     + '<li>데이터베이스 접근 권한 제한</li>'
-    + '<li>출결 시도 기록은 관리자 인증을 거친 화면에서만 열람 가능</li>'
+    + '<li>출결 시도 기록과 소명 기록은 관리자 인증을 거친 화면에서만 열람 가능</li>'
+    + '<li>출결 소명 제출은 생체인증으로 본인 확인을 거친 경우에만 가능</li>'
     + '</ul>'
     + ''
     + '<h2>6. 이용자의 권리</h2>'
@@ -1598,6 +1604,12 @@ app.post('/api/correction/submit', async (req, res) => {
 
 // ─── 소명 페이지 ────────────────────────────────────────────
 app.get('/correction', (req, res) => {
+  // 앱에서 열었을 때만 복귀 버튼을 노출한다.
+  // 임의 URL 주입을 막기 위해 앱 전용 스킴만 허용한다.
+  var rawReturn = req.query.returnUrl || '';
+  var returnUrl = /^sangnamapp:\/\/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]*$/.test(rawReturn)
+    ? rawReturn : '';
+
   var html = '<!DOCTYPE html><html lang="ko"><head>'
     + '<meta charset="UTF-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
@@ -1775,12 +1787,24 @@ app.get('/correction', (req, res) => {
     + '    if (!d.success) throw new Error(d.error || "제출 실패");'
     + '    msg($("formMsg"), "소명을 제출했습니다. 관리자 검토 후 반영됩니다.", true);'
     + '    b.textContent = "제출 완료";'
+    + '    showReturn();'
     + '    await loadRecords();'
     + '  } catch(e) {'
     + '    msg($("formMsg"), esc(e.message || "제출에 실패했습니다."));'
     + '    b.disabled = false; b.textContent = "소명 제출";'
     + '  }'
     + '});'
+    + 'var RETURN_URL = "' + returnUrl.replace(/"/g, '') + '";'
+    + 'if (RETURN_URL) {'
+    + '  $("footNote").innerHTML = "제출 후 아래 버튼으로 앱으로 돌아갈 수 있습니다.";'
+    + '}'
+    + 'function showReturn(){'
+    + '  if (!RETURN_URL) return;'
+    + '  var b = document.createElement("button");'
+    + '  b.className = "btn btn-sub"; b.textContent = "앱으로 돌아가기";'
+    + '  b.onclick = function(){ location.href = RETURN_URL; };'
+    + '  $("formMsg").appendChild(b);'
+    + '}'
     + '</script></body></html>';
 
   res.send(html);
