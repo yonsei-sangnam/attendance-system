@@ -58,7 +58,7 @@ async function previewCleanup(retentionDays) {
             (SELECT MAX(cs.session_date)
              FROM enrollments e
              JOIN course_sessions cs ON cs.course_id = e.course_id
-             WHERE e.student_id = a.student_id),
+             WHERE e.student_id::text = a.student_id),
             a.created_at::date
           ) < (CURRENT_DATE - ($1::int || ' days')::interval)
   `, [retentionDays]);
@@ -73,7 +73,7 @@ async function runCleanup(retentionDays) {
             (SELECT MAX(cs.session_date)
              FROM enrollments e
              JOIN course_sessions cs ON cs.course_id = e.course_id
-             WHERE e.student_id = a.student_id),
+             WHERE e.student_id::text = a.student_id),
             a.created_at::date
           ) < (CURRENT_DATE - ($1::int || ' days')::interval)
   `, [retentionDays]);
