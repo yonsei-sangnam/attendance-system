@@ -306,7 +306,27 @@ async function syncToGoogleSheets(courseId, spreadsheetId, options) {
   const existingSheets = spreadsheet.data.sheets.map(s => s.properties.title);
 
   let sheetsUpdated = 0;
+  let sheetsRemoved = 0;
   let formatResult = 'success';
+
+  // 0. 기존 내용 비우기 (잔여 데이터 방지)
+  //    회차 삭제·수강생 감소로 행·열이 줄어들면 이전 값이 끝에 남는 문제를 막는다.
+  //    값만 지우고 서식(색상 등)은 유지한다. 이미 존재하는 탭만 대상으로 하며, 한 번의 호출로 처리한다.
+  const clearRanges = [];
+  if (includeSummary && existingSheets.includes('출결요약')) {
+    clearRanges.push("'출결요약'");
+  }
+  for (const session of targetSessions) {
+    const t = session.session_number + '회';
+    if (existingSheets.includes(t)) clearRanges.push("'" + t + "'");
+  }
+  if (clearRanges.length > 0) {
+    await sheets.spreadsheets.values.batchClear({
+      spreadsheetId,
+      requestBody: { ranges: clearRanges },
+    });
+    await delay(API_DELAY);
+  }
 
   // 1. "출결요약" 시트
   if (includeSummary) {
@@ -364,10 +384,33 @@ async function syncToGoogleSheets(courseId, spreadsheetId, options) {
     sheetsUpdated++;
   }
 
+  // 3. 현재 회차에 없는 "N회" 탭 삭제 (전체 동기화일 때만)
+  //    회차 삭제 후 번호가 당겨지면 마지막 번호의 탭이 이전 데이터로 남는다.
+  //    이름이 정확히 "숫자+회" 형식인 탭만 대상으로 하며, 다른 탭은 건드리지 않는다.
+  if (!sessionNumbers) {
+    const validTitles = new Set(data.sessions.map(s => s.session_number + '회'));
+    const staleSheets = spreadsheet.data.sheets.filter(s => {
+      const title = s.properties.title;
+      return /^\d+회$/.test(title) && !validTitles.has(title);
+    });
+    if (staleSheets.length > 0) {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: staleSheets.map(s => ({ deleteSheet: { sheetId: s.properties.sheetId } })),
+        },
+      });
+      await delay(API_DELAY);
+      sheetsRemoved = staleSheets.length;
+      console.log('[Sync] 잔여 회차 탭 삭제: ' + staleSheets.map(s => s.properties.title).join(', '));
+    }
+  }
+
   return {
     success: true,
     courseName: data.course.course_name,
     sheetsUpdated,
+    sheetsRemoved,
     studentsCount: data.students.length,
     formatResult,
     partial: !!sessionNumbers,
