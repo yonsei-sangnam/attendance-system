@@ -981,6 +981,27 @@ function registerAdminRoutes(app) {
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
 
+  // ═══ 회차 번호 재정렬 (삭제 후 빈 번호 당기기) ═══════════════
+  // 남은 회차의 기존 번호 순서를 유지한 채 1부터 다시 번호를 매긴다.
+  // UNIQUE(course_id, session_number) 충돌을 피하려고
+  // 1단계에서 음수로 바꾼 뒤 2단계에서 최종 번호를 부여한다.
+  // 출결·소명은 session_id(고유 ID)로 연결되어 있어 번호 변경의 영향을 받지 않는다.
+  async function renumberSessions(client, courseIds) {
+    if (!courseIds || courseIds.length === 0) return;
+    await client.query(
+      'UPDATE course_sessions SET session_number = -session_number ' +
+      'WHERE course_id::text = ANY($1::text[])',
+      [courseIds]
+    );
+    await client.query(
+      'UPDATE course_sessions cs SET session_number = r.rn ' +
+      'FROM (SELECT session_id, ROW_NUMBER() OVER (PARTITION BY course_id ORDER BY session_number DESC) AS rn ' +
+      '      FROM course_sessions WHERE course_id::text = ANY($1::text[])) r ' +
+      'WHERE cs.session_id = r.session_id',
+      [courseIds]
+    );
+  }
+
   // ═══ API: 회차 일괄 삭제 ════════════════════════════════════
   app.post('/api/admin/sessions/bulk-delete', async (req, res) => {
     const client = await db.connect();
@@ -998,9 +1019,14 @@ function registerAdminRoutes(app) {
         [ids]
       );
       const sess = await client.query(
-        'DELETE FROM course_sessions WHERE session_id::text = ANY($1::text[])',
+        'DELETE FROM course_sessions WHERE session_id::text = ANY($1::text[]) ' +
+        'RETURNING course_id::text AS course_id',
         [ids]
       );
+
+      // 삭제된 회차가 속한 과정의 남은 회차 번호를 다시 매긴다
+      const courseIds = Array.from(new Set(sess.rows.map(function (r) { return r.course_id; })));
+      await renumberSessions(client, courseIds);
 
       await client.query('COMMIT');
       res.json({ success: true, deleted: sess.rowCount, attendanceDeleted: att.rowCount });
@@ -1058,11 +1084,24 @@ function registerAdminRoutes(app) {
 
   // ═══ API: 회차 삭제 ═════════════════════════════════════════
   app.delete('/api/admin/sessions/:sessionId', async (req, res) => {
+    const client = await db.connect();
     try {
-      await db.query('DELETE FROM attendance WHERE session_id = $1', [req.params.sessionId]);
-      await db.query('DELETE FROM course_sessions WHERE session_id = $1', [req.params.sessionId]);
+      await client.query('BEGIN');
+      await client.query('DELETE FROM attendance WHERE session_id = $1', [req.params.sessionId]);
+      const sess = await client.query(
+        'DELETE FROM course_sessions WHERE session_id = $1 RETURNING course_id::text AS course_id',
+        [req.params.sessionId]
+      );
+      await renumberSessions(client, sess.rows.map(function (r) { return r.course_id; }));
+      await client.query('COMMIT');
       res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch (e) { /* 무시 */ }
+      console.error('[Admin] 회차 삭제 오류:', err);
+      res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
+    }
   });
 
   // ═══ API: 회차 수정 ═════════════════════════════════════════
@@ -3907,7 +3946,7 @@ function renderCoursesPage(classrooms) {
     var preview = nums.slice(0, 12).join(', ') + (nums.length > 12 ? ' 외 ' + (nums.length - 12) + '개' : '');
 
     if (!confirm('선택한 ' + ids.length + '개 회차를 삭제합니다.\\n\\n' + preview
-      + '\\n\\n해당 회차의 출결 기록 ' + attTotal + '건도 함께 삭제됩니다.\\n되돌릴 수 없습니다.')) return;
+      + '\\n\\n해당 회차의 출결 기록 ' + attTotal + '건도 함께 삭제됩니다.\\n남은 회차 번호는 순서대로 다시 매겨집니다.\\n되돌릴 수 없습니다.')) return;
     if (attTotal > 0 && !confirm('출결 기록 ' + attTotal + '건이 영구 삭제됩니다.\\n정말 진행할까요?')) return;
 
     showToast('삭제 중…');
@@ -4081,7 +4120,7 @@ function renderCoursesPage(classrooms) {
   }
 
   async function deleteSession(sid, num) {
-    if (!confirm(num + '회차를 삭제합니다.\\n해당 회차의 출결 데이터도 함께 삭제됩니다.')) return;
+    if (!confirm(num + '회차를 삭제합니다.\\n해당 회차의 출결 데이터도 함께 삭제됩니다.\\n남은 회차 번호는 순서대로 다시 매겨집니다.')) return;
     try {
       var res = await fetch('/api/admin/sessions/' + sid, { method: 'DELETE' });
       var r = await res.json();
