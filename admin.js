@@ -893,6 +893,140 @@ function registerAdminRoutes(app) {
     } catch (err) { res.status(500).send('오류: ' + err.message); }
   });
 
+  // ═══ 과정 종류 설정 ═════════════════════════════════════════
+  // system_settings 의 'course_types' 키에 JSON 배열로 저장: [{ "name": "모집과정", "color": "blue" }, ...]
+  // 저장값이 없으면 기존에 코드에 고정되어 있던 3종을 기본값으로 사용한다.
+  const COURSE_TYPE_COLORS = ['blue', 'green', 'orange', 'purple', 'red', 'teal', 'yellow', 'gray'];
+  const DEFAULT_COURSE_TYPES = [
+    { name: '모집과정', color: 'blue' },
+    { name: '위탁과정', color: 'green' },
+    { name: '산교연과정', color: 'orange' }
+  ];
+
+  async function getCourseTypes(client) {
+    const q = client || db;
+    const r = await q.query("SELECT value FROM system_settings WHERE key = 'course_types'");
+    if (r.rows.length && r.rows[0].value) {
+      try {
+        const arr = JSON.parse(r.rows[0].value);
+        if (Array.isArray(arr)) {
+          return arr.filter(function (t) { return t && t.name; }).map(function (t) {
+            return { name: String(t.name), color: COURSE_TYPE_COLORS.indexOf(t.color) >= 0 ? t.color : 'gray' };
+          });
+        }
+      } catch (e) { /* 손상된 값이면 기본값 사용 */ }
+    }
+    return DEFAULT_COURSE_TYPES.map(function (t) { return { name: t.name, color: t.color }; });
+  }
+
+  // ═══ API: 과정 종류 목록 ═════════════════════════════════════
+  app.get('/api/admin/course-types', async (req, res) => {
+    try {
+      const types = await getCourseTypes();
+      const cnt = await db.query(
+        'SELECT course_type, COUNT(*)::int AS n FROM courses WHERE course_type IS NOT NULL GROUP BY course_type'
+      );
+      const counts = {};
+      for (const row of cnt.rows) counts[row.course_type] = row.n;
+      const listed = {};
+      types.forEach(function (t) { listed[t.name] = true; });
+      res.json({
+        success: true,
+        types: types.map(function (t) { return { name: t.name, color: t.color, count: counts[t.name] || 0 }; }),
+        // 과정에는 쓰이고 있지만 설정 목록에는 없는 종류 (안내용)
+        unlisted: Object.keys(counts).filter(function (n) { return !listed[n]; })
+                    .map(function (n) { return { name: n, count: counts[n] }; })
+      });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ═══ API: 과정 종류 저장 ═════════════════════════════════════
+  // body: { types: [{ name, color, from }] }
+  //   from = 기존 이름 (이름 변경 추적용, 새로 추가한 종류는 null)
+  // - 이름을 바꾸면 그 종류를 쓰는 과정의 course_type 도 함께 바뀐다.
+  // - 과정이 사용 중인 종류는 삭제할 수 없다.
+  app.put('/api/admin/course-types', async (req, res) => {
+    const input = req.body && Array.isArray(req.body.types) ? req.body.types : null;
+    if (!input) return res.status(400).json({ error: '잘못된 요청입니다.' });
+    if (input.length > 30) return res.status(400).json({ error: '과정 종류는 최대 30개까지 등록할 수 있습니다.' });
+
+    const next = [];
+    const seen = {};
+    for (const t of input) {
+      const name = String((t && t.name) || '').trim();
+      if (!name) return res.status(400).json({ error: '이름이 비어 있는 종류가 있습니다.' });
+      if (name.length > 20) return res.status(400).json({ error: '종류 이름은 20자 이하로 입력하세요: ' + name });
+      if (seen[name]) return res.status(400).json({ error: '같은 이름의 종류가 중복되었습니다: ' + name });
+      seen[name] = true;
+      next.push({
+        name: name,
+        color: COURSE_TYPE_COLORS.indexOf(t.color) >= 0 ? t.color : 'gray',
+        from: t.from ? String(t.from) : null
+      });
+    }
+
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+
+      // from 은 현재 저장된 목록에 있는 이름만 인정 (한 이름은 한 번만)
+      const curNames = (await getCourseTypes(client)).map(function (t) { return t.name; });
+      const fromUsed = {};
+      next.forEach(function (t) {
+        if (t.from && (curNames.indexOf(t.from) < 0 || fromUsed[t.from])) t.from = null;
+        if (t.from) fromUsed[t.from] = true;
+      });
+
+      // 삭제된 종류가 과정에서 사용 중이면 거부
+      const removed = curNames.filter(function (n) { return !fromUsed[n]; });
+      if (removed.length) {
+        const used = await client.query(
+          'SELECT course_type, COUNT(*)::int AS n FROM courses WHERE course_type = ANY($1::text[]) GROUP BY course_type',
+          [removed]
+        );
+        if (used.rows.length) {
+          await client.query('ROLLBACK');
+          const msg = used.rows.map(function (r) { return r.course_type + '(' + r.n + '개 과정)'; }).join(', ');
+          return res.status(400).json({
+            error: '사용 중인 종류는 삭제할 수 없습니다: ' + msg + '. 해당 과정의 종류를 먼저 바꾸세요.'
+          });
+        }
+      }
+
+      // 이름 변경을 과정에 반영 — UPDATE 한 번으로 처리해 두 종류의 이름을 서로 바꿔도 섞이지 않게 한다
+      const renames = next.filter(function (t) { return t.from && t.from !== t.name; });
+      let renamed = 0;
+      if (renames.length) {
+        const params = [];
+        let sql = 'UPDATE courses SET course_type = CASE course_type';
+        renames.forEach(function (t) {
+          params.push(t.from, t.name);
+          sql += ' WHEN $' + (params.length - 1) + ' THEN $' + params.length;
+        });
+        params.push(renames.map(function (t) { return t.from; }));
+        sql += ' END WHERE course_type = ANY($' + params.length + '::text[])';
+        const u = await client.query(sql, params);
+        renamed = u.rowCount;
+      }
+
+      const saveValue = JSON.stringify(next.map(function (t) { return { name: t.name, color: t.color }; }));
+      await client.query(
+        "INSERT INTO system_settings (key, value, updated_at) VALUES ('course_types', $1, NOW()) " +
+        'ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()',
+        [saveValue]
+      );
+
+      await client.query('COMMIT');
+      res.json({ success: true, renamedCourses: renamed });
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch (e) { /* 무시 */ }
+      console.error('[Admin] 과정 종류 저장 오류:', err);
+      res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
+    }
+  });
+
   // ═══ API: 과정 목록 (상세) ═══════════════════════════════════
   app.get('/api/admin/courses', async (req, res) => {
     try {
@@ -3467,9 +3601,8 @@ function renderCoursesPage(classrooms) {
   .cs-bulkedit.on { display:block; }
   `;
 
-  const typeOptions = '<option value="">선택</option>'
-    + ['모집과정', '위탁과정', '산교연과정'].map(function(t) {
-        return '<option value="' + t + '">' + t + '</option>'; }).join('');
+  // 과정 종류 선택지는 페이지가 열린 뒤 /api/admin/course-types 에서 받아 채운다
+  const typeOptions = '<option value="">선택</option>';
 
   const body =
       '<section class="sn-section">'
@@ -3509,6 +3642,13 @@ function renderCoursesPage(classrooms) {
     +     '</div>'
     +     '<button type="button" class="sn-btn sn-btn-primary" style="height:44px;margin-top:14px;" id="btnAddCourse">과정 추가</button>'
     +   '</div>'
+    + '</section>'
+
+    // ── 과정 종류 설정 ──
+    + '<section class="sn-section" style="padding-top:18px;">'
+    +   '<div class="sn-head-row"><h2 class="sn-h2">과정 종류 설정</h2>'
+    +     '<span class="sn-sub">과정 추가·수정의 \'종류\' 선택지</span></div>'
+    +   '<div class="sn-card"><div id="typeEditor"><div class="cs-mut">불러오는 중…</div></div></div>'
     + '</section>'
 
     // ── 회차 관리 ──
@@ -3618,6 +3758,209 @@ function renderCoursesPage(classrooms) {
   function hhmm(t) { return t ? String(t).slice(0, 5) : '—'; }
   function dOnly(v) { return v ? String(v).split('T')[0] : '—'; }
 
+  /* ── 과정 종류 ── */
+  var TYPE_COLOR_MAP = {
+    blue:   ['#dce8f5', '#003876', '파랑'],
+    green:  ['#e6f4ea', '#137333', '초록'],
+    orange: ['#fbe4d5', '#9a5200', '주황'],
+    purple: ['#ede7f6', '#5b2c9a', '보라'],
+    red:    ['#fce4e4', '#b3261e', '빨강'],
+    teal:   ['#dcf2f0', '#00695c', '청록'],
+    yellow: ['#fff4cc', '#7a5a00', '노랑'],
+    gray:   ['#eceff1', '#455a64', '회색']
+  };
+  var courseTypes = [];    // 저장된 목록 [{ name, color, count }]
+  var typeUnlisted = [];   // 과정에는 쓰이지만 목록에 없는 종류
+  var typeDraft = [];      // 편집 중 목록 [{ name, color, from, count }]
+
+  function typeTagHtml(name, color) {
+    var c = TYPE_COLOR_MAP[color] || TYPE_COLOR_MAP.gray;
+    return '<span class="cs-tag" style="background:' + c[0] + ';color:' + c[1] + ';">' + esc(name) + '</span>';
+  }
+  function typeTag(name) {
+    if (!name) return '<span class="cs-mut">—</span>';
+    var color = 'gray';
+    courseTypes.forEach(function(t) { if (t.name === name) color = t.color; });
+    return typeTagHtml(name, color);
+  }
+  function typeOptionsHtml(selected) {
+    var html = '<option value="">선택</option>';
+    var found = false;
+    courseTypes.forEach(function(t) {
+      var on = (t.name === selected);
+      if (on) found = true;
+      html += '<option value="' + esc(t.name) + '"' + (on ? ' selected' : '') + '>' + esc(t.name) + '</option>';
+    });
+    // 목록에서 빠진 종류를 쓰는 과정도 값이 지워지지 않도록 현재 값을 남겨 둔다
+    if (selected && !found) {
+      html += '<option value="' + esc(selected) + '" selected>' + esc(selected) + ' (목록에 없음)</option>';
+    }
+    return html;
+  }
+
+  async function loadCourseTypes() {
+    try {
+      var res = await fetch('/api/admin/course-types');
+      var r = await res.json();
+      if (!r.success) throw new Error(r.error || '');
+      courseTypes = r.types || [];
+      typeUnlisted = r.unlisted || [];
+    } catch (e) {
+      showToast('과정 종류를 불러오지 못했습니다', true);
+    }
+    var sel = document.getElementById('cType');
+    var cur = sel.value;
+    sel.innerHTML = typeOptionsHtml('');
+    sel.value = courseTypes.some(function(t) { return t.name === cur; }) ? cur : '';
+    resetTypeDraft();
+  }
+
+  function resetTypeDraft() {
+    typeDraft = courseTypes.map(function(t) {
+      return { name: t.name, color: t.color, from: t.name, count: t.count };
+    });
+    renderTypeEditor();
+  }
+
+  function renderTypeEditor() {
+    var el = document.getElementById('typeEditor');
+    var colorKeys = Object.keys(TYPE_COLOR_MAP);
+    var rows = typeDraft.map(function(t, i) {
+      var colorSel = '<select class="cs-select" data-tf="color" data-i="' + i + '" style="min-width:90px;">'
+        + colorKeys.map(function(k) {
+            return '<option value="' + k + '"' + (t.color === k ? ' selected' : '') + '>' + TYPE_COLOR_MAP[k][2] + '</option>';
+          }).join('')
+        + '</select>';
+      var usage = t.from
+        ? (t.count > 0 ? t.count + '개 과정' : '<span class="cs-mut">미사용</span>')
+        : '<span class="cs-mut">신규</span>';
+      return '<tr>'
+        + '<td id="tprev_' + i + '">' + typeTagHtml(t.name || '(이름 없음)', t.color) + '</td>'
+        + '<td><input class="cs-input" type="text" maxlength="20" data-tf="name" data-i="' + i + '" value="' + esc(t.name) + '" placeholder="예: 공개과정" style="min-width:150px;"></td>'
+        + '<td>' + colorSel + '</td>'
+        + '<td class="cs-num" style="white-space:nowrap;">' + usage + '</td>'
+        + '<td style="white-space:nowrap;">'
+        +   '<button type="button" class="cs-mini" data-tact="up" data-i="' + i + '"' + (i === 0 ? ' disabled' : '') + '>▲</button> '
+        +   '<button type="button" class="cs-mini" data-tact="down" data-i="' + i + '"' + (i === typeDraft.length - 1 ? ' disabled' : '') + '>▼</button> '
+        +   '<button type="button" class="cs-mini red" data-tact="del" data-i="' + i + '">삭제</button>'
+        + '</td></tr>';
+    }).join('');
+
+    var note = '';
+    if (typeUnlisted.length) {
+      note = '<div class="cs-info" style="margin-top:12px;">목록에 없는 종류를 쓰는 과정이 있습니다: '
+        + typeUnlisted.map(function(u) { return esc(u.name) + ' (' + u.count + '개 과정)'; }).join(', ')
+        + '<br>같은 이름으로 종류를 추가하면 목록에 연결됩니다.</div>';
+    }
+
+    el.innerHTML =
+        '<div class="cs-mut">이름을 바꾸면 그 종류로 등록된 과정에도 함께 반영됩니다. 과정이 사용 중인 종류는 삭제할 수 없습니다.</div>'
+      + '<div class="cs-tablewrap" style="padding:4px 0 6px;margin-top:10px;">'
+      +   '<table class="cs-table" style="min-width:560px;">'
+      +     '<thead><tr><th>미리보기</th><th>이름</th><th>색상</th><th>사용</th><th style="width:170px;">관리</th></tr></thead>'
+      +     '<tbody>' + (rows || '<tr><td colspan="5" class="cs-mut">등록된 종류가 없습니다.</td></tr>') + '</tbody>'
+      +   '</table>'
+      + '</div>'
+      + note
+      + '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">'
+      +   '<button type="button" class="sn-btn sn-btn-secondary" style="height:44px;" data-tact="add">+ 종류 추가</button>'
+      +   '<span style="flex:1;"></span>'
+      +   '<button type="button" class="sn-btn sn-btn-secondary" style="height:44px;" data-tact="reset">되돌리기</button>'
+      +   '<button type="button" class="sn-btn sn-btn-primary" style="height:44px;" data-tact="save">종류 저장</button>'
+      + '</div>';
+  }
+
+  (function() {
+    var ed = document.getElementById('typeEditor');
+
+    ed.addEventListener('input', function(ev) {
+      var t = ev.target;
+      if (t.getAttribute('data-tf') !== 'name') return;
+      var i = parseInt(t.getAttribute('data-i'), 10);
+      typeDraft[i].name = t.value;
+      // 입력 중 포커스가 풀리지 않도록 미리보기 칸만 갱신
+      document.getElementById('tprev_' + i).innerHTML = typeTagHtml(t.value.trim() || '(이름 없음)', typeDraft[i].color);
+    });
+
+    ed.addEventListener('change', function(ev) {
+      var t = ev.target;
+      if (t.getAttribute('data-tf') !== 'color') return;
+      var i = parseInt(t.getAttribute('data-i'), 10);
+      typeDraft[i].color = t.value;
+      document.getElementById('tprev_' + i).innerHTML = typeTagHtml(typeDraft[i].name.trim() || '(이름 없음)', t.value);
+    });
+
+    ed.addEventListener('click', function(ev) {
+      var b = ev.target.closest('[data-tact]');
+      if (!b || b.disabled) return;
+      var act = b.getAttribute('data-tact');
+      var i = parseInt(b.getAttribute('data-i'), 10);
+
+      if (act === 'up' && i > 0) {
+        var a = typeDraft[i - 1]; typeDraft[i - 1] = typeDraft[i]; typeDraft[i] = a;
+        renderTypeEditor();
+      } else if (act === 'down' && i < typeDraft.length - 1) {
+        var d = typeDraft[i + 1]; typeDraft[i + 1] = typeDraft[i]; typeDraft[i] = d;
+        renderTypeEditor();
+      } else if (act === 'del') {
+        var t = typeDraft[i];
+        if (t.from && t.count > 0) {
+          showToast('사용 중인 종류는 삭제할 수 없습니다 (' + t.count + '개 과정). 해당 과정의 종류를 먼저 바꾸세요.', true);
+          return;
+        }
+        typeDraft.splice(i, 1);
+        renderTypeEditor();
+      } else if (act === 'add') {
+        if (typeDraft.length >= 30) { showToast('과정 종류는 최대 30개까지 등록할 수 있습니다', true); return; }
+        var used = {};
+        typeDraft.forEach(function(x) { used[x.color] = true; });
+        var color = Object.keys(TYPE_COLOR_MAP).filter(function(k) { return !used[k]; })[0] || 'gray';
+        typeDraft.push({ name: '', color: color, from: null, count: 0 });
+        renderTypeEditor();
+        var inputs = ed.querySelectorAll('[data-tf="name"]');
+        if (inputs.length) inputs[inputs.length - 1].focus();
+      } else if (act === 'reset') {
+        resetTypeDraft();
+      } else if (act === 'save') {
+        saveCourseTypes();
+      }
+    });
+  })();
+
+  async function saveCourseTypes() {
+    var seen = {};
+    for (var i = 0; i < typeDraft.length; i++) {
+      var nm = typeDraft[i].name.trim();
+      if (!nm) { showToast('이름이 비어 있는 종류가 있습니다', true); return; }
+      if (seen[nm]) { showToast('같은 이름의 종류가 중복되었습니다: ' + nm, true); return; }
+      seen[nm] = true;
+    }
+
+    var renames = typeDraft.filter(function(t) { return t.from && t.count > 0 && t.from !== t.name.trim(); });
+    if (renames.length) {
+      var msg = '다음 종류의 이름이 바뀌고, 해당 과정에도 함께 반영됩니다.\\n\\n'
+        + renames.map(function(t) { return t.from + ' → ' + t.name.trim() + ' (' + t.count + '개 과정)'; }).join('\\n');
+      if (!confirm(msg)) return;
+    }
+
+    var payload = typeDraft.map(function(t) {
+      return { name: t.name.trim(), color: t.color, from: t.from };
+    });
+    try {
+      var res = await fetch('/api/admin/course-types', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ types: payload })
+      });
+      var r = await res.json();
+      if (r.success) {
+        showToast('과정 종류를 저장했습니다' + (r.renamedCourses ? ' (과정 ' + r.renamedCourses + '개 반영)' : ''));
+        document.getElementById('courseEditArea').innerHTML = '';
+        await loadCourseTypes();
+        loadCourses();
+      } else showToast('저장 실패: ' + (r.error || ''), true);
+    } catch (e) { showToast('저장 실패: ' + e.message, true); }
+  }
+
   /* ── 과정 목록 ── */
   async function loadCourses() {
     var el = document.getElementById('courseList');
@@ -3636,9 +3979,7 @@ function renderCoursesPage(classrooms) {
       return;
     }
     var rows = allCourses.map(function(c) {
-      var tag = c.course_type
-        ? '<span class="cs-tag tg-' + esc(c.course_type) + '">' + esc(c.course_type) + '</span>'
-        : '<span class="cs-mut">—</span>';
+      var tag = typeTag(c.course_type);
       return '<tr>'
         + '<td style="font-weight:700;">' + esc(c.course_name) + '</td>'
         + '<td class="cs-mut">' + esc(c.course_code || '—') + '</td>'
@@ -3671,7 +4012,8 @@ function renderCoursesPage(classrooms) {
   }
 
   document.getElementById('btnReload').addEventListener('click', function() {
-    loadCourses(); loadClassrooms();
+    loadCourseTypes().then(function() { loadCourses(); });
+    loadClassrooms();
     if (document.getElementById('sessionCourseSelect').value) loadSessionsForCourse();
     showToast('새로고침했습니다');
   });
@@ -3729,9 +4071,7 @@ function renderCoursesPage(classrooms) {
       var sel = String(r.classroom_id) === String(c.default_classroom_id) ? ' selected' : '';
       return '<option value="' + esc(r.classroom_id) + '"' + sel + '>' + esc(r.classroom_name) + ' (' + esc(r.classroom_code) + ')</option>';
     }).join('');
-    var typeOpts = '<option value="">선택</option>' + ['모집과정','위탁과정','산교연과정'].map(function(t) {
-      return '<option value="' + t + '"' + (c.course_type === t ? ' selected' : '') + '>' + t + '</option>';
-    }).join('');
+    var typeOpts = typeOptionsHtml(c.course_type);
 
     document.getElementById('courseEditArea').innerHTML =
         '<div class="cs-editbox">'
@@ -4320,7 +4660,7 @@ function renderCoursesPage(classrooms) {
     } catch (e) { showToast('추가 실패: ' + e.message, true); }
   });
 
-  loadCourses();
+  loadCourseTypes().then(function() { loadCourses(); });
   loadClassrooms();
   `;
 
