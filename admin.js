@@ -217,10 +217,10 @@ function registerAdminRoutes(app) {
       try {
         const at = await db.query(`
           SELECT aa.student_id,
-                 COUNT(*) FILTER (WHERE aa.result = 'fail')::int AS fail_count,
-                 MAX(aa.created_at) FILTER (WHERE aa.result = 'fail') AS last_fail_at,
+                 COUNT(*) FILTER (WHERE aa.result = 'fail' AND aa.reason IS DISTINCT FROM 'push_muted')::int AS fail_count,
+                 MAX(aa.created_at) FILTER (WHERE aa.result = 'fail' AND aa.reason IS DISTINCT FROM 'push_muted') AS last_fail_at,
                  (ARRAY_AGG(aa.reason ORDER BY aa.created_at DESC)
-                    FILTER (WHERE aa.result = 'fail'))[1] AS last_fail_reason
+                    FILTER (WHERE aa.result = 'fail' AND aa.reason IS DISTINCT FROM 'push_muted'))[1] AS last_fail_reason
           FROM attendance_attempts aa
           WHERE aa.student_id IN (SELECT student_id::text FROM enrollments WHERE course_id = $1)
           GROUP BY aa.student_id
@@ -2222,7 +2222,8 @@ function renderAttendancePage(courses) {
   var PT_REASON = {
     accuracy: 'GPS 정확도 부족', out_of_range: '건물 반경 밖', geo_error: '위치 정보 실패',
     timeout: '생체인증 창 안 열림', cancelled: '사용자 취소', bio_error: '생체인증 오류',
-    verify_fail: '서버 검증 실패', net_error: '네트워크 오류', no_location: '위치 정보 없음'
+    verify_fail: '서버 검증 실패', net_error: '네트워크 오류', no_location: '위치 정보 없음',
+    push_muted: '퇴실 알림 중단(건물 외부)'
   };
 
   function ptDay(v) {
@@ -3029,6 +3030,7 @@ function renderStudentsPage(courses) {
   var AT_REASON = {
     accuracy: 'GPS 정확도 부족',
     out_of_range: '건물 반경 밖',
+    push_muted: '퇴실 알림 중단(건물 외부)',
     geo_error: '위치 정보 실패',
     timeout: '생체인증 창 안 열림',
     cancelled: '사용자 취소',
