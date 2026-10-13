@@ -307,6 +307,7 @@ async function sendExitReminders(remindBeforeMin, autoCloseMin) {
       WHERE a.session_id = $1
         AND a.check_in_at IS NOT NULL
         AND a.check_out_at IS NULL
+        AND a.push_muted_at IS NULL   -- 수강생이 '퇴실 알림 그만 받기'를 누른 회차는 제외
         AND s.status = 'active'
     `, [session.session_id]);
 
@@ -349,6 +350,7 @@ async function sendExitReminders(remindBeforeMin, autoCloseMin) {
 async function sendMissedExitAlerts(autoCloseMin) {
   const students = await db.query(`
     SELECT a.attendance_id, a.student_id, s.name, s.status AS student_status,
+           a.push_muted_at,
            cs.session_id, cs.end_time, c.course_name
     FROM attendance a
     JOIN students s ON s.student_id = a.student_id
@@ -374,6 +376,10 @@ async function sendMissedExitAlerts(autoCloseMin) {
 
     // 비활성 수강생은 자동 처리(데이터 정합성)만 하고 푸시는 보내지 않음
     if (row.student_status && row.student_status !== 'active') continue;
+
+    // 알림 중단을 선택한 수강생에게는 처리 안내 푸시도 보내지 않음
+    // (중단 버튼을 누를 때 '종료 후 퇴실미확인으로 기록된다'는 안내를 이미 받았음)
+    if (row.push_muted_at) continue;
 
     const payload = {
       title: '퇴실미확인 처리',
