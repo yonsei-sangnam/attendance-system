@@ -678,6 +678,11 @@ app.get('/app-auth', async (req, res) => {
     + '.done-msg { font-size:48px; margin-bottom:12px; }'
     + '.loc-error { font-size:15px; color:#ff3b30; font-weight:600; margin-bottom:8px; }'
     + '.loc-sub { font-size:13px; color:#86868b; }'
+    + '.mute-box { margin-top:22px; padding-top:18px; border-top:1px solid #eee; }'
+    + '.mute-txt { font-size:12.5px; color:#86868b; line-height:1.6; margin-bottom:12px; }'
+    + '.mute-btn { background:#fff; color:#555; border:1px solid #ccc;'
+    + '  padding:12px 20px; border-radius:8px; font-size:14px;'
+    + '  font-weight:600; cursor:pointer; }'
     + '</style>'
     + '</head><body>'
     + '<div class="card">'
@@ -722,7 +727,7 @@ app.get('/app-auth', async (req, res) => {
     + '    + \'<button class="retry-btn" onclick="location.reload()">다시 시도</button>\';'
     + '}'
     + ''
-    + 'function showLocationError(title, sub) {'
+    + 'function showLocationError(title, sub, muteInfo) {'
     + '  document.getElementById("spinner").style.display = "none";'
     + '  document.getElementById("status").textContent = "";'
     + '  document.getElementById("sub").textContent = "";'
@@ -731,6 +736,65 @@ app.get('/app-auth', async (req, res) => {
     + '    + \'<div class="loc-error">\' + title + \'</div>\''
     + '    + \'<div class="loc-sub">\' + sub + \'</div>\''
     + '    + \'<button class="retry-btn" onclick="location.reload()">다시 시도</button>\';'
+    + '  if (muteInfo && ATTENDANCE_ID && !CLASSROOM_CODE) addMuteBox(muteInfo);'
+    + '}'
+    + ''
+    // ── 건물 외부일 때 '이번 수업 퇴실 알림 그만 받기' (퇴실 시에만) ──
+    // 출결 판정은 바꾸지 않는다. 알림만 멈추고, 종료 N분 후 기존 자동 처리로 퇴실미확인이 된다.
+    + 'var AUTO_CLOSE_MIN = 10;'
+    + 'var MUTE_INFO = null;'
+    + 'function addMuteBox(info) {'
+    + '  MUTE_INFO = info;'
+    + '  var box = document.createElement("div");'
+    + '  box.className = "mute-box";'
+    + '  var txt = document.createElement("div");'
+    + '  txt.className = "mute-txt";'
+    + '  txt.textContent = "강의실로 돌아갈 수 없다면 이번 수업의 퇴실 알림을 끌 수 있습니다. "'
+    + '    + "알림을 끄면 수업 종료 " + AUTO_CLOSE_MIN + "분 후 퇴실미확인으로 기록되며, "'
+    + '    + "사유가 있으면 소명을 요청할 수 있습니다.";'
+    + '  var btn = document.createElement("button");'
+    + '  btn.className = "mute-btn";'
+    + '  btn.id = "muteBtn";'
+    + '  btn.textContent = "이번 수업 퇴실 알림 그만 받기";'
+    + '  btn.onclick = muteExitPush;'
+    + '  box.appendChild(txt);'
+    + '  box.appendChild(btn);'
+    + '  document.getElementById("errorArea").appendChild(box);'
+    + '}'
+    + ''
+    + 'async function muteExitPush() {'
+    + '  var btn = document.getElementById("muteBtn");'
+    + '  if (btn) { btn.disabled = true; btn.textContent = "처리 중..."; }'
+    + '  try {'
+    + '    var body = { studentId: STUDENT_ID, attendanceId: ATTENDANCE_ID };'
+    + '    if (MUTE_INFO) { for (var k in MUTE_INFO) { if (MUTE_INFO.hasOwnProperty(k)) body[k] = MUTE_INFO[k]; } }'
+    + '    var r = await fetch("/api/push/mute", {'
+    + '      method: "POST", headers: { "Content-Type": "application/json" },'
+    + '      body: JSON.stringify(body)'
+    + '    });'
+    + '    var d = await r.json();'
+    + '    if (!d.ok) throw new Error(d.error || "처리하지 못했습니다.");'
+    + '    var area = document.getElementById("errorArea");'
+    + '    area.innerHTML = "";'
+    + '    var icon = document.createElement("div");'
+    + '    icon.style.cssText = "font-size:44px;margin-bottom:12px;";'
+    + '    icon.textContent = "\\ud83d\\udd15";'
+    + '    var t = document.createElement("div");'
+    + '    t.className = "status";'
+    + '    t.textContent = d.already ? "이미 알림이 중단되어 있습니다" : "퇴실 알림을 중단했습니다";'
+    + '    var s2 = document.createElement("div");'
+    + '    s2.className = "mute-txt";'
+    + '    s2.textContent = "수업 종료 " + AUTO_CLOSE_MIN + "분 후 퇴실미확인으로 기록됩니다. "'
+    + '      + "강의실로 돌아오면 앱에서 직접 퇴실할 수 있습니다.";'
+    + '    var back = document.createElement("button");'
+    + '    back.className = "retry-btn";'
+    + '    back.textContent = "앱으로 돌아가기";'
+    + '    back.onclick = function() { goBack("false", "이번 수업의 퇴실 알림을 중단했습니다."); };'
+    + '    area.appendChild(icon); area.appendChild(t); area.appendChild(s2); area.appendChild(back);'
+    + '  } catch (e) {'
+    + '    if (btn) { btn.disabled = false; btn.textContent = "이번 수업 퇴실 알림 그만 받기"; }'
+    + '    alert("알림 중단에 실패했습니다. " + (e && e.message ? e.message : ""));'
+    + '  }'
     + '}'
     + ''
     + 'function getDistanceMeters(lat1, lon1, lat2, lon2) {'
@@ -748,6 +812,7 @@ app.get('/app-auth', async (req, res) => {
     + '  try {'
     + '    var bldgRes = await fetch("/api/settings/building");'
     + '    var bldg = await bldgRes.json();'
+    + '    if (bldg.pushAutoCloseMinutes) AUTO_CLOSE_MIN = bldg.pushAutoCloseMinutes;'
     + ''
     + '    if (!bldg.enabled || !bldg.lat || !bldg.lng) {'
     + '      return true;'
@@ -790,7 +855,8 @@ app.get('/app-auth', async (req, res) => {
     + '    if (dist > (bldg.radius || 200)) {'
     + '      logAttempt("location", "fail", "out_of_range",'
     + '        { lat: myLat, lng: myLng, accuracy: myAcc, distance: Math.round(dist) });'
-    + '      showLocationError("건물 외부 감지", "강의실 근처에서 다시 시도해주세요.");'
+    + '      showLocationError("건물 외부 감지", "강의실 근처에서 다시 시도해주세요.",'
+    + '        { lat: myLat, lng: myLng, accuracy: myAcc, distance: Math.round(dist) });'
     + '      return false;'
     + '    }'
     + ''
@@ -1335,6 +1401,59 @@ app.post('/api/register/verify', async (req, res) => {
   }
 });
 
+
+// ─── API: 이번 회차 퇴실 알림 중단 ───────────────────────────
+// 건물 외부에서 푸시를 탭한 수강생이 '이번 수업 퇴실 알림 그만 받기'를 누를 때 호출된다.
+// - 출결 판정은 바꾸지 않는다. push_muted_at 만 기록해 push.js 가 발송 대상에서 제외한다.
+// - 종료 N분 후 기존 자동 처리(퇴실미확인)는 그대로 동작한다.
+// - 본인에게만 불리한 선택이므로 위치를 서버에서 다시 판정하지 않는다. 판단용 기록만 남긴다.
+app.post('/api/push/mute', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const studentId = b.studentId != null ? String(b.studentId).slice(0, 64) : '';
+    const attendanceId = b.attendanceId != null ? String(b.attendanceId).slice(0, 64) : '';
+    if (!studentId || !attendanceId) return res.status(400).json({ ok: false, error: '요청 정보가 부족합니다.' });
+
+    const cur = await db.query(
+      'SELECT check_out_at, push_muted_at FROM attendance ' +
+      'WHERE attendance_id::text = $1 AND student_id::text = $2',
+      [attendanceId, studentId]
+    );
+    if (cur.rows.length === 0) return res.status(404).json({ ok: false, error: '출결 기록을 찾을 수 없습니다.' });
+    if (cur.rows[0].check_out_at) return res.json({ ok: true, already: true, checkedOut: true });
+    if (cur.rows[0].push_muted_at) return res.json({ ok: true, already: true });
+
+    await db.query(
+      'UPDATE attendance SET push_muted_at = NOW() ' +
+      'WHERE attendance_id::text = $1 AND student_id::text = $2 ' +
+      'AND check_out_at IS NULL AND push_muted_at IS NULL',
+      [attendanceId, studentId]
+    );
+
+    // 시도 로그에 남김 (실패해도 알림 중단은 유지)
+    try {
+      const num = function (v) { const n = parseFloat(v); return isFinite(n) ? n : null; };
+      const dist = num(b.distance);
+      await db.query(`
+        INSERT INTO attendance_attempts
+          (student_id, classroom_code, attendance_id, action, stage, result, reason, detail,
+           lat, lng, accuracy, distance_m, user_agent)
+        VALUES ($1, NULL, $2, 'checkout', 'location', 'fail', 'push_muted',
+                '건물 외부 - 수강생이 퇴실 알림 중단을 선택', $3, $4, $5, $6, $7)
+      `, [studentId, attendanceId, num(b.lat), num(b.lng), num(b.accuracy),
+          dist == null ? null : Math.round(dist),
+          String(req.get('user-agent') || '').slice(0, 300) || null]);
+    } catch (e) {
+      console.error('[PushMute] 시도 로그 저장 실패:', e.message);
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    const missing = /column .*push_muted_at.* does not exist/i.test(err.message || '');
+    console.error('[PushMute] 오류:', err.message);
+    res.status(500).json({ ok: false, error: missing ? 'DB 준비가 되지 않았습니다. 관리자에게 문의하세요.' : '서버 오류' });
+  }
+});
 
 // ─── API: 출결 시도 로그 (성공/실패 모두) ───────────────────
 // 위치 검증과 생체인증은 클라이언트에서 끝나는 단계가 있어, 실패하면 서버에
@@ -3354,7 +3473,37 @@ function renderAppPage() {
           }
           var dist = getDistanceMeters(pos.coords.latitude, pos.coords.longitude, buildingSettings.lat, buildingSettings.lng);
           if (dist > (buildingSettings.radius || 200)) {
-            showMsg('<div style="font-size:24px;margin-bottom:8px;">🚫</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">건물 외부 감지</div><div style="font-size:13px;color:#86868b;margin-top:6px;">건물에서 너무 멀리 있습니다.</div>');
+            var autoMin = buildingSettings.pushAutoCloseMinutes || 10;
+            showMsg('<div style="font-size:24px;margin-bottom:8px;">🚫</div><div style="font-size:15px;font-weight:600;color:#ff3b30;">건물 외부 감지</div><div style="font-size:13px;color:#86868b;margin-top:6px;">건물에서 너무 멀리 있습니다.</div>'
+              + '<div style="margin-top:16px;padding-top:14px;border-top:1px solid #e5e5ea;font-size:12.5px;color:#86868b;line-height:1.6;">'
+              + '강의실로 돌아갈 수 없다면 이번 수업의 퇴실 알림을 끌 수 있습니다. 알림을 끄면 수업 종료 ' + autoMin + '분 후 퇴실미확인으로 기록되며, 사유가 있으면 소명을 요청할 수 있습니다.</div>'
+              + '<button id="pwaMuteBtn" style="margin-top:12px;background:#fff;color:#555;border:1px solid #ccc;padding:11px 18px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">이번 수업 퇴실 알림 그만 받기</button>');
+            var muteBtn = document.getElementById('pwaMuteBtn');
+            if (muteBtn) {
+              var muteBody = {
+                studentId: studentId, attendanceId: attendanceId,
+                lat: pos.coords.latitude, lng: pos.coords.longitude,
+                accuracy: pos.coords.accuracy || null, distance: Math.round(dist)
+              };
+              muteBtn.onclick = async function() {
+                muteBtn.disabled = true; muteBtn.textContent = '처리 중...';
+                try {
+                  var mr = await fetch('/api/push/mute', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(muteBody)
+                  });
+                  var md = await mr.json();
+                  if (!md.ok) throw new Error(md.error || '처리하지 못했습니다.');
+                  showMsg('<div style="font-size:24px;margin-bottom:8px;">🔕</div><div style="font-size:15px;font-weight:600;">'
+                    + (md.already ? '이미 알림이 중단되어 있습니다' : '퇴실 알림을 중단했습니다') + '</div>'
+                    + '<div style="font-size:13px;color:#86868b;margin-top:6px;line-height:1.6;">수업 종료 ' + autoMin + '분 후 퇴실미확인으로 기록됩니다.<br>강의실로 돌아오면 직접 퇴실할 수 있습니다.</div>');
+                  window._pendingCheckout = null;
+                } catch (e) {
+                  muteBtn.disabled = false; muteBtn.textContent = '이번 수업 퇴실 알림 그만 받기';
+                  alert('알림 중단에 실패했습니다. ' + (e && e.message ? e.message : ''));
+                }
+              };
+            }
             return;
           }
           EXIT_LOC = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy || null };
